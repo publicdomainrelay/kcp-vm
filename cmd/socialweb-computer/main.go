@@ -83,7 +83,7 @@ func builtVerbs() map[string]builtVerb {
 		"uninstall gateway":      {uninstallOptions, runUninstall(hostcontract.RoleGateway)},
 		"uninstall bidder":       {uninstallOptions, runUninstall(hostcontract.RoleBidder)},
 		"upgrade":                {upgradeOptions, runUpgrade},
-		"rollback":               {[]string{"state-dir"}, runRollback},
+		"rollback":               {[]string{"state-dir", "root"}, runRollback},
 		"units list":             {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsList},
 		"units audit":            {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsAudit},
 		"units roll kcp":         {[]string{backendOpt, "state-dir", "handle", "kcp-path", "kine-path", "planned-outage", "ready-timeout", "unit-prefix", "store-backup-keep", "store-backup-keep-days"}, runUnitsRollKcp},

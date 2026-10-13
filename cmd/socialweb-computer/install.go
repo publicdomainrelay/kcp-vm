@@ -123,7 +123,7 @@ func runUninstall(role hostcontract.Role) verbFunc {
 	}
 }
 
-var upgradeOptions = []string{"binary", "sha256", "state-dir", "allow-dev-binary"}
+var upgradeOptions = []string{"binary", "sha256", "state-dir", "allow-dev-binary", "root"}
 
 func installedBinaries(state string) []string {
 	return []string{filepath.Join(state, "bin", "current", install.CoreName), filepath.Join(state, "bin", "previous", install.CoreName)}
@@ -144,7 +144,22 @@ func (a *app) upgradeOptions(verb string, vals clicfg.Values) (install.UpgradeOp
 	if err != nil {
 		return install.UpgradeOptions{}, fmt.Errorf("%s: the invoking account: %w", verb, err)
 	}
-	return install.UpgradeOptions{StateDir: state, Home: u.HomeDir, RuntimeDir: install.OwnRuntimeDir(), Out: a.stdout,
+	home := u.HomeDir
+	if root := vals.String("root"); install.Rooted(root) {
+		sys, err := a.installSystem(root)
+		if err != nil {
+			return install.UpgradeOptions{}, err
+		}
+		acct, ok, err := sys.LookupAccount(u.Username)
+		if err != nil {
+			return install.UpgradeOptions{}, err
+		}
+		if !ok {
+			return install.UpgradeOptions{}, fmt.Errorf("%s: %s is no account of the staged host %s", verb, u.Username, root)
+		}
+		home = acct.Home
+	}
+	return install.UpgradeOptions{StateDir: state, Home: home, RuntimeDir: install.OwnRuntimeDir(), Out: a.stdout,
 		SelfCheck: install.SelfCheck, Restart: install.RestartOwnUnits}, nil
 }
 
