@@ -9,6 +9,7 @@ runs:
       run: |
         set -euo pipefail
         export RUSTUP_HOME="$CI_STATE/rustup" CARGO_HOME="$CI_STATE/cargo"
+        export PATH="$CARGO_HOME/bin:$PATH"
         echo "PATH=$CARGO_HOME/bin:$PATH" >>"$GITHUB_PATH"
         for v in RUSTUP_HOME CARGO_HOME; do echo "$v=${!v}" >>"$GITHUB_ENV"; done
         mkdir -p "$CI_STATE/release-build"
