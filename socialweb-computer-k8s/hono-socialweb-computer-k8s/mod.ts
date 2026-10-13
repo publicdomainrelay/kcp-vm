@@ -34,6 +34,7 @@ import {
 } from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
 import {
   createMarketNodeFulfiller,
+  publishedOpenBaoCAFile,
   type MarketNodeFulfiller,
   meshdPinOf,
   type DebugNodeHostKeys,
@@ -306,6 +307,7 @@ if (kcpCredentials && kcpWorkspace) {
     store: createKcpNodeClaimStore({ credentials: kcpCredentials, homesWorkspace: kcpWorkspace }),
     links: createKcpClusterLinkReader({ credentials: kcpCredentials }),
     requesterFor: (did) => accounts.requesterFor(did),
+    ...(options.clusterCaDir ? { openBaoCAFileOf: publishedOpenBaoCAFile(options.clusterCaDir as string) } : {}),
     plcUrl: options.plcDirectoryUrl as string,
     ingressProxyHost: options.ingressProxyHost as string,
     relayUrls,

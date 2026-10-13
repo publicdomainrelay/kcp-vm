@@ -186,6 +186,11 @@
       "description": "kcp workspace this web app writes one MarketIdentity (mode oauthDelegated) per signed-in account into; unset, it writes none",
       "env": "MARKET_IDENTITY_WORKSPACE"
     },
+    "cluster-ca-dir": {
+      "type": "string",
+      "description": "Directory of each tenant cluster's public OpenBao CA (<cluster data dir name>.crt) that the cluster provider publishes; unset, the CA is read beside the cluster's token file",
+      "env": "CLUSTER_CA_DIR"
+    },
     "openbao-addr": {
       "type": "string",
       "description": "The application's OpenBao; when set, each in-flight NodeClaim's secrets-server key is kept there so a restarted door resumes Bidding and Provisioning claims instead of failing them",

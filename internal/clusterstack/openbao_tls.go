@@ -28,6 +28,12 @@ func OpenBaoTLSCAPath(dataDir string) string {
 	return filepath.Join(OpenBaoTLSDir(dataDir), openBaoTLSCAName)
 }
 
+const PublicCADirName = "public-ca"
+
+func PublicOpenBaoCAPath(dataDir string) string {
+	return filepath.Join(filepath.Dir(dataDir), PublicCADirName, filepath.Base(dataDir)+".crt")
+}
+
 func OpenBaoTLSCAKeyPath(dataDir string) string {
 	return filepath.Join(OpenBaoTLSDir(dataDir), openBaoTLSCAKeyName)
 }
