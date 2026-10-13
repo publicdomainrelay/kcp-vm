@@ -29,6 +29,7 @@ export function createATProtoRelay(
         url: subscribeReposUrl,
         wantedCollections: wo.wantedCollections,
         onRecord: wo.onEvent,
+        onProgress: wo.onProgress,
         log: wo.log ?? log,
       });
     },

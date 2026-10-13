@@ -91,3 +91,126 @@ export function kcpResourceClient<T>(
     delete: (name, preconditions) => client.delete(target, name, preconditions),
   };
 }
+
+export interface KcpCondition {
+  type: string;
+  status: "True" | "False" | "Unknown";
+  reason: string;
+  message: string;
+  lastTransitionTime: string;
+  observedGeneration?: number;
+}
+
+export interface ExecutionSnapshot {
+  step?: string;
+  stepStartedAt?: string;
+  lastEventAt?: string;
+  lastError?: string;
+  attempts?: number;
+}
+
+export interface ExecutionStatusView {
+  observedGeneration?: number;
+  phase?: string;
+  message?: string;
+  conditions?: KcpCondition[];
+  execution: ExecutionSnapshot;
+}
+
+export function kcpTime(at: Date): string {
+  return at.toISOString().replace(/\.\d+Z$/, "Z");
+}
+
+export class ExecutionState {
+  #phase: string | undefined;
+  #message: string | undefined;
+  #observedGeneration: number | undefined;
+  #conditions: KcpCondition[] = [];
+  #execution: ExecutionSnapshot = {};
+
+  constructor(initial?: Partial<ExecutionStatusView>) {
+    this.#phase = initial?.phase;
+    this.#message = initial?.message;
+    this.#observedGeneration = initial?.observedGeneration;
+    this.#conditions = [...(initial?.conditions ?? [])];
+    this.#execution = { ...(initial?.execution ?? {}) };
+  }
+
+  get phase(): string | undefined {
+    return this.#phase;
+  }
+
+  get message(): string | undefined {
+    return this.#message;
+  }
+
+  setPhase(phase: string, message: string, at: Date): boolean {
+    const changed = phase !== this.#phase;
+    this.#phase = phase;
+    this.#message = message;
+    this.#execution.lastEventAt = kcpTime(at);
+    return changed;
+  }
+
+  observe(generation: number | undefined): void {
+    this.#observedGeneration = generation;
+  }
+
+  step(step: string, at: Date): boolean {
+    const stamp = kcpTime(at);
+    this.#execution.lastEventAt = stamp;
+    if (step === this.#execution.step) {
+      this.#execution.attempts = (this.#execution.attempts ?? 1) + 1;
+      return false;
+    }
+    this.#execution = { step, stepStartedAt: stamp, lastEventAt: stamp, attempts: 1 };
+    return true;
+  }
+
+  event(at: Date): void {
+    this.#execution.lastEventAt = kcpTime(at);
+  }
+
+  error(err: unknown, at: Date): void {
+    this.#execution.lastError = (err instanceof Error ? err.message : String(err)).slice(0, 1_000);
+    this.#execution.lastEventAt = kcpTime(at);
+  }
+
+  condition(type: string, status: KcpCondition["status"], reason: string, message: string, at: Date): boolean {
+    const i = this.#conditions.findIndex((c) => c.type === type);
+    const prev = i >= 0 ? this.#conditions[i] : undefined;
+    if (prev && prev.status === status && prev.reason === reason && prev.message === message) return false;
+    const next: KcpCondition = {
+      type,
+      status,
+      reason,
+      message,
+      lastTransitionTime: prev && prev.status === status ? prev.lastTransitionTime : kcpTime(at),
+      ...(this.#observedGeneration !== undefined ? { observedGeneration: this.#observedGeneration } : {}),
+    };
+    if (i >= 0) this.#conditions[i] = next;
+    else this.#conditions.push(next);
+    return true;
+  }
+
+  view(): ExecutionStatusView {
+    return {
+      ...(this.#observedGeneration !== undefined ? { observedGeneration: this.#observedGeneration } : {}),
+      ...(this.#phase !== undefined ? { phase: this.#phase } : {}),
+      ...(this.#message !== undefined ? { message: this.#message } : {}),
+      ...(this.#conditions.length ? { conditions: this.#conditions.map((c) => ({ ...c })) } : {}),
+      execution: { ...this.#execution },
+    };
+  }
+}
+
+export interface CoalescedStatusWriter<T> {
+  set(value: T, urgent?: boolean): void;
+  flush(): Promise<void>;
+  close(): Promise<void>;
+}
+
+export function nextWriteDelayMs(lastWriteAt: number | undefined, now: number, minIntervalMs: number): number {
+  if (lastWriteAt === undefined) return 0;
+  return Math.max(0, lastWriteAt + minIntervalMs - now);
+}

@@ -51,6 +51,9 @@ import { OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { BIDDER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { verifyRelayVisibility } from "@publicdomainrelay/relay-visibility-xrpc";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
+import { MarketLoopTally } from "@publicdomainrelay/market-abc";
+import { createCoalescedStatusWriter, createKcpRestClient, statusFieldWrite } from "@publicdomainrelay/kcp-client-rest";
+import { MARKET_BIDDER_RESOURCE, type MarketLoopStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
@@ -134,6 +137,7 @@ export interface MarketBidderMarketSpec {
   allowUntrustedPolicyExec?: boolean;
   contractStoreDir?: string;
   ingressKeyDir?: string;
+  root?: { name: string };
 }
 
 export interface MarketBidderAppSpec {
@@ -275,6 +279,23 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
       };
     })()
     : undefined;
+
+  function marketLoop(): MarketLoopTally | undefined {
+    const root = spec.market.root;
+    if (!root || id.prompt?.kind !== "kcp" || !id.prompt.server) return undefined;
+    const kcp = createKcpRestClient({ server: id.prompt.server, tokenFile: id.prompt.tokenFile, caFile: id.prompt.caCertFile });
+    const write = statusFieldWrite(kcp, { resource: MARKET_BIDDER_RESOURCE, workspace: id.prompt.workspace }, root.name, "market");
+    const writer = createCoalescedStatusWriter<null>({
+      write: () => {
+        const market: MarketLoopStatus = tally.view(new Date());
+        return write(market);
+      },
+      onError: (err) => logger.warn("bidder_market_status_failed", { root: root.name, error: String(err) }),
+    });
+    const tally = new MarketLoopTally(() => writer.set(null));
+    logger.info("bidder_market_status_root", { root: root.name, workspace: id.prompt.workspace });
+    return tally;
+  }
 
   function kcpPrompt(): IdentityPrompt {
     if (id.prompt?.kind !== "kcp" || !id.prompt.server) throw new Error(BIDDER_SIGN_IN_ONLY_THROUGH_KCP);
@@ -690,9 +711,11 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     await bindKeys(signedIn.agent, signedIn.attestationKp);
 
     const firehoseMode = spec.market.firehoseMode || "off";
+    const loop = marketLoop();
     const eventStreams = createDefaultATProtoEventStreamsClient({
       onlyRelays: explicitRelayUrls(network, firehoseMode),
       log: logger,
+      onProgress: (source, p) => loop?.streamProgress(source, p.cursor, p.eventTime, new Date()),
     });
     crawlRelayUrls = eventStreams.relays.map((r) => r.url).filter(isCrawlRoot);
     localRelayUrls = crawlRelayUrls.filter((u) => u.startsWith("http://127.0.0.1:") || u.startsWith("http://localhost:"));
@@ -728,6 +751,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           hint: "the MarketIdentity shows SessionExpired with a sign-in-again action; the bidder stays up",
         }),
       acceptToContract,
+      loop,
     });
     await bidder.beginServe();
     return { did: atproto.did, ingressRef: marketRelay?.ingressRef, servePort: bidderServe.tcpPort };

@@ -1,4 +1,4 @@
-import type { FirehoseRecordEvent } from "@publicdomainrelay/atproto-event-stream-common";
+import type { FirehoseProgress, FirehoseRecordEvent } from "@publicdomainrelay/atproto-event-stream-common";
 import type { LoggerInterface } from "@publicdomainrelay/logger";
 
 /** Handle returned by watch() — call close() to stop receiving events. */
@@ -16,6 +16,7 @@ export interface ATProtoEventStream {
   watch(opts: {
     wantedCollections: string[];
     onEvent(event: FirehoseRecordEvent): void | Promise<void>;
+    onProgress?(progress: FirehoseProgress): void;
     log?: LoggerInterface;
   }): ATProtoEventStreamWatcher;
 }

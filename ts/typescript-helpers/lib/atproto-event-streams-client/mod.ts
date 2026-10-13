@@ -9,7 +9,7 @@ import type {
   ATProtoEventStreamsClient,
   ATProtoEventStreamWatcher,
 } from "@publicdomainrelay/atproto-event-stream-abc";
-import type { FirehoseRecordEvent } from "@publicdomainrelay/atproto-event-stream-common";
+import type { FirehoseProgress, FirehoseRecordEvent } from "@publicdomainrelay/atproto-event-stream-common";
 import { createATProtoRelay } from "@publicdomainrelay/atproto-event-stream-relay";
 import { createATProtoJetstream } from "@publicdomainrelay/atproto-event-stream-jetstream";
 import type { LoggerInterface } from "@publicdomainrelay/logger";
@@ -20,14 +20,18 @@ export type {
   ATProtoEventStreamsClient,
   ATProtoEventStreamWatcher,
 } from "@publicdomainrelay/atproto-event-stream-abc";
-export type { FirehoseRecordEvent, FirehoseOperation } from "@publicdomainrelay/atproto-event-stream-common";
+export type { FirehoseOperation, FirehoseProgress, FirehoseRecordEvent } from "@publicdomainrelay/atproto-event-stream-common";
+
+export type StreamProgressListener = (source: string, progress: FirehoseProgress) => void;
 
 export function createATProtoEventStreamsClient(opts: {
   relays: ATProtoRelay[];
   jetstreams: ATProtoJetstream[];
   dedupWindowMs?: number;
+  onProgress?: StreamProgressListener;
 }): ATProtoEventStreamsClient {
   const { relays, jetstreams, dedupWindowMs = 15_000 } = opts;
+  const progressOf = (source: string) => (progress: FirehoseProgress) => opts.onProgress?.(source, progress);
   const watchers: ATProtoEventStreamWatcher[] = [];
 
   // Batching: all watch() calls in the same synchronous block share one set
@@ -66,12 +70,12 @@ export function createATProtoEventStreamsClient(opts: {
     };
 
     const streams = [
-      ...relays.map((r) => r),
-      ...jetstreams.map((j) => j),
+      ...relays.map((r) => ({ name: `relay:${r.url}`, stream: r })),
+      ...jetstreams.map((j) => ({ name: `jetstream:${j.url}`, stream: j })),
     ];
 
-    for (const stream of streams) {
-      const w = stream.watch({ wantedCollections: wo.wantedCollections, onEvent, log: wo.log });
+    for (const { name, stream } of streams) {
+      const w = stream.watch({ wantedCollections: wo.wantedCollections, onEvent, onProgress: progressOf(name), log: wo.log });
       dedicated.push(w);
       watchers.push(w);
     }
@@ -119,8 +123,8 @@ export function createATProtoEventStreamsClient(opts: {
       ...jetstreams.map((j) => ({ name: `jetstream:${j.url}`, stream: j })),
     ];
 
-    for (const { stream } of streams) {
-      const w = stream.watch({ wantedCollections: allCollections, onEvent });
+    for (const { name, stream } of streams) {
+      const w = stream.watch({ wantedCollections: allCollections, onEvent, onProgress: progressOf(name) });
       sharedWatchers.push(w);
       watchers.push(w);
     }
@@ -196,6 +200,7 @@ export interface DefaultClientOpts {
    */
   dedupWindowMs?: number;
   log?: LoggerInterface;
+  onProgress?: StreamProgressListener;
 }
 
 export function createDefaultATProtoEventStreamsClient(
@@ -224,5 +229,5 @@ export function createDefaultATProtoEventStreamsClient(
     jetstreamUrls: jetstreams.map((j) => j.url),
   });
 
-  return createATProtoEventStreamsClient({ relays, jetstreams, dedupWindowMs: opts.dedupWindowMs });
+  return createATProtoEventStreamsClient({ relays, jetstreams, dedupWindowMs: opts.dedupWindowMs, onProgress: opts.onProgress });
 }

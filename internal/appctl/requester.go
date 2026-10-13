@@ -259,6 +259,9 @@ func (ctl *Controller) reconcileRequester(ctx context.Context, u *unstructured.U
 	}
 	if ctl.applied[string(o.UID)] != o.Generation || ctl.lostComponent(ctx, owner) != "" {
 		values, err := RequesterValues(o.Spec, ComponentStateDir(ctl.c.Layout.StateDir, RequesterComponent))
+		if err == nil {
+			err = withRootName(&values.ExtraArgs, o.Name)
+		}
 		if err != nil {
 			st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
 			return ctl.writeStatus(ctx, MarketRequesterGVR, o.Name, st)

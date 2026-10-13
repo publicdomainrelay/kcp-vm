@@ -111,6 +111,7 @@ const spec: MarketBidderAppSpec = {
     allowUntrustedPolicyExec: o.allowUntrustedPolicyExec,
     contractStoreDir: o.contractStoreDir,
     ingressKeyDir: o.ingressKeyDir,
+    ...(o.marketRootName ? { root: { name: o.marketRootName as string } } : {}),
   },
   reports: { portFile: o.portFile, listenersFile: o.listenersFile },
 };

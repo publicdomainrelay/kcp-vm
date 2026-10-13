@@ -3,3 +3,4 @@ export * from "./settlement.ts";
 export * from "./contract.ts";
 export * from "./callbacks.ts";
 export * from "./attestation.ts";
+export * from "./loop-status.ts";

@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-1.sshgateways.socialweb.computer
+  name: v1alpha1-2.sshgateways.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -169,6 +169,56 @@ spec:
                 items:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true
+              market:
+                type: object
+                properties:
+                  rfpsSeen:
+                    type: integer
+                    format: int64
+                  rfpsScoped:
+                    type: integer
+                    format: int64
+                  declinedByReason:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        reason:
+                          type: string
+                        count:
+                          type: integer
+                          format: int64
+                      required:
+                        - reason
+                        - count
+                  bids:
+                    type: integer
+                    format: int64
+                  wins:
+                    type: integer
+                    format: int64
+                  contractsActive:
+                    type: integer
+                    format: int64
+                  streams:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        source:
+                          type: string
+                        cursor:
+                          type: integer
+                          format: int64
+                        lagMs:
+                          type: integer
+                          format: int64
+                        lastEventAt:
+                          type: string
+                      required:
+                        - source
+                  updatedAt:
+                    type: string
       additionalPrinterColumns:
         - name: Profile
           type: string

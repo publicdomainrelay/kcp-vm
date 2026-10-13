@@ -27,7 +27,11 @@ import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp"
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import { createComputeContractKcpStore } from "@publicdomainrelay/compute-contract-kcp";
-import type { ComputeContract, ComputeContractPhase, NodeClaimContract } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import type { ComputeContract, ComputeContractPhase, ComputeContractStatus, MarketLoopStatus, NodeClaimContract } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import { MARKET_REQUESTER_RESOURCE } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import { ExecutionState, type KcpCondition } from "@publicdomainrelay/kcp-client-abc";
+import { createCoalescedStatusWriter, createKcpRestClient, statusFieldWrite } from "@publicdomainrelay/kcp-client-rest";
+import { MarketLoopTally } from "@publicdomainrelay/market-abc";
 import cliArgsEnv from "./cli-args-env.ts";
 
 interface PolicySpec {
@@ -79,10 +83,33 @@ const network = marketNetwork({
 });
 installMarketNetworkFetch({ network });
 
+const contractKcp = createKcpRestClient({
+  server: o.computeContractKcpServer,
+  tokenFile: o.computeContractKcpTokenFile,
+  caCert: readCa(o.computeContractKcpCaCertFile),
+});
+
+function marketLoop(): MarketLoopTally | undefined {
+  const root = o.marketRootName as string | undefined;
+  if (!root) return undefined;
+  const write = statusFieldWrite(contractKcp, { resource: MARKET_REQUESTER_RESOURCE, workspace: o.computeContractKcpWorkspace }, root, "market");
+  const writer = createCoalescedStatusWriter<null>({
+    write: () => {
+      const market: MarketLoopStatus = tally.view(new Date());
+      return write(market);
+    },
+    onError: (err) => logger.warn("requester_market_status_failed", { root, error: String(err) }),
+  });
+  const tally = new MarketLoopTally(() => writer.set(null));
+  return tally;
+}
+const loop = marketLoop();
+
 const firehoseMode = (o.firehoseMode as string) || "off";
 const eventStreams = createDefaultATProtoEventStreamsClient({
   onlyRelays: explicitRelayUrls(network, firehoseMode),
   log: logger,
+  onProgress: (source, p) => loop?.streamProgress(source, p.cursor, p.eventTime, new Date()),
 });
 const relayUrls = eventStreams.relays.map((r) => r.url);
 
@@ -104,6 +131,7 @@ const identityPrompt = createKcpIdentityPrompt({
   caCert: readCa(o.marketIdentityKcpCaCertFile),
 });
 const contracts = createComputeContractKcpStore({
+  kcp: contractKcp,
   server: o.computeContractKcpServer,
   workspace: o.computeContractKcpWorkspace,
   tokenFile: o.computeContractKcpTokenFile,
@@ -267,29 +295,66 @@ let secretsUrl = contractObject.status?.secretsUrl;
 let secretsFetchedAt = contractObject.status?.secretsFetchedAt;
 let phaseNow: ComputeContractPhase = contractObject.status?.phase ?? "Pending";
 let messageNow = contractObject.status?.message ?? "";
+const execution = new ExecutionState({
+  phase: contractObject.status?.phase,
+  message: contractObject.status?.message,
+  conditions: contractObject.status?.conditions as KcpCondition[] | undefined,
+  execution: contractObject.status?.execution ?? {},
+});
+execution.observe(generation);
+
+function contractStatus(): ComputeContractStatus {
+  const view = execution.view();
+  return {
+    ...view,
+    phase: phaseNow,
+    message: messageNow,
+    ...(secretsUrl ? { secretsUrl } : {}),
+    ...(secretsFetchedAt ? { secretsFetchedAt } : {}),
+    ...(state ? { contract: state as unknown as NodeClaimContract } : {}),
+  } as ComputeContractStatus;
+}
+
+const STATUS_WRITE_ATTEMPTS = 3;
+let statusWriteError: unknown;
+const statusWriter = createCoalescedStatusWriter<null>({
+  write: async () => {
+    for (let attempt = 1;; attempt++) {
+      try {
+        await contracts.writeStatus(contractStatus());
+        statusWriteError = undefined;
+        return;
+      } catch (err) {
+        if (attempt >= STATUS_WRITE_ATTEMPTS) throw err;
+        logger.warn("requester_contract_status_retry", { attempt, error: String(err) });
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+  },
+  onError: (err) => {
+    statusWriteError = err;
+    logger.warn("requester_contract_status_failed", { error: String(err) });
+  },
+});
+
+function stepTo(step: string): void {
+  if (execution.step(step, new Date())) logger.info("requester_contract_step", { step });
+  statusWriter.set(null);
+}
+
+function failedStep(err: unknown): void {
+  execution.error(err, new Date());
+  statusWriter.set(null);
+}
 
 async function writeStatus(phase: ComputeContractPhase, message: string): Promise<void> {
   phaseNow = phase;
   messageNow = message;
-  const status = {
-    observedGeneration: generation,
-    phase,
-    message,
-    ...(secretsUrl ? { secretsUrl } : {}),
-    ...(secretsFetchedAt ? { secretsFetchedAt } : {}),
-    ...(state ? { contract: state as unknown as NodeClaimContract } : {}),
-  };
-  for (let attempt = 1;; attempt++) {
-    try {
-      await contracts.writeStatus(status);
-      logger.info("requester_contract_status", { phase, message, contractPhase: state?.phase });
-      return;
-    } catch (err) {
-      if (attempt >= 10) throw err;
-      logger.warn("requester_contract_status_retry", { attempt, error: String(err) });
-      await new Promise((r) => setTimeout(r, 1_000));
-    }
-  }
+  execution.setPhase(phase, message, new Date());
+  statusWriter.set(null, true);
+  await statusWriter.flush();
+  if (statusWriteError) throw statusWriteError;
+  logger.info("requester_contract_status", { phase, message, contractPhase: state?.phase, step: execution.view().execution.step });
 }
 
 const idle = (): Promise<never> => new Promise<never>(() => {});
@@ -303,8 +368,10 @@ if (contractObject.status?.phase === "Failed" && !state?.receipt) {
   await idle();
 }
 
+stepTo("preparing");
 const capabilities: GuestCapability[] = [];
 if (spec.secretsRef) {
+  stepTo("readingSecrets");
   const bundle = await vault.read(spec.secretsRef);
   const text = typeof bundle?.bundle === "string" ? bundle.bundle : undefined;
   if (!text) {
@@ -343,24 +410,49 @@ const track = (phase: ComputeContractPhase, what: string) => async (_event: unkn
   return "continue" as const;
 };
 const handlers: ComputeRequestHandlers = {
-  onRfpSubmitted: track("Requesting", "the RFP is submitted"),
-  onAccepted: track("Requesting", "a bid is accepted"),
-  onReceipt: track("Requesting", "the winner's receipt is in"),
+  onRfpSubmitted: (event, s) => {
+    stepTo("collectingBids");
+    return track("Requesting", "the RFP is submitted")(event, s);
+  },
+  onBid: () => {
+    loop?.bid();
+    execution.event(new Date());
+    statusWriter.set(null);
+    return "accept" as const;
+  },
+  onAccepting: () => {
+    stepTo("accepting");
+    return "continue" as const;
+  },
+  onAccepted: (event, s) => {
+    loop?.win();
+    stepTo("awaitingReceipt");
+    return track("Requesting", "a bid is accepted")(event, s);
+  },
+  onReceipt: (event, s) => {
+    stepTo("awaitingGuestOnNetwork");
+    return track("Requesting", "the winner's receipt is in")(event, s);
+  },
   onNetwork: async (event, s) => {
+    stepTo("awaitingHostKeys");
     state = s;
     if (s.hostKeys) await writeStatus(phaseNow, messageNow);
     else await writeStatus("Requesting", `the guest reported onNetwork at ${event.address}; waiting for its host keys`);
     return "continue" as const;
   },
   onHostKeys: async (_event, s) => {
+    if (s.vmAddress) stepTo("held");
     state = s;
     await writeStatus(state.vmAddress ? "Held" : "Requesting", "the guest reported its ssh host keys");
   },
   onTerminated: async (event, s) => {
+    stepTo("terminated");
+    loop?.contractsActive(0);
     state = s;
     await writeStatus("Released", `the bidder ended the contract: ${event.reason}`);
   },
   onSecretsFetched: async (event) => {
+    execution.event(new Date());
     logger.info("requester_secrets_fetched", { ...event });
     secretsFetchedAt = new Date().toISOString();
     await writeStatus(phaseNow, messageNow);
@@ -375,6 +467,7 @@ void contracts.waitFor((c) => c.spec?.release === true, flowDone.signal).then((a
   if (asked) releaseEarly.abort();
 });
 let handle: ComputeRequestHandle;
+stepTo(state?.phase ? "resuming" : "postingRfp");
 try {
   handle = await requestCompute(pds, {
     logger,
@@ -401,6 +494,7 @@ try {
   }, handlers);
   flowDone.abort();
 } catch (err) {
+  failedStep(err);
   await writeStatus("Failed", `the contract flow threw: ${err instanceof Error ? err.message : String(err)}`);
   await idle();
   throw err;
@@ -408,11 +502,14 @@ try {
 state = handle.state;
 
 if (!state.receipt) {
+  failedStep(state.outcome ?? state.error ?? state.phase);
+  stepTo("noContract");
   await writeStatus("Failed", `no contract: ${state.outcome ?? state.error ?? state.phase}`);
   await handle.dispose();
   await idle();
 }
 
+if (state.vmAddress && !state.hostKeys) stepTo("awaitingHostKeys");
 if (state.vmAddress && !state.hostKeys && handle.hostKeys) {
   const hostKeys = await Promise.race([
     handle.hostKeys,
@@ -431,9 +528,12 @@ void handle.terminated?.then((s) => {
 });
 
 if (state.termination) {
+  stepTo("terminated");
   await writeStatus("Released", `the bidder ended the contract: ${state.termination.reason}`);
 } else {
   const held = state.vmAddress && state.hostKeys;
+  stepTo(held ? "held" : "awaitingRelease");
+  loop?.contractsActive(held ? 1 : 0);
   await writeStatus(
     held ? "Held" : "Failed",
     held
@@ -442,15 +542,21 @@ if (state.termination) {
   );
   const releaseAsked = await contracts.waitFor((c) => c.spec?.release === true, ended.signal);
   if (releaseAsked && !(state as ContractState).termination) {
+    stepTo("releasing");
     await writeStatus("Releasing", "submitting vm.delete to the winner");
     state = await releaseCompute(pds, state, { logger, capabilities: handle.capabilities });
     await handle.dispose();
     const ok = state.release?.ok === true;
+    if (!ok) failedStep(state.error ?? `vm.delete status ${state.release?.status}`);
+    stepTo(ok ? "released" : "releaseFailed");
+    loop?.contractsActive(0);
     await writeStatus(
       ok ? "Released" : "Failed",
       ok ? `vm.delete accepted (${state.release?.status})` : `vm.delete failed: ${state.error ?? state.release?.status}`,
     );
   } else {
+    stepTo("terminated");
+    loop?.contractsActive(0);
     await releaseCompute(pds, state, { logger, capabilities: handle.capabilities });
     await handle.dispose();
     await writeStatus("Released", `the bidder ended the contract: ${(state as ContractState).termination?.reason ?? "unknown"}`);

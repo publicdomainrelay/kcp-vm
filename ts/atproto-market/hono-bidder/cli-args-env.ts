@@ -103,6 +103,11 @@ export default {
       env: "MARKET_IDENTITY_NAME",
       default: "bidder",
     },
+    "market-root-name": {
+      type: "string" as const,
+      description: "Name of the bidder's MarketBidder root object in the MarketIdentity's kcp workspace; the bidder writes its loop counters to its status.market",
+      env: "MARKET_ROOT_NAME",
+    },
     "market-identity-kcp-server": {
       type: "string" as const,
       description: "kcp server whose MarketIdentity object drives the sign-in (any mode; what the user must do is written to its status); requires an identity vault",

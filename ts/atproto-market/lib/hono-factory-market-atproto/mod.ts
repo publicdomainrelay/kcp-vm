@@ -36,6 +36,7 @@ export interface MarketFactoryHandlers {
   rfp?: RfpCallbacks;
   /** Optional scope filter for submitRfp push path. */
   rfpScopeFilter?: SubmitRfpHandlerConfig["acceptScopeFilter"];
+  rfpObserve?: SubmitRfpHandlerConfig["observe"];
   bid?: { serviceIds: string[]; onBid: SubmitBidCallback };
   accept?: { serviceIds: string[]; onAccept: SubmitAcceptCallback };
   event?: { callbacks: EventCallbacks; background?: boolean };
@@ -61,6 +62,7 @@ export function createMarketFactory(
         const h = createSubmitRfpHandler({
           deps, callbacks: handlers.rfp,
           acceptScopeFilter: handlers.rfpScopeFilter,
+          observe: handlers.rfpObserve,
         });
         app.post(`/xrpc/${SUBMIT_RFP_NSID}`, (c) => h(c.req.raw));
       }

@@ -674,6 +674,7 @@ type statusReport struct {
 	Leases       []portallocator.Lease   `json:"leases"`
 	Network      *v1alpha1.MarketNetwork `json:"network,omitempty"`
 	NetworkError string                  `json:"networkError,omitempty"`
+	Apps         []appStatusView         `json:"apps,omitempty"`
 }
 
 func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
@@ -716,6 +717,7 @@ func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string
 		} else {
 			r.NetworkError = err.Error()
 		}
+		r.Apps = appStatuses(ctx, l, rec)
 	}
 	a.printJSON(r)
 	if !r.Found {

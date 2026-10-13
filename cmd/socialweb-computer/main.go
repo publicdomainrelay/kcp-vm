@@ -62,6 +62,7 @@ func builtVerbs() map[string]builtVerb {
 		"dev up":                 {slices.Concat([]string{backendOpt, "instance", "state-dir", "profile", "bidders", "with-gateway", "app-values", "network-timeout", "stand-ins", "parent", "die-with", "kcp-path", "kine-path", "postgres-root", "deno-path", "bao-path", "dumbpipe-path", "openbao-addr", "openbao-token-file", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, devVMOptions, devOnly(tsbundle.SourceRootOption)), runDevUp},
 		"dev host":               {append([]string{backendOpt, "instance", "state-dir", "profile", "die-with", "kcp-path", "kine-path", "postgres-root", "deno-path", "bao-path", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, devOnly(tsbundle.SourceRootOption)...), runDevHost},
 		"dev status":             {[]string{"instance", "state-dir"}, runDevStatus},
+		"status":                 {[]string{"instance", "state-dir"}, runStatus},
 		"dev down":               {[]string{"instance", "state-dir", "keep-state"}, runDevDown},
 		"dev ls":                 {[]string{"state-dir"}, runDevLs},
 		"dev logs":               {[]string{"instance", "state-dir", "tail"}, runDevLogs},

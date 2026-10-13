@@ -6,7 +6,7 @@ import { TID } from "@atproto/common";
 import { getPdsEndpoint } from "@atproto/common-web";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
 import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, getRecordAt } from "@publicdomainrelay/market-atproto";
-import type { MarketServerDeps, OfferingRefreshHandle } from "@publicdomainrelay/market-atproto";
+import type { MarketServerDeps, OfferingRefreshHandle, RfpObservation } from "@publicdomainrelay/market-atproto";
 import { createMarketFactory } from "@publicdomainrelay/hono-factory-market-atproto";
 import { RFP_NSID, VOUCH_NSID } from "@publicdomainrelay/market-common";
 import type {
@@ -52,6 +52,7 @@ import type {
   PolicyExecOptions,
 } from "@publicdomainrelay/market-bidder-abc";
 import { activeContractOf, TerminatedReceipts } from "@publicdomainrelay/market-bidder-abc";
+import { declineReasonOf, type MarketLoopRecorder } from "@publicdomainrelay/market-abc";
 export type {
   ActiveContract,
   CallbackFactoryDeps,
@@ -125,6 +126,7 @@ export interface MarketBidderConfig {
   onSessionExpired?: (err: OAuthSessionExpiredError) => void;
   /** Pre-created acceptToContract map -- shared with providers for guest event routes. */
   acceptToContract?: Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>;
+  loop?: MarketLoopRecorder;
 }
 
 export interface MarketBidder {
@@ -180,10 +182,21 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const acceptToContract = config.acceptToContract ?? new Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>();
   const terminatedReceipts = new TerminatedReceipts();
   const contractStore = config.contractStore;
-  const saveContractChange = contractStore || onContractChange
+  const loop = config.loop;
+  const observeRfp = loop
+    ? (o: RfpObservation): void => {
+      if (o.outcome === "seen") loop.rfpSeen();
+      else if (o.outcome === "scoped") loop.rfpScoped();
+      else if (o.outcome === "bid") loop.bid();
+      else loop.declined(declineReasonOf(o.reason ?? "unknown"));
+    }
+    : undefined;
+  const saveContractChange = contractStore || onContractChange || loop
     ? async (event: ContractEvent): Promise<void> => {
+      if (event.type === "accepted") loop?.win();
       await contractStore?.save(event);
       await onContractChange?.(event);
+      loop?.contractsActive(activeContracts.size);
     }
     : undefined;
 
@@ -211,6 +224,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       restored++;
     }
     logger.info("bidder_contracts_loaded", { contracts: restored, tombstones: terminatedReceipts.size });
+    loop?.contractsActive(activeContracts.size);
   }
   const idResolver = atproto.idResolver;
   let offeringRefresher: OfferingRefreshHandle | null = null;
@@ -511,6 +525,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       const factory = createMarketFactory(marketDeps, {
         rfp: merged.rfpCallbacks,
         rfpScopeFilter: async ({ issuerDid }) => scopeGate(issuerDid),
+        rfpObserve: observeRfp,
         accept: merged.onAccept
           ? { serviceIds: [DEFAULT_MARKET_SERVICE_ID], onAccept: merged.onAccept }
           : undefined,
@@ -571,13 +586,17 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       });
 
       const dispatchCallbacks = merged.rfpCallbacks ?? {};
-      const dispatch = createRfpDispatcher({ deps: marketDeps, callbacks: dispatchCallbacks });
+      const dispatch = createRfpDispatcher({ deps: marketDeps, callbacks: dispatchCallbacks, observe: observeRfp });
       // Dedup handled by ATProtoEventStreamsClient -- no per-group seen Set needed.
       eventStreams.watch({
         wantedCollections: [RFP_NSID],
         onEvent: async (e) => {
           if (e.operation !== "create" && e.operation !== "update") return;
-          if (!await scopeGate(e.did)) return;
+          loop?.rfpSeen();
+          if (!await scopeGate(e.did)) {
+            loop?.declined("outOfScope");
+            return;
+          }
           log("info", "rfp watch discovered", { rfpUri: e.uri });
           dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })
             .catch((err) => log("error", "rfp watch dispatch failed", { rfpUri: e.uri, err: String(err) }));

@@ -30,6 +30,9 @@ rules:
   - apiGroups: ["socialweb.computer"]
     resources: ["marketidentities/status", "computecontracts/status"]
     verbs: ["get", "patch", "update"]
+  - apiGroups: ["socialweb.computer"]
+    resources: ["marketrequesters", "marketrequesters/status"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

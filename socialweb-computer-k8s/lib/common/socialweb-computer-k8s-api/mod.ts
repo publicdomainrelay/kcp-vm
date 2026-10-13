@@ -477,6 +477,30 @@ export interface ApplicationStatus {
   listeners?: ApplicationListener[];
   stateDir?: StateDirUsage;
   conditions?: Condition[];
+  market?: MarketLoopStatus;
+}
+
+export interface MarketLoopStatus {
+  rfpsSeen?: number;
+  rfpsScoped?: number;
+  declinedByReason?: MarketDeclineCount[];
+  bids?: number;
+  wins?: number;
+  contractsActive?: number;
+  streams?: MarketStreamStatus[];
+  updatedAt?: string;
+}
+
+export interface MarketDeclineCount {
+  reason: string;
+  count: number;
+}
+
+export interface MarketStreamStatus {
+  source: string;
+  cursor?: number;
+  lagMs?: number;
+  lastEventAt?: string;
 }
 
 export interface MarketRequester {
@@ -523,6 +547,16 @@ export interface ComputeContractStatus {
   secretsUrl?: string;
   secretsFetchedAt?: string;
   contract?: NodeClaimContract;
+  conditions?: Condition[];
+  execution?: ExecutionStatus;
+}
+
+export interface ExecutionStatus {
+  step?: string;
+  stepStartedAt?: string;
+  lastEventAt?: string;
+  lastError?: string;
+  attempts?: number;
 }
 
 export interface Gateway {
@@ -659,7 +693,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-5.marketbidders.socialweb.computer",
+  schema: "v1alpha1-6.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -670,7 +704,7 @@ export const MARKET_REQUESTER_RESOURCE: ApiResource = {
   listKind: "MarketRequesterList",
   plural: "marketrequesters",
   singular: "marketrequester",
-  schema: "v1alpha1-3.marketrequesters.socialweb.computer",
+  schema: "v1alpha1-4.marketrequesters.socialweb.computer",
   export: "applications",
 };
 
@@ -681,7 +715,7 @@ export const COMPUTE_CONTRACT_RESOURCE: ApiResource = {
   listKind: "ComputeContractList",
   plural: "computecontracts",
   singular: "computecontract",
-  schema: "v1alpha1-1.computecontracts.socialweb.computer",
+  schema: "v1alpha1-2.computecontracts.socialweb.computer",
   export: "computecontracts",
 };
 
@@ -692,7 +726,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-5.gateways.socialweb.computer",
+  schema: "v1alpha1-6.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -703,7 +737,7 @@ export const SSH_GATEWAY_RESOURCE: ApiResource = {
   listKind: "SshGatewayList",
   plural: "sshgateways",
   singular: "sshgateway",
-  schema: "v1alpha1-1.sshgateways.socialweb.computer",
+  schema: "v1alpha1-2.sshgateways.socialweb.computer",
   export: "applications",
 };
 
@@ -744,6 +778,7 @@ export type ApiTypeName =
   | "ContractTermination"
   | "ContractTimestamps"
   | "ContractWinner"
+  | "ExecutionStatus"
   | "FirecrackerProvider"
   | "Gateway"
   | "GatewayMarketNetwork"
@@ -753,18 +788,21 @@ export type ApiTypeName =
   | "KcpProvider"
   | "MarketBidder"
   | "MarketBidderSpec"
+  | "MarketDeclineCount"
   | "MarketIdentity"
   | "MarketIdentityMode"
   | "MarketIdentityPendingAction"
   | "MarketIdentityPhase"
   | "MarketIdentitySpec"
   | "MarketIdentityStatus"
+  | "MarketLoopStatus"
   | "MarketNetwork"
   | "MarketNetworkSpec"
   | "MarketNetworkStatus"
   | "MarketNetworkValue"
   | "MarketRequester"
   | "MarketRequesterSpec"
+  | "MarketStreamStatus"
   | "NetworkApp"
   | "NetworkAppStatus"
   | "NetworkHost"
@@ -1024,6 +1062,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
           "ref": "ApplicationListener"
         },
         "type": "array"
+      },
+      "market": {
+        "ref": "MarketLoopStatus"
       },
       "message": {
         "type": "string"
@@ -1331,8 +1372,17 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "ComputeContractStatus": {
     "properties": {
+      "conditions": {
+        "items": {
+          "ref": "Condition"
+        },
+        "type": "array"
+      },
       "contract": {
         "ref": "NodeClaimContract"
+      },
+      "execution": {
+        "ref": "ExecutionStatus"
       },
       "message": {
         "type": "string"
@@ -1529,6 +1579,27 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "ExecutionStatus": {
+    "properties": {
+      "attempts": {
+        "type": "integer"
+      },
+      "lastError": {
+        "type": "string"
+      },
+      "lastEventAt": {
+        "type": "string"
+      },
+      "step": {
+        "type": "string"
+      },
+      "stepStartedAt": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "FirecrackerProvider": {
     "properties": {
       "vmruntimeCommand": {
@@ -1711,6 +1782,21 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "MarketDeclineCount": {
+    "properties": {
+      "count": {
+        "type": "integer"
+      },
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "reason",
+      "count"
+    ],
+    "type": "object"
+  },
   "MarketIdentity": {
     "properties": {
       "apiVersion": {
@@ -1858,6 +1944,42 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "sessionRef": {
         "ref": "VaultRef"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "MarketLoopStatus": {
+    "properties": {
+      "bids": {
+        "type": "integer"
+      },
+      "contractsActive": {
+        "type": "integer"
+      },
+      "declinedByReason": {
+        "items": {
+          "ref": "MarketDeclineCount"
+        },
+        "type": "array"
+      },
+      "rfpsScoped": {
+        "type": "integer"
+      },
+      "rfpsSeen": {
+        "type": "integer"
+      },
+      "streams": {
+        "items": {
+          "ref": "MarketStreamStatus"
+        },
+        "type": "array"
+      },
+      "updatedAt": {
+        "type": "string"
+      },
+      "wins": {
+        "type": "integer"
       }
     },
     "required": [],
@@ -2045,6 +2167,26 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [
       "profile",
       "identity"
+    ],
+    "type": "object"
+  },
+  "MarketStreamStatus": {
+    "properties": {
+      "cursor": {
+        "type": "integer"
+      },
+      "lagMs": {
+        "type": "integer"
+      },
+      "lastEventAt": {
+        "type": "string"
+      },
+      "source": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "source"
     ],
     "type": "object"
   },
@@ -3696,6 +3838,60 @@ export function parseApplicationStatus(value: unknown): ApplicationStatus {
   return value;
 }
 
+export function validateMarketLoopStatus(value: unknown): ApiIssue[] {
+  return validate("MarketLoopStatus", value);
+}
+
+export function isMarketLoopStatus(value: unknown): value is MarketLoopStatus {
+  return validate("MarketLoopStatus", value).length === 0;
+}
+
+export function assertMarketLoopStatus(value: unknown): asserts value is MarketLoopStatus {
+  const issues = validate("MarketLoopStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketLoopStatus", issues);
+}
+
+export function parseMarketLoopStatus(value: unknown): MarketLoopStatus {
+  assertMarketLoopStatus(value);
+  return value;
+}
+
+export function validateMarketDeclineCount(value: unknown): ApiIssue[] {
+  return validate("MarketDeclineCount", value);
+}
+
+export function isMarketDeclineCount(value: unknown): value is MarketDeclineCount {
+  return validate("MarketDeclineCount", value).length === 0;
+}
+
+export function assertMarketDeclineCount(value: unknown): asserts value is MarketDeclineCount {
+  const issues = validate("MarketDeclineCount", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketDeclineCount", issues);
+}
+
+export function parseMarketDeclineCount(value: unknown): MarketDeclineCount {
+  assertMarketDeclineCount(value);
+  return value;
+}
+
+export function validateMarketStreamStatus(value: unknown): ApiIssue[] {
+  return validate("MarketStreamStatus", value);
+}
+
+export function isMarketStreamStatus(value: unknown): value is MarketStreamStatus {
+  return validate("MarketStreamStatus", value).length === 0;
+}
+
+export function assertMarketStreamStatus(value: unknown): asserts value is MarketStreamStatus {
+  const issues = validate("MarketStreamStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketStreamStatus", issues);
+}
+
+export function parseMarketStreamStatus(value: unknown): MarketStreamStatus {
+  assertMarketStreamStatus(value);
+  return value;
+}
+
 export function validateMarketRequester(value: unknown): ApiIssue[] {
   return validate("MarketRequester", value);
 }
@@ -3801,6 +3997,24 @@ export function assertComputeContractPhase(value: unknown): asserts value is Com
 
 export function parseComputeContractPhase(value: unknown): ComputeContractPhase {
   assertComputeContractPhase(value);
+  return value;
+}
+
+export function validateExecutionStatus(value: unknown): ApiIssue[] {
+  return validate("ExecutionStatus", value);
+}
+
+export function isExecutionStatus(value: unknown): value is ExecutionStatus {
+  return validate("ExecutionStatus", value).length === 0;
+}
+
+export function assertExecutionStatus(value: unknown): asserts value is ExecutionStatus {
+  const issues = validate("ExecutionStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("ExecutionStatus", issues);
+}
+
+export function parseExecutionStatus(value: unknown): ExecutionStatus {
+  assertExecutionStatus(value);
   return value;
 }
 

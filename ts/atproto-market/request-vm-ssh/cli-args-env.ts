@@ -119,6 +119,11 @@ export default {
       type: "string" as const,
       description: "kcp workspace holding the ComputeContract object",
     },
+    "market-root-name": {
+      type: "string" as const,
+      description: "Name of the MarketRequester root object in the ComputeContract's kcp workspace; the requester writes its loop counters to its status.market",
+      env: "MARKET_ROOT_NAME",
+    },
     "compute-contract-kcp-token-file": {
       type: "string" as const,
       description: "Bearer token file for the ComputeContract object",

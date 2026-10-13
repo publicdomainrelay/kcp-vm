@@ -12,6 +12,11 @@ export interface FirehoseRecordEvent {
   uri: string;
 }
 
+export interface FirehoseProgress {
+  cursor: number;
+  eventTime?: string;
+}
+
 /** AT-URI + CID uniquely identifies a record version for dedup. */
 export function eventKey(event: FirehoseRecordEvent): string {
   return `${event.uri}|${event.cid}`;

@@ -1,0 +1,111 @@
+export interface MarketDeclineTally {
+  reason: string;
+  count: number;
+}
+
+export interface MarketStreamTally {
+  source: string;
+  cursor?: number;
+  lagMs?: number;
+  lastEventAt?: string;
+}
+
+export interface MarketLoopView {
+  rfpsSeen: number;
+  rfpsScoped: number;
+  declinedByReason: MarketDeclineTally[];
+  bids: number;
+  wins: number;
+  contractsActive: number;
+  streams: MarketStreamTally[];
+  updatedAt: string;
+}
+
+export interface MarketLoopRecorder {
+  rfpSeen(): void;
+  rfpScoped(): void;
+  declined(reason: string): void;
+  bid(): void;
+  win(): void;
+  contractsActive(count: number): void;
+  streamProgress(source: string, cursor: number, eventTime: string | undefined, receivedAt: Date): void;
+}
+
+export function declineReasonOf(text: string): string {
+  const words = text.trim().toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (words.length === 0) return "unknown";
+  return words[0] + words.slice(1).map((w) => w[0].toUpperCase() + w.slice(1)).join("");
+}
+
+export class MarketLoopTally implements MarketLoopRecorder {
+  #rfpsSeen = 0;
+  #rfpsScoped = 0;
+  #declined = new Map<string, number>();
+  #bids = 0;
+  #wins = 0;
+  #contractsActive = 0;
+  #streams = new Map<string, MarketStreamTally>();
+  #onChange: () => void;
+
+  constructor(onChange: () => void = () => {}) {
+    this.#onChange = onChange;
+  }
+
+  #changed(): void {
+    this.#onChange();
+  }
+
+  rfpSeen(): void {
+    this.#rfpsSeen++;
+    this.#changed();
+  }
+
+  rfpScoped(): void {
+    this.#rfpsScoped++;
+    this.#changed();
+  }
+
+  declined(reason: string): void {
+    this.#declined.set(reason, (this.#declined.get(reason) ?? 0) + 1);
+    this.#changed();
+  }
+
+  bid(): void {
+    this.#bids++;
+    this.#changed();
+  }
+
+  win(): void {
+    this.#wins++;
+    this.#changed();
+  }
+
+  contractsActive(count: number): void {
+    if (count === this.#contractsActive) return;
+    this.#contractsActive = count;
+    this.#changed();
+  }
+
+  streamProgress(source: string, cursor: number, eventTime: string | undefined, receivedAt: Date): void {
+    const at = eventTime ? Date.parse(eventTime) : Number.NaN;
+    this.#streams.set(source, {
+      source,
+      cursor,
+      ...(Number.isFinite(at) ? { lagMs: Math.max(0, receivedAt.getTime() - at), lastEventAt: new Date(at).toISOString() } : {}),
+    });
+    this.#onChange();
+  }
+
+  view(at: Date): MarketLoopView {
+    return {
+      rfpsSeen: this.#rfpsSeen,
+      rfpsScoped: this.#rfpsScoped,
+      declinedByReason: [...this.#declined].sort(([a], [b]) => a.localeCompare(b)).map(([reason, count]) => ({ reason, count })),
+      bids: this.#bids,
+      wins: this.#wins,
+      contractsActive: this.#contractsActive,
+      streams: [...this.#streams.values()].sort((a, b) => a.source.localeCompare(b.source)),
+      updatedAt: at.toISOString(),
+    };
+  }
+}

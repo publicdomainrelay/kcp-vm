@@ -87,7 +87,10 @@ export function createFirehoseWatcher(
       try {
         if (typeof event.data !== "string") return;
         const frame = JSON.parse(event.data) as JetstreamFrame;
-        if (typeof frame.time_us === "number") cursor = frame.time_us;
+        if (typeof frame.time_us === "number") {
+          cursor = frame.time_us;
+          opts.onProgress?.({ cursor: frame.time_us, eventTime: new Date(Math.floor(frame.time_us / 1000)).toISOString() });
+        }
         emit(frame);
       } catch {
         // skip malformed frames

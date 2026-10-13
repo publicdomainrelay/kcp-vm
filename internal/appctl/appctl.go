@@ -306,6 +306,22 @@ func (ctl *Controller) setFinalizer(ctx context.Context, gvr schema.GroupVersion
 	return fmt.Errorf("appctl: the finalizer of %s stayed in conflict", u.GetName())
 }
 
+var componentOwnedStatus = []string{"market"}
+
+func withComponentOwnedStatus(next map[string]any, current any) map[string]any {
+	cur, _ := current.(map[string]any)
+	out := make(map[string]any, len(next)+len(componentOwnedStatus))
+	for k, v := range next {
+		out[k] = v
+	}
+	for _, k := range componentOwnedStatus {
+		if v, ok := cur[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func (ctl *Controller) writeStatus(ctx context.Context, gvr schema.GroupVersionResource, name string, status any) error {
 	ri, err := ctl.client(ctl.c.workspace(), gvr)
 	if err != nil {
@@ -341,7 +357,7 @@ func (ctl *Controller) writeStatus(ctx context.Context, gvr schema.GroupVersionR
 		if err != nil {
 			return err
 		}
-		cur.Object["status"] = m
+		cur.Object["status"] = withComponentOwnedStatus(m, cur.Object["status"])
 		_, err = ri.UpdateStatus(ctx, cur, metav1.UpdateOptions{FieldManager: FieldManager})
 		if err == nil {
 			ctl.written[key] = string(b)

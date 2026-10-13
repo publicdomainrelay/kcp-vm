@@ -17,6 +17,7 @@ export function createATProtoJetstream(
         url,
         wantedCollections: wo.wantedCollections,
         onRecord: wo.onEvent,
+        onProgress: wo.onProgress,
         log: wo.log ?? log,
       });
     },

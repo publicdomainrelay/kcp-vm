@@ -69,4 +69,8 @@ type ComputeContractStatus struct {
 	SecretsFetchedAt string `json:"secretsFetchedAt,omitempty"`
 
 	Contract *NodeClaimContract `json:"contract,omitempty"`
+
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	Execution *ExecutionStatus `json:"execution,omitempty"`
 }

@@ -207,6 +207,21 @@ export interface SubmitRfpHandlerConfig {
    * RFP with a 403. issuerDid is the RFP author's DID.
    */
   acceptScopeFilter?: (input: { rfpUri: string; rfpCid: string; issuerDid: string; rfp: Record<string, unknown> }) => boolean | Promise<boolean>;
+  observe?: (observation: RfpObservation) => void;
+}
+
+export interface RfpObservation {
+  rfpUri: string;
+  outcome: "seen" | "scoped" | "bid" | "declined";
+  reason?: string;
+}
+
+function bidOutcomeOf(result: HandlerResult): Pick<RfpObservation, "outcome" | "reason"> {
+  const body = (result && typeof result === "object" && "body" in result ? result.body : undefined) as
+    | { ok?: boolean; bidUri?: string; error?: string }
+    | undefined;
+  if (body?.bidUri) return { outcome: "bid" };
+  return { outcome: "declined", reason: body?.error ?? "noBid" };
 }
 
 /**
@@ -237,13 +252,32 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
   const serviceIds = Object.keys(callbacks);
   const keysForDid = keysForDidFrom(deps);
   const keyBoundByBadgeBlueKey = createKeyBoundByBadgeBlueKey(deps.idResolver);
+  const observe = (rfpUri: string, outcome: RfpObservation["outcome"], reason?: string) => {
+    try {
+      cfg.observe?.({ rfpUri, outcome, ...(reason ? { reason } : {}) });
+    } catch (err) {
+      log("warn", "dispatch: rfp observer failed", { rfpUri, error: String(err) });
+    }
+  };
 
-  return async ({ rfpUri, rfpCid, issuerDid, serviceId, req }) => {
+  return async (input) => {
+    try {
+      return await dispatchOne(input);
+    } catch (err) {
+      observe(input.rfpUri, "declined", "dispatchFailed");
+      throw err;
+    }
+  };
+
+  async function dispatchOne({ rfpUri, rfpCid, issuerDid, serviceId, req }: DispatchRfpInput): Promise<Response> {
     log("info", "dispatch: resolving rfp", { rfpUri });
     const rfp = await deps.resolve.resolve<RFP & { $type?: string }>({ uri: rfpUri, cid: rfpCid });
     log("info", "dispatch: rfp resolved", { rfpUri });
     const sigErr = await verifyAuthored(deps, stripResolved(rfp) as Record<string, unknown>, rfpUri, keysForDid, keyBoundByBadgeBlueKey, log, "submitRfp");
-    if (sigErr) return sigErr;
+    if (sigErr) {
+      observe(rfpUri, "declined", "signature");
+      return sigErr;
+    }
 
     if (acceptScopeFilter) {
       log("info", "dispatch: running scope filter", { rfpUri, issuerDid });
@@ -251,9 +285,11 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
       log("info", "dispatch: scope filter done", { rfpUri, accepted });
       if (!accepted) {
         log("info", "submitRfp: rejected by scope filter", { rfpUri, issuerDid });
+        observe(rfpUri, "declined", "outOfScope");
         return json({ ok: false, error: "scope filter declined" }, 403);
       }
     }
+    observe(rfpUri, "scoped");
 
     const payloadNsid = rfp.payload ? nsidFromUri(rfp.payload.uri) : "";
     log("info", "dispatch: routing to callback", { rfpUri, payloadNsid });
@@ -262,10 +298,11 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
     const cb = bucketId ? callbacks[bucketId]?.[payloadNsid] : undefined;
     if (!cb) {
       log("info", "submitRfp: ignoring unknown rfp", { serviceId: bucketId, payloadNsid });
+      observe(rfpUri, "declined", "unknownPayload");
       return json({ ok: true });
     }
 
-    return finish(await cb({
+    const result = await cb({
       rfpUri,
       rfpCid,
       rfp,
@@ -274,8 +311,11 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
       resolve: deps.resolve,
       log,
       req,
-    }));
-  };
+    });
+    const bidOutcome = bidOutcomeOf(result);
+    observe(rfpUri, bidOutcome.outcome, bidOutcome.reason);
+    return finish(result);
+  }
 }
 
 export function createSubmitRfpHandler(cfg: SubmitRfpHandlerConfig): Handler {
@@ -294,6 +334,11 @@ export function createSubmitRfpHandler(cfg: SubmitRfpHandlerConfig): Handler {
     if (auth instanceof Response) return auth;
 
     log("info", "submitRfp received", { rfpUri, rfpCid });
+    try {
+      cfg.observe?.({ rfpUri, outcome: "seen" });
+    } catch (err) {
+      log("warn", "submitRfp: rfp observer failed", { rfpUri, error: String(err) });
+    }
 
     try {
       return await dispatch({ rfpUri, rfpCid, issuerDid: auth.issuerDid, serviceId: auth.serviceId, req });

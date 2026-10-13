@@ -1,4 +1,4 @@
-import type { KcpClient } from "@publicdomainrelay/kcp-client-abc";
+import { type CoalescedStatusWriter, type KcpClient, nextWriteDelayMs } from "@publicdomainrelay/kcp-client-abc";
 import {
   isConflict,
   isNotFound,
@@ -266,4 +266,83 @@ export function createKcpRestClient(credentials: KcpCredentials, opts: KcpRestCl
       }
     },
   };
+}
+
+export interface CoalescedStatusWriterOptions<T> {
+  write(value: T): Promise<unknown>;
+  minIntervalMs?: number;
+  onError?(err: unknown): void;
+}
+
+const DEFAULT_STATUS_MIN_INTERVAL_MS = 1_000;
+
+export function createCoalescedStatusWriter<T>(opts: CoalescedStatusWriterOptions<T>): CoalescedStatusWriter<T> {
+  const minIntervalMs = opts.minIntervalMs ?? DEFAULT_STATUS_MIN_INTERVAL_MS;
+  let pending: { value: T } | undefined;
+  let lastWriteAt: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let chain: Promise<void> = Promise.resolve();
+  let closed = false;
+
+  function drain(): Promise<void> {
+    chain = chain.then(async () => {
+      const next = pending;
+      pending = undefined;
+      if (!next) return;
+      lastWriteAt = Date.now();
+      try {
+        await opts.write(next.value);
+      } catch (err) {
+        opts.onError?.(err);
+      }
+    });
+    return chain;
+  }
+
+  function schedule(urgent: boolean): void {
+    if (timer !== undefined) {
+      if (!urgent) return;
+      clearTimeout(timer);
+    }
+    const delay = urgent ? 0 : nextWriteDelayMs(lastWriteAt, Date.now(), minIntervalMs);
+    timer = setTimeout(() => {
+      timer = undefined;
+      void drain();
+    }, delay);
+  }
+
+  function flush(): Promise<void> {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    return drain();
+  }
+
+  return {
+    set(value, urgent = false) {
+      if (closed) return;
+      pending = { value };
+      schedule(urgent);
+    },
+    flush,
+    async close() {
+      closed = true;
+      await flush();
+    },
+  };
+}
+
+export function replaceStatusWrite(kcp: KcpClient, target: KcpTarget, name: string): (status: unknown) => Promise<unknown> {
+  return (status) =>
+    kcp.patch(target, name, { type: "json", ops: [{ op: "add", path: "/status", value: status }] }, { subresource: "status" });
+}
+
+export function statusFieldWrite(
+  kcp: KcpClient,
+  target: KcpTarget,
+  name: string,
+  field: string,
+): (value: unknown) => Promise<unknown> {
+  return (value) => kcp.patch(target, name, { type: "merge", body: { status: { [field]: value } } }, { subresource: "status" });
 }

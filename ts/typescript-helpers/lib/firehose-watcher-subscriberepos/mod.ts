@@ -73,7 +73,10 @@ export function createFirehoseWatcher(
       try {
         if (typeof event.data !== "string") return;
         const frame = JSON.parse(event.data) as Partial<SubscribeReposFrame>;
-        if (typeof frame.seq === "number") cursor = frame.seq;
+        if (typeof frame.seq === "number") {
+          cursor = frame.seq;
+          opts.onProgress?.({ cursor: frame.seq, ...(frame.time ? { eventTime: frame.time } : {}) });
+        }
         emit(frame);
       } catch {
         // skip malformed frames

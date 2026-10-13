@@ -126,6 +126,54 @@ type ApplicationStatus struct {
 	StateDir *StateDirUsage `json:"stateDir,omitempty"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	Market *MarketLoopStatus `json:"market,omitempty"`
+}
+
+type MarketLoopStatus struct {
+	RfpsSeen int64 `json:"rfpsSeen,omitempty"`
+
+	RfpsScoped int64 `json:"rfpsScoped,omitempty"`
+
+	DeclinedByReason []MarketDeclineCount `json:"declinedByReason,omitempty"`
+
+	Bids int64 `json:"bids,omitempty"`
+
+	Wins int64 `json:"wins,omitempty"`
+
+	ContractsActive int64 `json:"contractsActive,omitempty"`
+
+	Streams []MarketStreamStatus `json:"streams,omitempty"`
+
+	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+type MarketDeclineCount struct {
+	Reason string `json:"reason"`
+
+	Count int64 `json:"count"`
+}
+
+type MarketStreamStatus struct {
+	Source string `json:"source"`
+
+	Cursor int64 `json:"cursor,omitempty"`
+
+	LagMs int64 `json:"lagMs,omitempty"`
+
+	LastEventAt string `json:"lastEventAt,omitempty"`
+}
+
+type ExecutionStatus struct {
+	Step string `json:"step,omitempty"`
+
+	StepStartedAt string `json:"stepStartedAt,omitempty"`
+
+	LastEventAt string `json:"lastEventAt,omitempty"`
+
+	LastError string `json:"lastError,omitempty"`
+
+	Attempts int32 `json:"attempts,omitempty"`
 }
 
 type StateDirUsage struct {

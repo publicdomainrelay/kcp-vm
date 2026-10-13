@@ -49,6 +49,17 @@ func BidderIdentityMode(profile string) (v1alpha1.MarketIdentityMode, error) {
 
 type SignInGuard func(spec v1alpha1.MarketBidderSpec, id *v1alpha1.MarketIdentity) error
 
+const MarketRootNameArg = "--market-root-name"
+
+func withRootName(extra *string, name string) error {
+	f, err := fragment([]string{MarketRootNameArg, name})
+	if err != nil {
+		return err
+	}
+	*extra += f
+	return nil
+}
+
 func fragment(items []string) (string, error) {
 	if len(items) == 0 {
 		return "", nil
@@ -242,6 +253,9 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		}
 		kcp.TokenFile, kcp.CAFile = BidderTokenPaths(stateDir)
 		values, err := BidderValues(o.Spec, stateDir, guestStateDir, kcp)
+		if err == nil {
+			err = withRootName(&values.ExtraArgs, o.Name)
+		}
 		if err != nil {
 			st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
