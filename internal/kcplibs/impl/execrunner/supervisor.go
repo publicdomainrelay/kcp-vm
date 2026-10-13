@@ -202,7 +202,7 @@ func (s *supervisor) retain(id string) {
 }
 
 func (s *supervisor) remove(id string) error {
-	if id == "" || filepath.Base(id) != id || !strings.HasPrefix(id, s.prefix+"-") {
+	if !IsRunID(id) || !strings.HasPrefix(id, s.prefix+"-") {
 		return nil
 	}
 	_ = s.stop(id)

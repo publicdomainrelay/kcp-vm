@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"time"
 
@@ -14,6 +15,10 @@ const (
 	StdoutFile = "stdout.txt"
 	StderrFile = "stderr.txt"
 )
+
+var runIDPattern = regexp.MustCompile(`^(pod|engine)-[0-9]{8}T[0-9]{6}\.[0-9]{9}-[0-9]+$`)
+
+func IsRunID(name string) bool { return runIDPattern.MatchString(name) }
 
 func (p *Pod) Remove(_ context.Context, runID string) error { return p.sup.remove(runID) }
 
@@ -51,7 +56,7 @@ func SweepRuns(runsDir string, named func(string) bool, before time.Time) []stri
 	var removed []string
 	for _, e := range entries {
 		id := e.Name()
-		if !e.IsDir() || named(id) {
+		if !e.IsDir() || !IsRunID(id) || named(id) {
 			continue
 		}
 		if _, ok := live[id]; ok {
@@ -76,7 +81,7 @@ func CapRunLogs(runsDir string, capBytes int64) []string {
 	}
 	var rotated []string
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || !IsRunID(e.Name()) {
 			continue
 		}
 		for _, name := range []string{StdoutFile, StderrFile} {
