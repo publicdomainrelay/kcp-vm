@@ -480,6 +480,11 @@ stopped 0.79 s later with 303 open connections drained, the EndpointSlice never 
 16:05:14-16:05:29: green Ready 10 s after start, the old listener stopped 0.2 s later, the node's lease
 renewed through the new listener. A `rollback` to a build without the token file restarted the core
 into a loop (bootstrap Unauthorized) while every member unit kept serving and the node stayed Ready.
+Between two builds that both carry it: `upgrade` 16:22:45 (members up 16:24:10), `rollback` 16:24:10
+(members up 16:24:14 on the previous binary), `kill -9` of the core 16:24:22.1 (systemd restarted it
+16:24:27, members up 16:24:29.2). Over the whole run (15:25:22-16:25, 3392 polls): 1 failed `/readyz`
+(the cluster roll above), no Ready transition of the market node, the same claim uid and receipt, the
+guest's VM unit kept its InvocationID and pid, no RFP and no vm.delete after the first rental.
 
 Stated limits: a user-manager restart, linger removal or a reboot removes every transient unit, so
 every cluster cold-starts; the NotReady clock counts from when the path is back (0007
