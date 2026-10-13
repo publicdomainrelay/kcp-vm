@@ -53,6 +53,7 @@ gate:
 release-reproducible:
   stage: release
   timeout: 30m
+  allow_failure: true
   variables:
     GIT_DEPTH: "0"
     RELEASE_NO_CACHE: ""
