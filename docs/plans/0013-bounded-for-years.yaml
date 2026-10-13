@@ -1,0 +1,227 @@
+plan: 0013-bounded-for-years
+written: 2026-10-12
+revised: >
+  2026-10-12, first version, from the lead's review of what grows when a bidder or the gateway runs for
+  months or years (user question of 2026-10-12: use the kcp garbage collector and our kinds so the hosts
+  they run on never run out of memory). Split out of the draft milestone M5 of plan 0009 at the user's
+  request.
+queued: >
+  M1-BACKUP-RETENTION and M1-PDS-POINT-READS have no dependency and may start now: both are growth that
+  already exists on main and reaches prod first. Every other item waits for 0006 M5-FRESH-DEPLOY and for the
+  plan 0009 kinds it names.
+source: >
+  A bidder handle and the gateway are meant to run for months or years. Memory in kcp, in the Go core's
+  informers and in each DenoPod is roughly the number of objects times their size, plus caches; the store
+  grows with every write until it is compacted; vaults, disks and PDS repositories grow with every contract.
+  On main (checked 2026-10-12): nothing configures kine compaction or sqlite VACUUM; OpenBao has no pki
+  tidy, no no_store and no kv max_versions; every kcp roll writes a pg_dump backup that is never removed;
+  a DenoPod has no memory limit; ownerReferences are almost unused; kcp has no event TTL and no object-count
+  quota; eleven listRecordsAll calls in the market libraries read every record of a DID on paths that run
+  per accept or per event.
+principle:
+  stated: >
+    Every long-running application instance is bounded: object count, object size, store history, process
+    memory, vault storage, disk and own PDS records each have a limit or a lifecycle that ends. A limit that
+    is reached shows in kcp status and degrades service (a declined RFP, a restarted pod), never the host.
+  rules:
+    - "Every child object has an owner that ends (ownerReferences, cascading inside one workspace) or a TTL after it finishes. An object with neither is a leak and is counted."
+    - "Every list in a status has a cap."
+    - "A per-workspace object-count quota is the hard ceiling; reaching it refuses the create and the caller declines or waits, with the reason in status."
+    - "Every process has a memory limit; a breach restarts that process, never the host."
+    - "Proof is a soak reading whose series plateau, not a test."
+state_rules:
+  - "No tests until prod works (user, 2026-10-12). done_when is a live reading."
+  - "Real names only; commit and push only socialweb-computer-kcp; the lead flips status."
+ownership:
+  repository: socialweb-computer-kcp
+  go: "internal/appctl, internal/computevm, internal/clusterprovider (owners), a TTL controller in the core, internal/bootstrap and internal/pgunit (store), internal/denokcp (DenoPod limits, runs dirs), internal/openbao and internal/openbaoctl (vault)"
+  typescript: "ts/atproto-market (point reads, own-record retention, cache caps), ts/typescript-helpers/lib (kcp client watch discipline)"
+research:
+  - "kcp runs the Kubernetes garbage collector per logical cluster: ownerReferences cascade inside one workspace, never across workspaces."
+  - "The Kubernetes TTL-after-finished controller covers Jobs only; the vendored deno-kcp kinds carry their own run TTL (PolicyWorkflowRun runTTLSecondsAfterFinished, DenoJob ttlSecondsAfterFinished)."
+  - "kine keeps a row per revision and compacts old revisions on an interval; an sqlite file does not shrink without VACUUM."
+  - "OpenBao pki stores every issued leaf unless the role sets no_store; pki tidy removes expired and revoked ones."
+items:
+  - id: M1-BACKUP-RETENTION
+    milestone: M1
+    title: Keep a bounded number of kcp store backups
+    depends_on: []
+    decision: >
+      The pg_dump written before each kcp roll (<state>/kcp/backups/kine-<ts>.sql) is kept only for the last
+      5 backups and those newer than 14 days; older ones are removed after a new backup is written and
+      checked (exit 0, size > 0). Both numbers are options with those defaults. Decided by Claude, user may
+      veto.
+    files: ["internal/pgunit", "internal/kcpstore"]
+    done_when: "after 8 rolls on a dev gateway instance, 5 backups remain, the newest is the last roll's."
+    risks: []
+    status: todo
+    evidence:
+  - id: M1-PDS-POINT-READS
+    milestone: M1
+    title: Market paths read one record by key, never every record of a DID
+    depends_on: []
+    decision: >
+      Each listRecordsAll(pds, did, collection) call in the market libraries that looks for one record whose
+      uri is already known becomes a getRecord(repo, collection, rkey) on that uri (accept watch, event
+      watch, receipts, contract lookups). Calls that truly need a scan page with a cursor and stop at the
+      first match. Decided by Claude, user may veto.
+    files: ["ts/atproto-market/lib/market-bidder", "ts/atproto-market/lib/compute-request-xrpc", "ts/atproto-market/lib/requester-xrpc", "the other libraries that call listRecordsAll"]
+    done_when: "no listRecordsAll call remains on a per-accept or per-event path; a market network run with --secrets passes."
+    risks: []
+    status: todo
+    evidence:
+  - id: M2-OWNERSHIP-TREE
+    milestone: M2
+    title: Every child object hangs from an owner that ends
+    depends_on: ["0006:M5-FRESH-DEPLOY"]
+    decision: >
+      ownerReferences on every child kind, inside its own workspace: a ComputeVM owned by its won Bid (by its
+      MarketBidder until plan 0009 M2-BID-KIND), a VM HostProcess mirror by its ComputeVM, a NodeClaim by its
+      Cluster, a ComputeContract by its NodeClaim (gateway) or its MarketRequester (CLI), a PolicyWorkflowRun
+      by the object it evaluates, each profile DenoPod, PolicyEngine and OpenBaoServer by its root. The root
+      status gains `gc`: objects with no owner and no TTL, by kind, and objects terminating for more than 10
+      minutes, by kind and finalizer. Every finalizer names the one controller that removes it. Decided by
+      Claude, user may veto.
+    files: ["internal/appctl", "internal/computevm", "internal/clusterprovider", "ts/atproto-market (creators of child objects)", "api/types_application.go"]
+    done_when: "deleting a MarketBidder, a Cluster or a NodeClaim leaves no child object; the root status of a busy market network shows 0 orphans and 0 stuck terminations."
+    risks: ["A cascade that deletes a ComputeVM whose guest still runs: a ComputeVM's own finalizer stops its unit first, as today."]
+    status: todo
+    evidence:
+  - id: M2-TTL-CONTROLLER
+    milestone: M2
+    title: One TTL-after-finished controller in the core for every finished object
+    depends_on: [M2-OWNERSHIP-TREE]
+    decision: >
+      One controller in the Go core deletes an object whose annotation socialweb.computer/ttl-after-finished
+      (a duration) has passed since the lastTransitionTime of its Complete or Failed condition. Defaults set by
+      the creators: a Lost or Expired Bid 24 h, a Won Bid 24 h after its ComputeVM is gone, a finished CLI
+      ComputeContract 7 d, a DenoRun and DenoJob 1 h. It runs from watches, not a poll, and reports deletions in
+      the root status. Decided by Claude, user may veto.
+    files: ["internal/ttlctl (new)", "internal/denokcp"]
+    done_when: "on a market network with short TTLs set, finished objects of every kind disappear at their TTL and the counts stay flat under load."
+    risks: []
+    status: todo
+    evidence:
+  - id: M2-QUOTAS
+    milestone: M2
+    title: Object-count quotas per workspace; a quota hit declines, never OOMs
+    depends_on: [M2-TTL-CONTROLLER]
+    decision: >
+      Each application workspace gets an object-count quota per kind (Bids, ComputeVMs, ComputeContracts,
+      NodeClaims, PolicyWorkflowRuns, DenoRuns; defaults sized from M4-SOAK-READING, options on the root). A
+      refused create makes the bidder decline with reason "capacity" and the requester keep the contract
+      Pending with an AtCapacity condition. First check whether kcp enforces ResourceQuota for resources bound
+      through an APIBinding; if it does not, the same count check runs in the creating controller against its
+      watch. Decided by Claude, user may veto.
+    files: ["deploy/apps/*/ (quota objects)", "internal/appctl", "ts/atproto-market/lib/market-bidder"]
+    done_when: "with a quota of 10 Bids, the 11th RFP is declined with reason capacity and kcp memory does not move."
+    risks: []
+    status: todo
+    evidence:
+  - id: M3-STORE-COMPACTION
+    milestone: M3
+    title: The kcp store keeps a bounded history
+    depends_on: ["0006:M5-FRESH-DEPLOY"]
+    decision: >
+      kine runs with an explicit compaction interval and retained revisions (set, not left to defaults). A
+      bidder's sqlite store uses auto_vacuum=INCREMENTAL and the core runs incremental_vacuum on an interval;
+      the gateway's postgres keeps autovacuum on for the kine table and the root status reports its table size
+      and dead tuples. kcp runs with a short --event-ttl (1 h) and our controllers write status, not Events.
+      Decided by Claude, user may veto.
+    files: ["internal/bootstrap", "internal/kcpserver", "internal/pgunit", "internal/postgresctl"]
+    done_when: "under M4-SOAK-READING load the sqlite file size and the kine row count plateau on a bidder, and the kine table size plateaus on the gateway."
+    risks: ["An sqlite store created before auto_vacuum was set needs one full VACUUM; the core runs it once at the next start, during the slot roll."]
+    status: todo
+    evidence:
+  - id: M3-DENOPOD-LIMITS
+    milestone: M3
+    title: Every process has a memory limit; a breach restarts that process
+    depends_on: ["0006:M5-FRESH-DEPLOY"]
+    decision: >
+      DenoPod spec gains resources.memory. The deno-kcp provider passes --v8-flags=--max-old-space-size at about
+      80% of it and runs the pod in its own delegated cgroup scope under the core's unit with MemoryMax and
+      MemorySwapMax=0; a breach restarts the pod and is counted with its reason in the pod status. Every
+      HostProcess (kcp, kine, OpenBao, postgres, VM units) gets a MemoryMax (hostsvc supports it today). The
+      TypeScript caches get size caps: the scope verdict cache an LRU of 10000 entries on top of its TTLs, and
+      any remaining in-memory dedup sets bounded. The profiles set every limit. Decided by Claude, user may veto.
+    files: ["internal/denokcp/api/v1alpha1/types_denopod.go", "internal/denokcp/provider", "internal/hostsvc", "deploy/apps/*/", "ts/policy-engine/lib/policy-engine-scope-cache"]
+    done_when: "a DenoPod made to allocate past its limit is restarted alone (core and other pods keep their pids); every HostProcess unit shows a MemoryMax."
+    risks: ["Delegated cgroups under a user manager need Delegate=yes on the core unit; 0006 M1-INSTALL writes the delegation drop-in already."]
+    status: todo
+    evidence:
+  - id: M3-VAULT-TIDY
+    milestone: M3
+    title: Vault storage stays bounded
+    depends_on: ["0006:M5-FRESH-DEPLOY"]
+    decision: >
+      Every pki role that issues DenoPod and service leaves sets no_store=true and a short TTL (renewed by the
+      provider); each OpenBaoServer runs pki tidy (tidy_cert_store, tidy_revoked_certs, safety_buffer 72 h)
+      on an interval; kv mounts set max_versions=3; token and lease tidy runs on an interval. OpenBaoServer spec
+      declares these, and the OpenBaoServer controller keeps them in sync like its mounts. Decided by Claude,
+      user may veto.
+    files: ["internal/openbao", "internal/openbaoctl", "internal/baosync", "api (OpenBaoServer spec)"]
+    done_when: "after 500 DenoPod restarts the OpenBao storage size of the instance is within 5% of its start."
+    risks: []
+    status: todo
+    evidence:
+  - id: M3-DISK-RETENTION
+    milestone: M3
+    title: Disk use stays bounded
+    depends_on: [M1-BACKUP-RETENTION]
+    decision: >
+      The deno-kcp provider removes a pod's runs/ directory when the pod or run is deleted and at start for
+      directories no object names. User units log to the journal with SystemMaxUse-style limits set for the
+      account; any file log is rotated. Guest images that no ComputeVM, version entry or the current and
+      previous binary names are removed. The existing DENO_DIR, asset and VM work dir rules stay. The root
+      status reports the state dir size. Decided by Claude, user may veto.
+    files: ["internal/denokcp/provider", "internal/guestimage", "internal/install"]
+    done_when: "under M4-SOAK-READING load the state dir size plateaus."
+    risks: []
+    status: todo
+    evidence:
+  - id: M3-PDS-RECORD-RETENTION
+    milestone: M3
+    title: Own market records are removed when they are no longer needed
+    depends_on: [M1-PDS-POINT-READS, "0009:M2-BID-KIND"]
+    decision: >
+      The bidder deletes its own market.bid record when its Bid is Lost or Expired and its TTL passes; the
+      requester deletes its own RFP and accept records after the contract is Released and a retention time
+      (default 7 d) passes, keeping what a later vm.delete answer or receipt check needs. No application ever
+      deletes a record of another DID. Decided by Claude, user may veto.
+    files: ["ts/atproto-market/lib/market-bidder", "ts/atproto-market/lib/requester-xrpc"]
+    done_when: "on a market network after 1000 contracts and their retention, each PDS repository holds only live and retained records."
+    risks: ["A requester that checks a receipt after the bidder removed its bid record: the receipt and the ComputeVM tombstone answer, not the bid record."]
+    status: todo
+    evidence:
+  - id: M4-SOAK-READING
+    milestone: M4
+    title: Soak reading - every series plateaus
+    depends_on: [M2-QUOTAS, M3-STORE-COMPACTION, M3-DENOPOD-LIMITS, M3-VAULT-TIDY, M3-DISK-RETENTION, M3-PDS-RECORD-RETENTION]
+    decision: >
+      A market network with a gateway under accelerated load for about 24 h: at least 50000 RFPs, 2000
+      contracts, 200 restarts and upgrades of bidder and gateway components. Sampled every minute: RSS of kcp,
+      kine, the core, each deno, OpenBao and postgres; object counts per kind; kine rows and store size;
+      OpenBao storage size; state dir size. Recorded in docs/ARCHITECTURE.md section 15. Pass: every series is
+      flat after warm-up (a fitted slope within noise); any series that keeps growing is named and fixed. The
+      readings also size the M2-QUOTAS defaults. Decided by Claude, user may veto.
+    files: ["docs/ARCHITECTURE.md"]
+    done_when: "the readings are recorded and every series plateaus."
+    risks: ["24 h on hat-8 holds VM slots; it runs in its own stand-in account with its own subuid range."]
+    status: todo
+    evidence:
+acceptance:
+  where: hat-8
+  checks:
+    - id: ACC13-BOUNDED
+      text: "Under M4-SOAK-READING load, memory of every process, object counts per kind, the kcp store, the vault store, the state dir and own PDS records all plateau."
+      status: todo
+      evidence: []
+    - id: ACC13-NO-HOST-OOM
+      text: "A quota hit declines or waits with a reason in status, and a memory breach restarts only the process that breached; the host never runs out of memory."
+      status: todo
+      evidence: []
+    - id: ACC13-NO-ORPHANS
+      text: "Every object has an owner that ends or a TTL; the root status of each application reports 0 orphans and 0 stuck terminations after the soak."
+      status: todo
+      evidence: []
+questions_for_user: []
