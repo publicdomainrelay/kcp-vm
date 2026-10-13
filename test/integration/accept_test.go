@@ -210,3 +210,98 @@ func TestAcceptOfAnEndedContractStartsNoVM(t *testing.T) {
 		t.Fatalf("the Bids changed across the replay:%s", describeBids(after))
 	}
 }
+
+func (n *Network) grepGlob(pattern, glob string) int {
+	r := n.h.As(context.Background(), "sh", "-c", `cat $1 2>/dev/null | grep -c -a -F -e "$0"; true`, pattern, glob)
+	c, _ := strconv.Atoi(strings.TrimSpace(r.Stdout))
+	return c
+}
+
+func TestAcceptSurvivesABidderRestart(t *testing.T) {
+	n := StartNetwork(t, NetworkOptions{Bidders: 1})
+	ctx := context.Background()
+	dyn, err := n.bidderClient(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _, err := n.bidderProcess(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "rb" + randHex(3)
+	requesterLogs := filepath.Join(n.StateDir, "apps", "dev", "*", "denokcp", "runs", "pod-*", "std*.txt")
+	p := n.Start("run-request", acceptRequestTimeout, "run", "request", "--network", n.Instance, "--name", name, "--exec", "true",
+		"--contract-timeout", "4m", "--network-timeout", "2m", "--state-dir", n.StateRoot)
+	deadline := time.Now().Add(3 * time.Minute)
+	var stoppedAt v1alpha1.BidPhase
+	for stoppedAt == "" {
+		select {
+		case <-p.done:
+			r := p.Wait()
+			t.Fatalf("run request ended before the bidder bid: %v\n%s", r.Err, r.Tail(15))
+		default:
+		}
+		bids, err := bidderBids(ctx, dyn)
+		if err == nil {
+			for _, b := range bids {
+				if b.Status.Phase == v1alpha1.BidPhasePublished || b.Status.Phase == v1alpha1.BidPhaseWon {
+					if err := n.signal("STOP", pid); err != nil {
+						t.Fatal(err)
+					}
+					stoppedAt = b.Status.Phase
+					break
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the bidder published no Bid inside 3m")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if stoppedAt != v1alpha1.BidPhasePublished {
+		n.signal("CONT", pid)
+		t.Fatalf("the accept reached the bidder before it was stopped (Bid %s); the restart did not fall between the bid and the accept", stoppedAt)
+	}
+	t.Logf("bidder %d stopped right after its Bid was Published", pid)
+	deadline = time.Now().Add(45 * time.Second)
+	for n.grepGlob("submitAccept_retry", requesterLogs) == 0 {
+		if time.Now().After(deadline) {
+			n.signal("KILL", pid)
+			t.Fatalf("the requester did not re-send submitAccept inside 45s while the bidder was stopped")
+		}
+		time.Sleep(time.Second)
+	}
+	if err := n.signal("KILL", pid); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("the requester re-sends submitAccept; bidder %d killed", pid)
+	newPID, _, err := n.waitBidderBack(0, pid, bidderBack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("bidder back as %d", newPID)
+	r := p.Wait()
+	if r.Err != nil {
+		t.Fatalf("run request after the bidder restart: %v\n%s", r.Err, r.Tail(15))
+	}
+	var s requestSummary
+	if err := lastJSON(r.Stdout, &s); err != nil {
+		t.Fatalf("run request summary: %v", err)
+	}
+	if s.Phase != "Released" || s.Contract == nil || s.Contract.ReceiptUri == "" || s.Contract.VMAddress == "" {
+		t.Fatalf("the contract did not complete across the bidder restart: phase %s: %s", s.Phase, s.Message)
+	}
+	kept := filepath.Join(n.StateRoot, "requests", name, "logs", "*")
+	retries := n.grepGlob("submitAccept_retry", kept)
+	t.Logf("contract completed across the bidder restart: receipt %s, guest %s, %d submitAccept re-send(s)", s.Contract.ReceiptUri, s.Contract.VMAddress, retries)
+	_, won, err := wonBids(ctx, dyn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(won) != 1 {
+		t.Fatalf("%d Won Bids; want one", len(won))
+	}
+	if err := n.WaitNoGuests(time.Minute); err != nil {
+		t.Fatal(err)
+	}
+}
