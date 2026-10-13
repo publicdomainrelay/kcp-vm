@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
@@ -120,37 +122,79 @@ func rewindStreams(ctx context.Context, dyn dynamic.Interface) (int, error) {
 }
 
 func TestAcceptOfAnEndedContractStartsNoVM(t *testing.T) {
-	n := StartNetwork(t, NetworkOptions{Bidders: 1})
+	n := StartNetwork(t, NetworkOptions{Bidders: 1, WithGateway: true, UpTimeout: 5 * time.Minute})
 	ctx := context.Background()
+	tn := n.Tenant(t, "tenant", tenantReady)
 	dyn, err := n.bidderClient(0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := "ra" + randHex(3)
-	r := n.Run("run-request", acceptRequestTimeout, "run", "request", "--network", n.Instance, "--name", name, "--exec", "true",
-		"--contract-timeout", "3m", "--network-timeout", "2m", "--state-dir", n.StateRoot)
-	if r.Err != nil {
-		t.Fatalf("run request: %v\n%s", r.Err, r.Tail(15))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "it-accept-probe", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			TerminationGracePeriodSeconds: new(int64),
+			Containers: []corev1.Container{{
+				Name: "probe", Image: probeImage, Command: []string{"sh", "-c", "sleep 3600"},
+				Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+					corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")}},
+			}},
+		},
 	}
-	var s requestSummary
-	if err := lastJSON(r.Stdout, &s); err != nil {
-		t.Fatalf("run request summary: %v", err)
-	}
-	if s.Phase != "Released" || s.Contract == nil || s.Contract.ReceiptUri == "" {
-		t.Fatalf("the contract did not end Released with a receipt: phase %s: %s", s.Phase, s.Message)
-	}
-	if err := n.WaitNoGuests(time.Minute); err != nil {
+	pods := tn.Kube.CoreV1().Pods("default")
+	if _, err := pods.Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	deadline := time.Now().Add(scaleOutTimeout)
+	for {
+		if err := tn.ClaimFailure(ctx); err != nil {
+			t.Fatalf("the NodeClaim failed: %v\n%s", err, tn.Summary(ctx))
+		}
+		nodes, _ := tn.Nodes(ctx)
+		if len(nodes) > 0 && nodeReady(nodes[0]) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no node joined inside %s\n%s", scaleOutTimeout, tn.Summary(ctx))
+		}
+		time.Sleep(time.Second)
+	}
+	if err := pods.Delete(ctx, pod.Name, metav1.DeleteOptions{GracePeriodSeconds: new(int64)}); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(scaleInTimeout)
+	for {
+		if err := tn.ClaimFailure(ctx); err != nil {
+			t.Fatalf("the NodeClaim failed: %v\n%s", err, tn.Summary(ctx))
+		}
+		vms, err := n.BidderVMs(ctx)
+		if err == nil && len(vms) == 0 && len(n.guestsLeft()) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the cluster did not scale in to zero inside %s\n%s", scaleInTimeout, tn.Summary(ctx))
+		}
+		time.Sleep(2 * time.Second)
 	}
 	bids, won, err := wonBids(ctx, dyn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(won) != 1 || won[0].Status.Accept == nil || won[0].Status.Accept.Uri == "" {
-		t.Fatalf("want one Won Bid that names its accept:%s", describeBids(bids))
+	var accepts []string
+	for _, b := range won {
+		if b.Status.Accept != nil && b.Status.Accept.Uri != "" {
+			accepts = append(accepts, b.Status.Accept.Uri)
+		}
 	}
-	accept := won[0].Status.Accept.Uri
-	t.Logf("contract released: receipt %s, accept %s", s.Contract.ReceiptUri, accept)
+	if len(accepts) == 0 {
+		t.Fatalf("no Won Bid names its accept:%s", describeBids(bids))
+	}
+	bidderRuns := filepath.Join(n.bidderDir(0), "denokcp", "runs", "pod-*", "std*.txt")
+	for _, a := range accepts {
+		if n.grepGlob(a, bidderRuns) == 0 {
+			t.Fatalf("the bidder never logged the accept %s; the replay cannot deliver it again", a)
+		}
+	}
+	t.Logf("scaled to zero: every guest released; %d Won Bid(s), accepts %s", len(won), strings.Join(accepts, " "))
 
 	pid, _, err := n.bidderProcess(0)
 	if err != nil {
@@ -168,18 +212,18 @@ func TestAcceptOfAnEndedContractStartsNoVM(t *testing.T) {
 		n.signal("KILL", pid)
 		t.Fatalf("removing the bidder's tombstones: %v", rm.Err)
 	} else {
-		t.Logf("removed the bidder's local contract records: %s", strings.Join(strings.Fields(rm.Stdout), " "))
+		t.Logf("removed the bidder's local contract records: %d file(s)", len(strings.Fields(rm.Stdout)))
 	}
 	if err := n.signal("KILL", pid); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("bidder %d killed with %d stream cursor(s) rewound to 1: the restart replays the firehose and the accept of the ended contract", pid, rewound)
+	t.Logf("bidder %d killed with %d stream cursor(s) rewound to 1: the restart replays the firehose and the accepts of the ended contracts", pid, rewound)
 
 	newPID, dir, err := n.waitBidderBack(0, pid, bidderBack)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(acceptReplay)
+	deadline = time.Now().Add(acceptReplay)
 	for {
 		if vms, err := n.BidderVMs(ctx); err == nil && len(vms) > 0 {
 			t.Fatalf("the replayed accept of an ended contract started a ComputeVM: %s", describeVM(vms[0]))
@@ -188,14 +232,20 @@ func TestAcceptOfAnEndedContractStartsNoVM(t *testing.T) {
 			t.Fatalf("the replayed accept of an ended contract started a guest: %s", strings.Join(left, "; "))
 		}
 		if n.grepCount("bidder received accept for VM", runLogs(dir)...) > 0 {
-			t.Fatalf("the restarted bidder %d took the replayed accept %s", newPID, accept)
+			t.Fatalf("the restarted bidder %d took a replayed accept of an ended contract", newPID)
 		}
-		if c := n.grepCount("accept_contract_ended", runLogs(dir)...); c > 0 && n.grepCount(accept, runLogs(dir)...) > 0 {
-			t.Logf("the restarted bidder %d refused the replayed accept: receipt in its own repo", newPID)
+		refused := 0
+		for _, a := range accepts {
+			if n.grepCount(a, runLogs(dir)...) > 0 && n.grepCount("accept_contract_ended", runLogs(dir)...) > 0 {
+				refused++
+			}
+		}
+		if refused == len(accepts) {
+			t.Logf("the restarted bidder %d refused the %d replayed accept(s): a receipt in its own repo answers each", newPID, refused)
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the restarted bidder %d did not see the accept %s again inside %s", newPID, accept, acceptReplay)
+			t.Fatalf("the restarted bidder %d did not refuse the replayed accepts inside %s (%d of %d)", newPID, acceptReplay, refused, len(accepts))
 		}
 		time.Sleep(time.Second)
 	}
@@ -206,7 +256,7 @@ func TestAcceptOfAnEndedContractStartsNoVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != len(bids) || len(wonAfter) != 1 || wonAfter[0].Name != won[0].Name {
+	if len(after) != len(bids) || len(wonAfter) != len(won) {
 		t.Fatalf("the Bids changed across the replay:%s", describeBids(after))
 	}
 }
