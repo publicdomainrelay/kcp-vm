@@ -1,19 +1,24 @@
 # 01 - The kcp server
 
-End state: a host running kcp, one tenant cluster at Ready, nodes sized for the job, and a runner
-credential in hand. Nothing here needs GitLab.
+End state: a host running the `socialweb-computer` gateway, one tenant cluster at Ready, nodes sized
+for the job, and a runner credential in hand. Nothing here needs GitLab.
 
-Read [README.md](README.md#reachability-the-single-operational-fact) first: the apiserver binds
-loopback, so GitLab has to be able to reach loopback on this host.
+Read [README.md](README.md#reachability-the-single-operational-fact) first: the tenant apiserver binds
+loopback on this host, so GitLab has to run here.
 
-## 1. Run the control plane
+## 1. Run the gateway
 
-The gateway is the `socialweb-computer` binary under its own lingering account; the host needs no
-`/dev/kvm`, no `/dev/net/tun` and no container runtime. Install it with `scripts/deploy.sh` (see the
-repository README, "Run it"): it runs `socialweb-computer install gateway` the first time and
-`upgrade` after, and waits until the web app answers `/api/config`.
+The gateway is the `socialweb-computer` binary under its own lingering account (`socialweb` on the
+production host). Install it with `scripts/deploy.sh`:
 
-Check it as the account:
+```bash
+BINARY=<path to socialweb-computer> SHA256=<sha256> SSH_KEY=~/.ssh/id_ed25519_no_password \
+  GATEWAY_ENV_FILE=~/.tmp/deploy/gateway.env GATEWAY_SPEC_FILE=~/.tmp/deploy/gateway-spec.yaml \
+  scripts/deploy.sh
+```
+
+`deploy.sh` runs `socialweb-computer install gateway` the first time and `upgrade` after, then waits
+until the web app answers `/api/config`. Check it as the account:
 
 ```bash
 systemctl --user status socialweb-computer-gateway.service
@@ -22,93 +27,51 @@ curl -fsS http://127.0.0.1:8788/api/config
 
 ## 2. The tenant cluster
 
-The cluster exists before its first node does. That is the point of the design.
+The cluster exists before its first node does. That is the point of the design: a cluster is a control
+plane, and nodes are rented when a Pod needs one.
 
 ```bash
 kubectl --kubeconfig <admin> get clusters
 kubectl --kubeconfig <admin> get cluster <name> -o jsonpath='{.status.url}'
 ```
 
-That URL is `https://127.0.0.1:<leased port>`, and the port is per cluster. It is what goes in the
-runner's `host`, and it is what the runner's certificate is signed against.
-
-The admin kubeconfig never leaves the provider's hands. It is not what a runner gets.
+`<admin>` is the kcp admin kubeconfig, named in the `adminKubeconfig` field of the gateway's
+`gateway.json`. That URL is `https://127.0.0.1:<leased port>`, and the port is per cluster. It is what
+goes in the runner's `host`, and what the runner's certificate is signed against. The admin kubeconfig
+never leaves the provider's hands and is not what a runner gets.
 
 ## 3. Size the nodes
 
-A node boots at 2 vCPU, 2048 MiB, 16 GiB disk. Fits a probe, not a toolchain. Four numbers, three
-places:
+A node boots at 2 vCPU and 2048 MiB. That fits a probe, not a toolchain. These numbers live in the
+guest image the bidder boots, recorded in its manifest as `vcpu` and `memMiB`, so changing either
+builds a new image.
 
-| What | Where | Why |
-| --- | --- | --- |
-| `vcpu`, `memMiB` | the node image's builder config | boot shape belongs to the image |
-| `rootfs_headroom_mib` | the node image's builder config | sizes the ROOT filesystem, where containerd lives |
-| `SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB` | clusterprovider env | per node, at provision time |
+### The root filesystem fills before the disk
 
-`vcpu` and `memMiB` fold into the image's fingerprint, so changing either builds a NEW image under
-a NEW name. The old one keeps its name and is never asked for again.
-
-### The root filesystem bites before the disk
-
-The job's image and its build outputs go in the ROOT filesystem, not the node disk. The node disk
-is attached and mounted READ-ONLY as the identity disk, so it cannot hold k3s state and
-`NODE_DISK_MIB` does not help here.
-
-Root filesystem size is `du(stage) + rootfs_headroom_mib`, and it is cloned per node. Too small and
-an image pull dies:
+A job's image and its build output go in the node's ROOT filesystem, where containerd stores layers.
+Too small and the image pull dies:
 
 ```
 failed to pull and unpack image ... no space left on device
 ```
 
-That is the ROOT filesystem, and it arrives as a Pod that never starts. For a build job:
-
-```json
-{
-  "vcpu": 12,
-  "memMiB": 24576,
-  "rootfs_headroom_mib": 55000
-}
-```
-
-```bash
-socialweb-nodeimage -config /path/to/nodeimage.json
-```
-
-Measured: at the default headroom that pull dies; at `55000` the root filesystem is
-58,401,488,896 bytes and it completes.
-
-For a scale check, where five nodes boot at once, five of the above is 60 vCPU and 120 GiB and does
-not fit a workstation:
-
-```json
-{
-  "vcpu": 2,
-  "memMiB": 3072,
-  "rootfs_headroom_mib": 1500
-}
-```
-
-and drop the Pod requests to `100m`/`128Mi`, see [02](02-gitlab-runner.md#the-file).
+That is the ROOT filesystem filling, and it arrives as a Pod that never starts. Size the image's root
+filesystem for the toolchain and its layers together. A large file staged INTO the image does not help:
+`mkfs.ext4 -d` refuses a file of about 2 GiB or more with `Ext2 file too big`. Anything that large is
+pulled by the guest at run time instead, see
+[03](03-jobs.md#what-the-guest-does-and-does-not-pull).
 
 ### The state directory has to be on real disk
 
-Node disks and root filesystems are large files. Where `/tmp` is a tmpfs that is RAM:
+Node disks and root filesystems are large files. Where `/tmp` is a tmpfs that is RAM, point the state
+directory at the host's real disk:
 
 ```bash
-TMPDIR=/var/tmp/kcp    # anywhere on the host's real disk
+TMPDIR=/var/tmp/kcp
 ```
 
-A state directory that cannot hold a node's disks fails as a full filesystem partway through a
-boot, not as a configuration error.
-
-### What does NOT go in the image
-
-A file of about 2 GiB or more cannot be staged into a node image - `mkfs.ext4 -d` refuses it with
-`Ext2 file too big`. Measured: a 3.3 GB tarball is refused at 6 GB and at 12 GB, while a 3.5 GB
-file of zeros is accepted in a 4.9 GB filesystem, so it tracks the file and not the size. Full
-table in `docs/plans/0004` section 7. Anything that big is pulled by the guest instead, see
-[03](03-jobs.md#what-the-guest-does-and-does-not-pull).
+A state directory that cannot hold a node's disks fails as a full filesystem partway through a boot,
+not as a configuration error.
 
 ### Check the host before booting anything
 
@@ -116,15 +79,15 @@ table in `docs/plans/0004` section 7. Anything that big is pulled by the guest i
 socialweb-computer check-host -role gateway -state-dir <state dir>
 ```
 
-It exits 1 naming every check that fails, each with its fix (`docs/host-contract.md`).
+It prints one line per check with its fix and exits 1 when any check fails (`docs/host-contract.md`).
 
 ## 4. Mint the runner's credential
 
-A runner authenticates with a CLIENT CERTIFICATE signed by that cluster's ClientCA. Valid only
-against that cluster.
+A runner authenticates to the tenant apiserver with a CLIENT CERTIFICATE signed by that cluster's
+ClientCA. The credential is valid only against that cluster.
 
-Not the superuser. `system:admin` in `system:masters` is cluster-admin on the tenant cluster and
-makes every RBAC rule below decorative.
+Do not use the superuser. `system:admin` in `system:masters` is cluster-admin on the tenant cluster
+and makes every RBAC rule below decorative.
 
 ```bash
 SOCIALWEB_TENANTCREDENTIAL_STATE_DIR=/var/lib/socialweb \
@@ -134,29 +97,29 @@ SOCIALWEB_TENANTCREDENTIAL_COMMON_NAME=gitlab-runner \
 SOCIALWEB_TENANTCREDENTIAL_ORGANIZATIONS=gitlab-runner \
 SOCIALWEB_TENANTCREDENTIAL_OUT_DIR=/etc/gitlab-runner/tenant-ci \
 SOCIALWEB_TENANTCREDENTIAL_VALID_FOR=720h \
-  ./socialweb-tenantcredential
+  socialweb-computer internal tenantcredential
 ```
 
-Three files at mode 0600:
+It writes three files at mode 0600:
 
 | File | What |
 | --- | --- |
-| `ca.crt` | the cluster's serving CA - what the apiserver presents at that URL |
-| `tls.crt` | the runner's client cert. CommonName is the username, Organizations are the groups |
+| `ca.crt` | the cluster's serving CA, what the apiserver presents at that URL |
+| `tls.crt` | the runner's client cert; CommonName is the username, Organizations are the groups |
 | `tls.key` | the private key |
 
-`VALID_FOR` is optional and defaults to the mint's own validity. This credential has no revocation
-path, so its lifetime is how long a leaked copy is useful. Rotating is moving the old files aside
-first: the tool refuses to overwrite.
+`VALID_FOR` is optional and defaults to the mint's own validity. The credential has no revocation path,
+so its lifetime is how long a leaked copy is useful. To rotate, move the old files aside first: the
+tool refuses to overwrite.
 
-**A scoped identity can only come from the ClientCA on disk.** The OpenBao-backed path's PKI role
-pins the organization to `system:masters`, so a refused `COMMON_NAME` or `ORGANIZATIONS` is that
-distinction and not a typo. In Go the scoped entry point is
-`clusterprovider.MintTenantCredentialForClusterAs`, which signs directly and so dodges the vault.
+A scoped identity can only come from the ClientCA on disk. The OpenBao-backed path's PKI role pins the
+organization to `system:masters`, so a refused `COMMON_NAME` or `ORGANIZATIONS` is that distinction
+and not a typo. In Go the scoped entry point is `clusterprovider.MintTenantCredentialForClusterAs`,
+which signs directly and so dodges the vault.
 
 ## 5. Permit that group in the tenant cluster
 
-Apply against the TENANT cluster. The namespace first - the runner does not create it.
+Apply against the TENANT cluster. The namespace first, because the runner does not create it.
 
 ```bash
 kubectl --kubeconfig <tenant-admin> apply -f - <<'YAML'
@@ -201,7 +164,7 @@ subjects:
 YAML
 ```
 
-`Group` is the `ORGANIZATIONS` value from step 4. Change one, change the other. When they disagree
+`Group` is the `ORGANIZATIONS` value from step 4. Change one, change the other. When they disagree,
 every job fails with a 403 that reads as a broken runner.
 
 `priorityclasses` is cluster-scoped, so a namespaced Role cannot grant it. `apps/deployments` and
@@ -230,10 +193,10 @@ What [02](02-gitlab-runner.md) needs from this document:
 
 ## GitLab on its own VM does not work
 
-A GitLab on a separate host cannot reach the tenant apiserver, because the apiserver binds loopback
-on the kcp host. The runner reports connection timeouts, and no runner configuration fixes it.
+A GitLab on a separate host cannot reach the tenant apiserver, because the apiserver binds loopback on
+the kcp host. The runner reports connection timeouts, and no runner configuration fixes it.
 
 Making it work means the kcp host publishing an authenticated front for the apiserver. That is a
-deliberate trust-boundary change, not a config step: the gateway refuses to bind anything but
-loopback on purpose and the entrypoint publishes exactly one port, whose only upstream is the
-gateway. Decide it deliberately.
+deliberate trust-boundary change, not a config step: the gateway refuses to bind anything but loopback
+on purpose, and the entrypoint publishes exactly one port whose only upstream is the gateway. Decide
+it deliberately.

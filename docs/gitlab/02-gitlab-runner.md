@@ -1,9 +1,10 @@
 # 02 - The GitLab runner
 
-End state: a runner registered to a project, running on the kcp host, with `host` set to the
-tenant apiserver's loopback URL.
+End state: a runner registered to a project, running on the kcp host, with `host` set to the tenant
+apiserver's loopback URL.
 
-Needs [01](01-kcp-server.md) finished: a cluster, a URL, three files, a group name.
+This needs [01](01-kcp-server.md) finished: a tenant cluster, its apiserver URL, the credential files
+`/etc/gitlab-runner/tenant-ci/`, and the group name `gitlab-runner`.
 
 ## GitLab
 
@@ -32,13 +33,13 @@ services:
       - /srv/gitlab/data:/var/opt/gitlab
 ```
 
-Two things there are deliberate:
+Two settings there are deliberate:
 
 - **`hostname` is short, not an FQDN.** A long container hostname breaks Docker's internal DNS, and
   the failure presents as an unreachable OIDC provider rather than as a DNS problem.
 - **`GITLAB_OMNIBUS_CONFIG` only applies on first boot.** Editing it later does nothing. Change
-  `/srv/gitlab/config/gitlab.rb` and run `docker exec gitlab gitlab-ctl reconfigure` instead. This
-  is the most common way a working GitLab is broken by a correct-looking edit.
+  `/srv/gitlab/config/gitlab.rb` and run `docker exec gitlab gitlab-ctl reconfigure` instead. This is
+  the most common way a working GitLab is broken by a correct-looking edit.
 
 Wait for readiness rather than sleeping:
 
@@ -74,7 +75,7 @@ below.
 
 ## The file
 
-Copy. Fill `<<...>>`. Everything else is load-bearing, table after says why.
+Fill the `<<...>>` placeholders. The table after says why every other value is set.
 
 ```toml
 concurrent = 8
@@ -127,12 +128,12 @@ check_interval = 3
 
 | Key | Why |
 | --- | --- |
-| `concurrent` | Jobs in flight at once. One per node if anti-affinity is on. `1` wedges: a stale job from a cancelled pipeline holds the only slot. |
-| `host` | The apiserver's own loopback URL, from [01](01-kcp-server.md#hand-back). NOT the kcp mount URL - that is a reverse proxy and `pods/exec` does not survive it. |
-| `cert_file`/`key_file`/`ca_file` | The tenant credential. Client cert, NOT a bearer token. |
+| `concurrent` | Jobs in flight at once. One per node with anti-affinity on. `1` wedges: a stale job from a cancelled pipeline holds the only slot. |
+| `host` | The apiserver's own loopback URL, from [01](01-kcp-server.md#hand-back). NOT the kcp mount URL, which is a reverse proxy and does not carry `pods/exec`. |
+| `cert_file`/`key_file`/`ca_file` | The tenant credential. A client cert, NOT a bearer token. |
 | `namespace` | Where job Pods go. Must exist. |
 | `image_pull_policy` | `if-not-present`. Node images seed some images; always-pull throws that away. |
-| `cpu_request`/`memory_request` | The scheduler uses THESE. Too big and the Pod never schedules. |
+| `cpu_request`/`memory_request` | The scheduler uses these. Too big and the Pod never schedules. |
 | `cpu_limit`/`memory_limit` | Enforcement only. The scheduler ignores them, so a limit over node size is fine. |
 | `helper_*_request` | Set these. See the traps. |
 | `poll_timeout` | Seconds to wait for the Pod to reach Running. Node boot plus a big image pull. |
@@ -150,23 +151,22 @@ FATAL: Service run failed  error=decoding configuration file: toml: line 9
 destination has type string
 ```
 
-Runner exits, nothing picks work up, and GitLab still reports the runner online, so a watcher waits
-for a job that never runs. Fail on `FATAL` in the runner's own output, not on GitLab's view.
+The runner exits, nothing picks work up, and GitLab still reports the runner online, so a watcher
+waits for a job that never runs. Fail on `FATAL` in the runner's own output, not on GitLab's view.
+
+**`pre_build_script` runs AFTER the clone. `pre_get_sources_script` runs BEFORE it.** Anything that
+must guard the clone goes in `pre_get_sources_script`; anything that must run against the checked-out
+tree goes in `pre_build_script`.
 
 **A limit with no request IS the request.** Kubernetes defaults a container's request to its limit.
-`helper_cpu_limit = 1` alone made every job Pod ask about 2.1 CPU - the build container's request
-plus the helper's and the init container's, each pulled up from its limit - and a two-vCPU node
-answers:
+`helper_cpu_limit = 1` alone makes every job Pod ask about 2.1 CPU: the build container's request plus
+the helper's and the init container's, each pulled up from its limit. A two-vCPU node answers:
 
 ```
 Unschedulable: "0/1 nodes are available: 1 Insufficient cpu."
 ```
 
-Reads as a slow cluster. Is a Pod that cannot fit.
-
-**`pre_build_script` runs AFTER the clone. `pre_get_sources_script` runs BEFORE it.** Anything that
-must guard the clone goes in `pre_get_sources_script`. This file used to carry a 180-second DNS wait
-there; it is gone, and [the README says why](README.md#why-the-dns-wait-is-gone).
+That reads as a slow cluster. It is a Pod that cannot fit.
 
 **The 4 MiB log cap is the runner's, not GitLab's.**
 
@@ -175,12 +175,12 @@ Job's log exceeded limit of 4194304 bytes. Job execution will continue but no mo
 ```
 
 That string is in the `gitlab-runner` binary. GitLab's own ceiling is `ci_jobs_trace_size_limit`, a
-PLAN limit (`project.actual_limits`), and it is not in `/application/settings` at all. Check both
-before assuming which one bit you.
+plan limit (`project.actual_limits`) that is not in `/application/settings`. Check both before
+assuming which one bit you.
 
-**Tools are per-image.** A `pre_build_script` assuming `corepack`, `pnpm` or `npm` fails the job
-with `exit code 127` on an image that has none. Guard on the tool existing, and end with `true` so
-the guard never fails the job it protects:
+**Tools are per-image.** A `pre_build_script` that assumes `corepack`, `pnpm` or `npm` fails the job
+with `exit code 127` on an image that has none. Guard on the tool existing, and end with `true` so the
+guard never fails the job it protects:
 
 ```toml
 pre_build_script = "if ! command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then npm install -g pnpm@10.11.0; fi; true"
@@ -212,7 +212,7 @@ kubectl --kubeconfig <tenant-admin> auth can-i create pods \
 | `Unauthorized` at job start | The certificate is from another cluster's ClientCA, or the Organizations do not match the RBAC group. |
 | `Forbidden` creating pods | The ClusterRoleBinding's subject does not match the certificate's Organizations. |
 | Job hangs at "Preparing the environment" | `pods/exec` unreachable. This is what happens when the runner points at the kcp mount URL instead of loopback. |
-| Job passes, then a retry fails | The credential expired. Check `ValidFor`. |
+| Job passes, then a retry fails | The credential expired. Check its `VALID_FOR`. |
 | `Insufficient cpu`, no node appears | Pod requests do not fit a node. See the traps. |
 
 Next: [03 - Jobs](03-jobs.md).
