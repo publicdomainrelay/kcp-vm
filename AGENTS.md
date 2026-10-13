@@ -3,9 +3,9 @@
 Read this file first. It is the one guide for agents in this repository. `CLAUDE.md` imports it.
 
 This repository (socialweb-computer-kcp) is the monorepo of the socialweb-computer project. It is the
-single source of truth for its Go code and for all of its TypeScript. On 2026-10-12 the TypeScript of
-ten repositories was vendored here with its git history, under `ts/<repository>/`. Those original
-repositories are frozen. Do not edit them for a path that is under `ts/`. Make the change here.
+single source of truth for its Go code and for all of its TypeScript. The TypeScript of ten
+repositories lives here with its git history, under `ts/<repository>/`. Those ten repositories are
+frozen. Never edit them for a path that is under `ts/`. Make the change here.
 
 `docs/ARCHITECTURE.md` holds the decisions, the measurements and the invariants. This file points at it
 and states the working rules. Open a section of `docs/ARCHITECTURE.md` by its heading when a change
@@ -122,9 +122,7 @@ These rules come from the org-root CLAUDE.md. They apply to all TypeScript here.
 
 ## Tests: no tests
 
-The user, 2026-10-12: "Stop writing tests except for integration tests when we finally get to that
-point / the end after we know it works in prod. Aka we know our scale to zero k3s on market rfp VMs
-works in prod."
+Write no tests, except integration tests, and write those only once the system works in prod.
 
 - No tests. Do not write unit tests, ratchets, allow-lists, inventories, golden files, snapshots,
   source-grep checks, size lines or any other check of an arbitrary rule. Do not work test-first.
@@ -135,7 +133,6 @@ works in prod."
   (`socialweb-computer run bidder`).
 - Integration tests come only at the end: after a tenant k3s cluster on that gateway scales to zero
   and gets nodes as market RFP VMs from that bidder. Only integration tests get written then.
-  That point came on 2026-10-12 (plan 0006 M5-FRESH-DEPLOY): integration tests are allowed now.
 - A manual live run is proof, not a test.
 - Integration tests are Go tests in `test/integration`, build tag `integration`, plan 0010 G2. Each
   test brings up its own market network (`dev up`, a unique instance, port 0, VM slots of the VM
@@ -152,8 +149,7 @@ works in prod."
 
 ## Prod deployments
 
-The user, 2026-10-12: we are actively iterating on prod. A prod deployment does not preserve
-anything.
+A prod deployment does not preserve anything.
 
 - Losing sessions, VMs, clusters, claims, receipts or any other prod state during a deploy is
   acceptable. Do not plan migration, carry-over or rollback for them. Deploy fresh.
@@ -232,7 +228,7 @@ anything.
   worktree. The org-root `scripts/task-tree.ts` is for the polyrepo work that is left, not for this
   repository.
 - Commit small logical changes and push after every commit. On `main`, push to origin main as work
-  lands (user, 2026-10-12).
+  lands.
 - Never use `/tmp`; it is tmpfs and spills to swap. Use `~/.tmp` (set `TMPDIR` under it).
 - A one-off script is a `.ts` file under `$TMPDIR`, run with `deno run -A`, using `Deno.Command` for git
   and go. Keep each shell call to one plain command.
@@ -305,7 +301,7 @@ and older notes use the short names below; read them as the real names.
 | the door | the socialweb-computer-k8s web app, `socialweb-computer-k8s/hono-socialweb-computer-k8s` |
 | the ssh door | `ts/socialweb-computer-ssh/hono-socialweb-computer-ssh` |
 | the core | the `socialweb-computer` binary process that runs kcp and supervises the DenoPods and HostProcesses |
-| a fold, folded | one pass that merged a set of decisions into the plans (for example "fifth fold 2026-10-12") |
+| a fold, folded | one pass that merged a set of decisions into the plans |
 | the spine | the RFP flow: requester, RFP, bid, accept, cloud-init `user_data` |
 | the front | the stable entry point in front of a service: the kcp front before the kcp slots (0006 M2-KCP-SLOTS), the TLS front of the market network |
 | the edge | caddy and the other stable public entry points that keep a known port |
