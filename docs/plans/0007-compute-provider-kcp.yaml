@@ -1231,8 +1231,8 @@ items:
     test_first: "Behind livegate on a market network (guest born via runComputeContract): TestABidderCoreRestartLeavesTheGuestIssuerAndOnNetworkServing (the core DenoPod restarted while the guest runs: the issuer URL and JWKS unchanged, a token issued before validates after, the next onNetwork POST accepted). Red first."
     done_when: "green with readings (UTC); pushed on main in hono-compute-provider."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M6-BIDDER-UPGRADE
     milestone: M6
     title: Upgrade the bidder's binary and deno processes while its VMs keep running; measure the stop grace
