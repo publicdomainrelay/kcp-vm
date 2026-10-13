@@ -7055,6 +7055,33 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   closure's web dir (NotCapable, exit 1) and Ready 8.5-13.1 s after the upgrade; after it 3 of 3 started it
   once, Ready 5.2-6.0 s after the upgrade.
 
+- **A DenoPod declares the credentials it receives; no token or CA file arguments (plan 0009
+  M1-PROJECTED-CREDENTIALS, 2026-10-12).** Before, appctl minted each component's kcp token (1 h for the
+  bidder and guest-kcp, 30 days for the requester and the ssh gateway, 30 min for the web app), wrote it
+  and the kcp CA into the component's state dir and handed the paths to the service as
+  `--*-kcp-token-file`, `--*-ca-cert-file`, `--*-ca-file` and (web app) `--kcp-kubeconfig`; the vault
+  CA and client certificate were read from the OpenBaoServer's own directory, which the service's
+  `--allow-read` had to name; the DenoPod also carried a static `KCP_TOKEN` in its environment. Now
+  DenoPod `spec.projected` lists the kcp ServiceAccount token (the pod's own workspace or a parent's,
+  1 h by default, rewritten at half its life), the kcp CA, an OpenBaoServer client (`ca.crt`, `tls.crt`,
+  `tls.key`) and public PEM certificate files. The deno runtime writes them under
+  `<state>/denokcp/projected/<cluster>/<namespace>/<pod>/` (each swapped by rename), adds exactly those
+  paths to `--allow-read`, and hands the pod `KCP_PROJECTED`, a JSON map of `KCP_PROJECTED_<NAME>` to path,
+  which the service template passes on to the service and allows; it no longer forwards `KCP_TOKEN`.
+  `status.projected` shows each entry's path, env name, when it was written and when the token expires;
+  a credential that cannot be written holds the start and shows its error there. The CLIs take the
+  file options from `KCP_PROJECTED_KCP_TOKEN`, `KCP_PROJECTED_KCP_CA`, `KCP_PROJECTED_VAULT` (the client
+  dir openbao-server-kcp reads) and `KCP_PROJECTED_NETWORK_CA`. A projected token is minted only for the
+  pod's own workspace or a parent of it, and a projected file must hold only PEM certificates. Readings
+  (market network pcr, `dev up --profile market-network --bidders 1 --with-gateway`, UTC): the bidder,
+  guest-kcp and web app processes carry none of those arguments, and their `--allow-env` names only the
+  projected env names; `run request` delivered the secret to a guest through the RFP flow (21:20:04,
+  released 200). Token rotation with no restart: the bidder DenoPod's token set to 600 s at 21:23:39, the
+  runtime rewrote it at 21:28:39 and 21:33:39 with the bidder process (pid 2506175, run started 21:23:09,
+  0 restarts) unchanged; `run request` at 21:39:24, when every token minted before 21:33:39 had
+  expired, delivered the secret and was released 200 at 21:41:51 (the bidder wrote its ComputeVM with
+  the current file), and the bidder's log holds no 401.
+
 ## 16. Vocabulary
 
 | | |
