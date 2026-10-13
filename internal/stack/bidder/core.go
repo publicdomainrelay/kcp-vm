@@ -127,10 +127,28 @@ func RunCore(ctx context.Context, c CoreConfig, m hostsvc.Manager) error {
 			if err != nil {
 				return err
 			}
-			if err := k.ApplyRoot(ctx, c.Spec); err != nil {
-				return fmt.Errorf("bidder: applying the MarketBidder root object: %w", err)
-			}
-			log.Info("the MarketBidder root object is applied; the core renders its components", "profile", c.Spec.Profile)
+			go c.applyRoot(ctx, k, log)
 			return nil
 		}}, m)
+}
+
+func (c CoreConfig) applyRoot(ctx context.Context, k *Kcp, log *slog.Logger) {
+	started := time.Now()
+	for {
+		err := k.ApplyRoot(ctx, c.Spec)
+		if err == nil {
+			log.Info("the MarketBidder root object is applied; the core renders its components", "profile", c.Spec.Profile,
+				"afterControllerStart", time.Since(started).String())
+			return
+		}
+		if time.Since(started) > ApplyTimeout {
+			log.Error("applying the MarketBidder root object; still retrying", "err", err.Error())
+			started = time.Now()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(Poll):
+		}
+	}
 }
