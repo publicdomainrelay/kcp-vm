@@ -74,6 +74,7 @@ func errFrame(xe *gateway.XRPCError) []byte {
 }
 
 type streams struct {
+	wg       sync.WaitGroup
 	mu       sync.Mutex
 	open     map[gateway.Caller]int
 	limit    int
@@ -104,7 +105,20 @@ func (s *streams) release(c gateway.Caller) {
 	}
 }
 
-func (s *Server) Close() { s.streams.shutdown() }
+const closeWait = 3 * time.Second
+
+func (s *Server) Close() {
+	s.streams.shutdown()
+	done := make(chan struct{})
+	go func() {
+		s.streams.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(closeWait):
+	}
+}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1 << 10,
@@ -141,6 +155,8 @@ func (s *Server) subscribeClusters(w http.ResponseWriter, req *http.Request) {
 		defer s.streams.release(caller)
 	}
 
+	s.streams.wg.Add(1)
+	defer s.streams.wg.Done()
 	conn, err := upgrader.Upgrade(w, req, nil)
 	if err != nil {
 		slog.Warn("xrpc: subscription upgrade failed", "nsid", nsidSubscribeClusters, "err", err)

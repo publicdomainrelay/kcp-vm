@@ -327,13 +327,26 @@ func TestClusterEventsStreamFromSubscribeClusters(t *testing.T) {
 	if _, err := core.Pods(nsServer).Create(ctx, serverPod(streamPod, "", false), metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	out := s.until("a NodeClaim Running", scaleOutTimeout, func(ev streamEvent) bool {
-		return ev.Type == "nodeClaim" && ev.str("phase") == string(v1alpha1.NodeClaimRunning)
+	out := s.until("a NodeClaim Joining or Running", scaleOutTimeout, func(ev streamEvent) bool {
+		return ev.Type == "nodeClaim" && (ev.str("phase") == string(v1alpha1.NodeClaimJoining) || ev.str("phase") == string(v1alpha1.NodeClaimRunning))
 	}, failedClaim)
 	claimPhases := phases(out, "nodeClaim")
-	t.Logf("NodeClaim Running %.1fs after the pod; phases %v", time.Since(scaleOut).Seconds(), claimPhases)
-	if len(claimPhases) < 2 {
-		t.Errorf("the NodeClaim went Running without passing through earlier phases: %v", claimPhases)
+	t.Logf("NodeClaim %s %.1fs after the pod; phases %v", claimPhases[len(claimPhases)-1], time.Since(scaleOut).Seconds(), claimPhases)
+	for _, want := range []v1alpha1.NodeClaimPhase{v1alpha1.NodeClaimBidding, v1alpha1.NodeClaimProvisioning} {
+		if !strings.Contains(strings.Join(claimPhases, ","), string(want)) {
+			t.Errorf("the stream showed no NodeClaim %s before it joined: %v", want, claimPhases)
+		}
+	}
+	for deadline := time.Now().Add(probeTimeout); ; {
+		p, err := core.Pods(nsServer).Get(ctx, streamPod, metav1.GetOptions{})
+		if err == nil && podReady(p) {
+			t.Logf("pod %s Ready on %s %.1fs after it was created", streamPod, p.Spec.NodeName, time.Since(scaleOut).Seconds())
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pod %s not Ready within %s of its NodeClaim joining: %s", streamPod, probeTimeout, tn.Summary(ctx))
+		}
+		time.Sleep(time.Second)
 	}
 
 	if err := core.Pods(nsServer).Delete(ctx, streamPod, metav1.DeleteOptions{GracePeriodSeconds: new(int64)}); err != nil {

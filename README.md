@@ -85,7 +85,7 @@ deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.aliceoa_bsky_social_sou
 
 ### Cluster XRPC with `goat` (create cluster if missing, get kubeconfig, kubectl)
 
-Auth = atproto service JWT: `iss` your DID, `aud` gateway DID, `lxm` the method. Methods: `com.publicdomainrelay.temp.cluster.{createCluster,getKubeconfig,listClusters,controlPlaneUp,controlPlaneDown,deleteCluster}`.
+Auth = atproto service JWT: `iss` your DID, `aud` gateway DID, `lxm` the method. Methods: `com.publicdomainrelay.temp.cluster.{createCluster,getKubeconfig,listClusters,controlPlaneUp,controlPlaneDown,deleteCluster,subscribeClusters}`.
 
 ```bash
 go install github.com/bluesky-social/goat@latest
@@ -137,8 +137,8 @@ deno run -A --no-lock --node-modules-dir=none scripts/subscribe-clusters.ts --ga
   --until cluster=Ready --fail-on nodeClaim=Failed
 # all clusters of the account, run forever
 deno run -A --no-lock --node-modules-dir=none scripts/subscribe-clusters.ts --gateway $GW --token "$T"
-# raw connectivity check (prints CBOR bytes, not text)
-websocat -b -H "Authorization: Bearer $T" "wss://k8s.socialweb.computer/xrpc/$N.subscribeClusters?name=demo" | xxd | head
+# raw connectivity check (CBOR bytes, not text; -H= form, -n keeps it open when stdin is not a tty)
+websocat -b -n -H="Authorization: Bearer $T" "wss://k8s.socialweb.computer/xrpc/$N.subscribeClusters?name=demo" < /dev/null | xxd
 # poll fallback
 call query listClusters | jq '.clusters[] | {name, phase, running}'
 ```
@@ -232,6 +232,7 @@ DenoPod logs: `<state>/denokcp/runs/pod-*/{stdout,stderr}.txt` (gone on restart)
 ```bash
 go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run TestRequestSecretsReachTheGuestThroughTheRFPFlow
 go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run TestTenantClusterScalesFromZeroOnMarketVMsAndBack
+go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run TestClusterEventsStreamFromSubscribeClusters
 ```
 
 ## License

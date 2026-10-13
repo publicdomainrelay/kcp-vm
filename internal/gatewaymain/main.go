@@ -215,7 +215,6 @@ func serve(ctx context.Context, cfg Config, g *Gateway, log *slog.Logger, inv fo
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
-	server.RegisterOnShutdown(g.Close)
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		return err
@@ -243,6 +242,7 @@ func serve(ctx context.Context, cfg Config, g *Gateway, log *slog.Logger, inv fo
 		log.Info("signal received, draining")
 	}
 
+	g.Close()
 	drainCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(drainCtx); err != nil {
