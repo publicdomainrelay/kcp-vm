@@ -284,6 +284,9 @@ func decide(o Observation, st State, now time.Time, opts Options) Decision {
 		} else if w.Why != "" {
 			d.Reason += "; target from " + w.Why
 		}
+		if w.Hold != "" {
+			d.Reason += "; " + w.Hold
+		}
 		return d
 	}
 	return decideIdle(st, now, opts)

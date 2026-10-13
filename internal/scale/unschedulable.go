@@ -35,6 +35,8 @@ type Want struct {
 	Why string
 
 	Waiting []string
+
+	Hold string
 }
 
 func NodeReady(n *corev1.Node) (bool, time.Time) {
@@ -167,7 +169,7 @@ func Wanted(o Observation, opts Options, now time.Time) Want {
 			strings.Join(pods, ", "), len(o.Placement.Nodes))
 	}
 	if len(pods) == 0 && wait != "" {
-		w.Why += "; unschedulable pods add no node yet: " + wait
+		w.Hold = "unschedulable pods add no node yet: " + wait
 	}
 	w.Waiting = pods
 	w.Target = min(w.Wanted, opts.maxNodes())
