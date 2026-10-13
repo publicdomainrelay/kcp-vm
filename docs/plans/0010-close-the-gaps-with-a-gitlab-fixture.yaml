@@ -1,229 +1,377 @@
 plan: 0010-close-the-gaps-with-a-gitlab-fixture
 written: 2026-10-11
+revised: >
+  2026-10-12, R0-REASSESS first pass (proposed by Claude; the user answers questions_for_user, then the
+  lead marks decisions "decided by the user"). Re-read against plans 0006-0009 and 0013, AGENTS.md and
+  main at 23e715ca. What changed since 2026-10-11: no tests until prod works, then integration tests
+  only (AGENTS.md "Tests: no tests"); prod deployments preserve nothing (0006 M5-FRESH-DEPLOY);
+  every application has its own kcp and the market network is one MarketNetwork application driven by
+  `socialweb-computer dev up|status|down` and `run request` (0006 M2-APP-CONTROLLER, 0008
+  M4-MARKET-NETWORK-PORT, M4-RUN-REQUEST); the guest kernel is built from a pinned config with every
+  netfilter option built in (0007 M1-GUEST-IMAGE); market k3s schedulers run with leader election on
+  (0006 M3-CP-SLOTS); a restarted kcp bidder rebuilds its contracts from its ComputeVMs (0007
+  M4-CONTRACT-RESTORE); the GitLab server at gitlab.dorper-matrix.ts.net:8443 now hosts this
+  repository, and CI moves there. Result: the GitLab-in-docker fixture is dropped; plan 0010 becomes
+  the plan for GitLab CI of this repository and for the integration tests that come after prod, plus
+  the two small gaps no other plan owns (the debug node ssh path, the acceptance leftovers).
 status: >
-  DRAFT. Nothing here executes until R0-REASSESS is done: every item below is re-assessed, the
-  questions in R0-REASSESS are answered by the user, and this file is revised with those answers.
+  DRAFT. R0-REASSESS has proposed the revision below. Nothing else starts until the user answers
+  questions_for_user and the lead records the answers.
+queued: >
+  G1-CI-GATE and G4-NO-DEBUG-SSH have no dependency on prod and may start once R0-REASSESS is answered.
+  G1-CI-RELEASE follows G1-CI-GATE. Every G2 and G3 item waits for 0006 M5-FRESH-DEPLOY (prod works:
+  a tenant k3s cluster on the new gateway scales to zero and gets nodes as market RFP VMs from the hat-8
+  bobvmbuilder bidder). G4-CLEANUP runs right after 0006 M5-FRESH-DEPLOY.
 source: >
   The gaps found on 2026-10-11 when plans 0001-0005 were reviewed together after plan 0005 closed
   (all 40 items and ACC-ZERO/ACC-MESH/ACC-NOSSH done on prod). The user asked that they be written down
   as plan 0010, assuming a GitLab server run in a docker container as the test fixture, with the
   first item a re-assessment that asks the user questions before anything executes.
 relation_to_other_plans: >
-  Plans 0006-0008 (and any 0009) are being refined by the user out-of-band. G3-RESTART-LEAK overlaps
-  plan 0007 and G4-DEAD-SUBSTRATE may overlap plan 0006's module work; R0-REASSESS decides which plan
-  owns each overlap so nothing is done twice.
+  Proposed folds (the lead edits the other plans; this revision does not touch them): GAP-3 (restart
+  leak) is owned by 0007 M6-LIVE-RECOVERY and M6-BIDDER-UPGRADE; GAP-4 (kernel and rootfs) is closed
+  by 0007 M1-GUEST-IMAGE and proved by 0007 M6-NOSSH-JOIN; GAP-5 (dead substrate code) joins 0006
+  M5-RETIRE; GAP-7 (leaderElect) is void after 0006 M3-CP-SLOTS. The 0007 M6 items still name
+  internal/marketnetwork/live_test.go, which 0008 M4-MARKET-NETWORK-PORT deleted; under the no-tests
+  rule they are manual live readings before prod, and their regression form is G2-IT-BIDDER-RESTART
+  here, after prod. The G2 harness is the market network that 0009 (ACC9-EXACTLY-ONCE) and 0013
+  (M4-SOAK-READING) also read from; when those plans land, their acceptance checks are added to the G2
+  suite as integration tests.
 state_rules:
   - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
-  - This file is the only state for plan 0010. Every step updates status and evidence.
+  - No tests until prod works (user, 2026-10-12). The only tests this plan writes are the G2 integration tests, after 0006 M5-FRESH-DEPLOY. A manual live run is proof, not a test.
+  - Every live run uses its own market network (dev up with a unique instance name, port 0, VM slots of test-0001) and cleans up what it started. Never the prod bidder or alice, except the G3-PROD-CANARY, which only reads prod through the product's own front door.
+  - Real names only (AGENTS.md). Commit and push only socialweb-computer-kcp. The lead flips status; the git history is the evidence.
   - status is one of todo, doing, done, blocked.
-  - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
-    then pass, prod or GitLab readings with UTC timestamps).
-  - Open items are mirrored in NEXT.yaml.
-  - Every decision below is "proposed by Claude, to be refined in R0-REASSESS" until the user
-    confirms it; confirmed ones are rewritten as "decided by the user <date>".
 ownership:
   owned: >
-    All code in socialweb-computer-kcp, the prod deployment on socialweb.computer, the vendored
-    deno-kcp market network, the atproto-market requester libraries, the bidder install on hat-8, and the
-    GitLab fixture this plan creates.
+    All code in socialweb-computer-kcp, its CI configuration on gitlab.dorper-matrix.ts.net:8443, the
+    integration tests, and the CI runner this plan registers.
   not_owned: >
     The market protocol records and lexicons, and the core architecture: kcp in front of
     k3s --disable-agent clusters at zero nodes, nodes only through requester -> RFP -> bid -> accept
-    -> cloud-init user_data, never hand-provisioned, never reached by ssh. Changes there are asked
-    first.
+    -> cloud-init user_data, never hand-provisioned, never reached by ssh. The GitLab server itself
+    (installed and run by the user). Changes there are asked first.
 gaps:
   - id: GAP-1
     text: >
       No repeatable end-to-end acceptance. Pipelines 78/79 were driven by hand; nothing re-runs
       them on a change, so a regression on prod goes unnoticed. Plan 0001 P4
       (deploy/gitlab-ci-proof.sh) was never written.
+    reassessed: Still real. Owned here as G2 (integration tests on a market network) and G3 (CI runs them; a prod canary).
   - id: GAP-2
     text: >
       One real bidder. bob on hat-8 is the whole market on prod. Several bidders competing, a bidder
       failing mid-contract and failover to another bidder are unproven live.
+    reassessed: Still real. A market network now runs N bidders, each its own application with its own kcp, so failover is proved there (G2-IT-FAILOVER). A second prod bidder waits for a second host (question).
   - id: GAP-3
     text: >
       A bidder restart leaks its guests (vm.delete then 404s). 14 exited fc-* containers from
       2026-10-07 remain on hat-8. Plan 0007 owns the defect today.
+    reassessed: Smaller. 0007 M4-CONTRACT-RESTORE (done) rebuilds contracts from ComputeVMs; 0007 M6-LIVE-RECOVERY and M6-BIDDER-UPGRADE prove it live before prod. The fc-* containers belong to the old bidder that 0006 M5-FRESH-DEPLOY stops (G4-CLEANUP).
   - id: GAP-4
     text: >
       The guest boots the build host's Fedora kernel under an Ubuntu 24.04 rootfs. The mismatch
       caused M5-NETPOL (CONFIG_MODPROBE_PATH); nothing checks the kernel/rootfs contract (modprobe
       path, module tree for the running kernel, netfilter modules kube-router needs) at build time.
+    reassessed: Closed by 0007 M1-GUEST-IMAGE. The host /boot kernel is no longer an input; deploy/guest-kernel/socialweb.config sets CONFIG_MODULES=n and builds in NFT_LOG, NFT_LIMIT, NFT_COMPAT, XT_NFLOG, XT_LIMIT, XT_SET and IP_SET, so there is no module tree to mismatch. 0007 M6-NOSSH-JOIN and G2-IT-SCALE-TO-ZERO prove it.
   - id: GAP-5
     text: >
       The retired local substrates were swept by name only: internal/nodefirecracker and the
       substrate network and address vocabulary remain in the tree.
+    reassessed: Still real (internal/nodefirecracker imported by internal/checkhostmain; SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE and the retired-substrate refusals in internal/providermain; internal/nodevm, internal/noderecord). With no back-compat it is dead code. Proposed fold into 0006 M5-RETIRE, which deletes the container path in one change.
   - id: GAP-6
     text: >
       NetworkPolicy coverage is one case: cross-node deny-all ingress. Egress, namespaceSelector,
       ipBlock, and a DNS-allow policy beside default-deny are untested.
+    reassessed: Still real, but it is a test, so it waits for prod. Folded into G2-IT-SCALE-TO-ZERO.
   - id: GAP-7
     text: >
       Market clusters run kube-scheduler with leaderElect false. Safe while each cluster has exactly
       one k3s server; nothing refuses the config if a second server ever appears.
+    reassessed: Void. 0006 M3-CP-SLOTS turned scheduler leader election on for every market cluster (internal/clusterstack/scheduler.go leaderElect true); the guard it asked for has nothing left to guard.
   - id: GAP-8
     text: >
       The debug ssh path (DEBUG_SOCIALWEB_NODE_SSH_DIR) is in the shipped code and gated only by
       deploy configuration. Zero ssh on prod is a property of container.env, not of the build.
+    reassessed: Still real, now in the web app (socialweb-computer-k8s/hono-socialweb-computer-k8s option debug-node-ssh-dir, deploy/apps/option-map.yaml, sshAuthorizedKeys in socialweb-computer-k8s-node-market). Owned here as G4-NO-DEBUG-SSH.
   - id: GAP-9
     text: >
       The GitLab used for acceptance (hat-10, Tailscale funnel) was installed by hand and is not a
       fixture this repo can recreate; plan 0001's "spin a VM and run GitLab" recipe was never run by
       this repo.
+    reassessed: Void as a gap. The GitLab server at gitlab.dorper-matrix.ts.net:8443 is now this repository's home and its CI; it is a service the user runs, not a fixture. A throwaway GitLab container would contradict "the gateway runs no containers" and buy nothing the server does not give.
   - id: GAP-10
     text: >
       Acceptance leftovers on prod and the lab: runner 6 on hat-10, clusters acc-gitlab-0001 and
       acc-gitlab-0002, branches acc-0005 and acc-clone in kcp-ci-probe, 14 exited fc-* containers on
       hat-8.
+    reassessed: Smaller. The clusters go with the old gateway at 0006 M5-FRESH-DEPLOY (nothing is carried over). Runner 6, the acc-* branches and the fc-* containers remain; G4-CLEANUP.
 acceptance:
   checks:
     - id: ACC-REPEAT
       text: >
-        One command brings up the GitLab fixture, creates a cluster through the SPA as the test
-        identity, registers a runner against it, runs the acceptance pipeline and records the
-        ACC-ZERO/ACC-MESH/ACC-NOSSH readings (plus G2-NETPOL-MATRIX) with UTC timestamps, then tears
-        the fixture down. Run twice in a row on prod, both green.
+        The G2 integration suite runs in GitLab CI on main (G3-CI-INTEGRATION), each test in its own
+        market network, and is green twice in a row; the prod canary pipeline (G3-PROD-CANARY) scales
+        a prod tenant cluster from zero on a market RFP VM from the hat-8 bidder, runs its job, and
+        scales back to zero, green twice in a row.
       status: todo
       evidence: []
     - id: ACC-FAILOVER
       text: >
-        With two bidders bidding, one killed mid-contract: the node is re-requested, won by the other
-        bidder, joins, and the pipeline still goes green; the dead bidder's claim is released.
+        In a market network with two bidders, one killed mid-contract: the requester re-requests the
+        node, the other bidder wins it, it joins, the job still passes, and the dead bidder's ComputeVM
+        is released when it comes back.
       status: todo
       evidence: []
+questions_for_user:
+  - "Q1 CI runner: where do this repository's CI jobs run? Recommendation: one gitlab-runner (shell executor) as a user unit of a dedicated unprivileged account on hat-8, tagged socialweb-computer-kcp, registered to this project only; it has kvm and the test-0001 VM slots that G3-CI-INTEGRATION needs. Alternative: jobs on a prod tenant cluster (kubernetes executor), after prod only."
+  - "Q2 CI before prod: may CI run the build gate (go build, go vet, deno task check, deploy/check.sh --fast, the release closure) on every push to task/* and main now? Recommendation: yes; it is the gate agent-rules already require, run once by CI instead of by hand, and it adds no test."
+  - "Q3 Release artifacts: does the double clean-checkout release build and scripts/build-guest-image.sh move into CI, publishing the binaries, guest images and SHA256SUMS to the GitLab package registry that deploy.sh and `upgrade --binary --sha256` then fetch from? Recommendation: yes, after G1-CI-GATE; versions.json pins the guest image URLs there."
+  - "Q4 GitHub: once G1-CI-GATE is green, delete .github/workflows/typescript.yml and stop pushing to GitHub? Recommendation: delete the workflow; keep GitHub only as a push mirror if you want a public copy."
+  - "Q5 Integration test form: Go tests under test/integration (build tag integration) that drive the socialweb-computer verbs (dev up --profile market-network --bidders N --with-gateway, run request, dev down) and read kcp status. Recommendation: yes; run request runs runComputeContract inside its requester DenoPod, so the RFP flow stays the only path. Alternative: deno tests extending ts/atproto-market/test/bidder_container_integration_test.ts."
+  - "Q6 Prod canary identity: the canary cluster and its GitLab runner need a web app account. Recommendation: alice, signed in headlessly from ~/.aliceoa_bsky_social_source on the deploy host, one long-lived canary cluster, runner registered with a run-unique tag. Alternative: a new dedicated test account."
+  - "Q7 Canary schedule: nightly plus once after every prod deploy (recommendation), or only after deploys?"
+  - "Q8 Second prod bidder: prove failover only in the market network now (recommendation) and add a second real bidder when a second host exists? If you want it on prod now, which host and which account?"
+  - "Q9 Debug node ssh: delete it outright from the web app (recommendation; nodes are never reached by ssh and there is no back-compat), or keep it behind a build tag left out of release builds?"
+  - "Q10 Leftovers: may runner 6, branches acc-0005 and acc-clone (and the kcp-ci-probe project if nothing else uses it), and the 14 exited fc-* containers on hat-8 be deleted right after 0006 M5-FRESH-DEPLOY? Recommendation: yes."
+  - "Q11 Folds: confirm GAP-3 to 0007 M6-LIVE-RECOVERY/M6-BIDDER-UPGRADE, GAP-5 to 0006 M5-RETIRE (add internal/nodefirecracker, internal/nodevm, internal/noderecord, the substrate env and refusals in internal/providermain and their check-host users to its file list), GAP-4 and GAP-7 closed. The lead then edits 0006 and 0007."
+  - "Q12 Plan name: the file keeps its id; rename it to 0010-gitlab-ci-and-integration-tests.yaml when the answers are recorded? Recommendation: yes, with NEXT.yaml P10 updated in the same commit."
 items:
   - id: R0-REASSESS
     milestone: R0
     title: Re-assess every item and the best way to approach it, then ask the user and revise this plan
     decision: >
       Decided by the user 2026-10-11: this is the first item and nothing else in the plan starts
-      before it is done. Steps: (1) re-read each gap against the code and prod as they stand, and
-      say whether it is still real, already covered by plan 0006/0007/0008, or smaller or larger
-      than written; (2) for each item propose an approach with its cost and the alternative not
-      taken; (3) ask the user the questions below plus any the re-read raises, in one batch; (4)
-      rewrite items, order and decisions with the answers and mark them "decided by the user".
-    questions_for_user:
-      - "Where does the GitLab fixture container run: hat-8 beside the bidder, the prod host, or a fresh host? It must be reachable by market guests (git clone) and by the runner."
-      - "How do market guests reach the fixture: same LAN/tailnet, a Tailscale funnel like hat-10, a fedproxy tunnel, or through the relay?"
-      - "Does the gitlab-runner also run as a container next to the fixture (with the SPA kubeconfig), or stay a host install?"
-      - "Is the fixture throwaway per run (fresh container, fresh root password and runner token every time) or long-lived with a reset step? Run time vs. isolation."
-      - "Does hat-10's GitLab stay as a second target, or is it retired from acceptance once the fixture works?"
-      - "Second bidder for GAP-2: another host you own, a second bidder identity on hat-8, or a container-mode bidder that is expected to lose (it cannot run k3s)?"
-      - "GAP-3: fix the restart leak here or leave it to plan 0007? May the 14 exited fc-* containers on hat-8 be deleted now?"
-      - "GAP-4: keep the host kernel + Ubuntu rootfs and add a build-time contract check, or ship a kernel matched to the rootfs (Ubuntu's own) in the image?"
-      - "GAP-5: delete internal/nodefirecracker and the substrate vocabulary here, or fold it into plan 0006?"
-      - "GAP-8: remove the debug ssh path from release builds (build tag), or keep it env-gated with a prod assertion that it is unset?"
-      - "GAP-10: tear down runner 6, acc-gitlab-0001/0002 and the acc-* branches, or keep any as a standing canary?"
-      - "Should the repeatable acceptance run on a schedule (nightly on prod) or only on demand / before each deploy?"
+      before it is done. First pass done 2026-10-12 (this revision): every gap re-read (gaps[].reassessed),
+      every item kept, rewritten, folded or dropped (below and in dropped_items), and the open
+      decisions asked in questions_for_user. Remaining: the user answers, the lead rewrites each
+      answered decision as "decided by the user <date>", empties questions_for_user and applies the
+      folds to 0006 and 0007.
+    done_when: questions_for_user is empty and the folds are in plans 0006 and 0007.
     status: todo
     evidence: []
-  - id: G1-GITLAB-FIXTURE
+  - id: G1-CI-GATE
     milestone: G1
-    title: GitLab CE in a docker container as a reproducible test fixture
+    title: GitLab CI runs the build gate for this repository
+    depends_on: ["R0-REASSESS"]
     decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: a script under scripts/ starts gitlab/gitlab-ce
-      pinned by digest with a generated root password, waits for readiness, creates the test project
-      from a template repo holding the acceptance .gitlab-ci.yml, and prints its URL and a runner
-      registration token. TLS from a local CA the guest trusts via user_data, or plain http on the
-      reachable address, decided in R0. Covers GAP-9.
+      Proposed by Claude (Q1, Q2, Q4): .gitlab-ci.yml at the repository root on
+      gitlab.dorper-matrix.ts.net:8443. One job on every push to task/* and main runs the gate of
+      agent-rules: go build ./..., go vet ./..., deno task check, deno install --frozen, deploy/check.sh
+      --fast and the release closure (go run ./cmd/socialweb-tsbundle -release). Caches (GOCACHE,
+      GOMODCACHE, DENO_DIR) live under the runner account's ~/.tmp, never /tmp. The runner is one
+      gitlab-runner, shell executor, as a user unit of a dedicated unprivileged account on hat-8, tagged
+      socialweb-computer-kcp and locked to this project; its registration token is sourced from a 0600
+      file and never printed. The lead's merge reads the pipeline instead of rerunning the gate by hand.
+      .github/workflows/typescript.yml is deleted (its deno test step contradicts the no-tests rule).
+    files: [".gitlab-ci.yml", "scripts/ci-runner-install.sh", ".github/workflows/typescript.yml (deleted)"]
+    done_when: a push to a task branch shows a green pipeline on the GitLab server running the full gate; the GitHub workflow is gone.
+    risks: ["deploy/check.sh --fast runs the cross-OS builds; on a shared hat-8 runner its cost competes with agents' live runs. One concurrent job until measured."]
     status: todo
     evidence: []
-  - id: G1-RUNNER
+  - id: G1-CI-RELEASE
     milestone: G1
-    title: A gitlab-runner container bound to an SPA-created cluster
+    title: CI builds and publishes the release binary and the guest images
+    depends_on: ["G1-CI-GATE"]
     decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: gitlab-runner image pinned by digest, kubernetes
-      executor, KUBECONFIG from the SPA download (long TTL), registered with the fixture's token and a
-      tag unique to the run, so no other runner takes its jobs (the M6-RUNNER1 lesson).
+      Proposed by Claude (Q3): on main, a manual or tag-triggered job runs
+      scripts/build-socialweb-computer.sh (two clean-checkout builds, byte-identical or refused) and
+      scripts/build-guest-image.sh (as 0007 M1-GUEST-IMAGE planned: "CI will shell out to the same
+      script later"), and uploads release/<commit>/ binaries, guest images and SHA256SUMS to the
+      project's generic package registry. internal/versions/versions.json pins the guest image URLs
+      there. scripts/deploy.sh and `upgrade --binary --sha256` take a commit and fetch from the
+      registry.
+    files: [".gitlab-ci.yml", "scripts/deploy.sh", "internal/versions/versions.json"]
+    done_when: a release job publishes one commit's binaries, images and SHA256SUMS; a bidder host fetches and verifies an image from the registry URL.
+    risks: ["The guest image build needs debugfs and a kernel toolchain on the runner host; the runner account gets them, bidders still need none."]
     status: todo
     evidence: []
-  - id: G1-ACCEPT-SCRIPT
-    milestone: G1
-    title: One command that runs plan 0005's acceptance end to end and records readings
-    decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: drives the SPA login headlessly (the
-      puppeteer-core flow used for M6-SPA-CREATE, credentials from the env file, never printed),
-      creates a cluster, starts fixture + runner, runs the pipeline, asserts idle at 0 nodes before,
-      scale-up, pod A on node A reaches pod B on node B, DNS via the CoreDNS node, NetworkPolicy deny,
-      per-node scale-in back to 0 with the control plane Ready, and zero ssh to guests in the door and
-      provider logs; writes the readings as YAML with UTC timestamps. Replaces plan 0001 P4. Covers
-      GAP-1.
-    status: todo
-    evidence: []
-  - id: G2-NETPOL-MATRIX
+  - id: G2-IT-HARNESS
     milestone: G2
-    title: NetworkPolicy matrix beyond deny-all ingress
+    title: The integration harness - one market network per test, driven by the socialweb-computer verbs
+    depends_on: ["0006:M5-FRESH-DEPLOY"]
     decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: cross-node cases for egress deny, egress allow
-      to one CIDR (ipBlock), namespaceSelector allow, and default-deny plus DNS-allow; each asserted
-      red with the policy and green without, in the live M3 gate and in G1-ACCEPT-SCRIPT. Covers GAP-6.
+      Proposed by Claude (Q5): Go package test/integration behind build tag `integration`. Each test
+      starts its own market network application: `socialweb-computer dev up --profile market-network
+      --bidders N [--with-gateway]` with an instance name unique to the test and run, so tests run in
+      parallel on one host; every address comes from kcp status (port 0); requesters are `run request
+      --network <instance>`. On failure the harness prints the root status of each application (phase,
+      conditions, status.execution once 0009 M1-EXECUTION-STATUS lands) and the DenoPod logs; on exit it
+      runs `dev down` and checks that no unit, cgroup, VM work dir or ComputeVM of the instance is left.
+      VMs use the shared test-0001 account and its per-account slot lock. No guest is started other than
+      through the RFP flow.
+    files: ["test/integration/harness.go"]
+    done_when: an empty test brings a market network up and down twice in parallel and leaves nothing behind.
+    risks: []
     status: todo
     evidence: []
+  - id: G2-IT-REQUEST-SECRETS
+    milestone: G2
+    title: Integration test - run request with --secrets gets a VM through the RFP flow
+    depends_on: ["G2-IT-HARNESS"]
+    decision: >
+      Proposed by Claude: one bidder. `run request --secrets <file>`: RFP -> bid -> accept -> cloud-init
+      user_data; the ComputeContract reaches Running; the guest fetches its secrets bundle (reported in
+      the contract status); ssh over the iroh ticket with StrictHostKeyChecking=yes against the
+      guest-reported vm.hostKeys; `run release` gives vm.delete 200 and the ComputeVM, unit and work dir
+      are gone.
+    files: ["test/integration/request_secrets_test.go"]
+    done_when: the test passes in CI (G3-CI-INTEGRATION).
+    risks: []
+    status: todo
+    evidence: []
+  - id: G2-IT-SCALE-TO-ZERO
+    milestone: G2
+    title: Integration test - a tenant k3s cluster scales from zero on market RFP VMs and back, with the NetworkPolicy matrix
+    depends_on: ["G2-IT-HARNESS"]
+    decision: >
+      Proposed by Claude: market network with --with-gateway and two bidders. A tenant cluster created
+      through the gateway's web app API idles at 0 nodes; two pods with anti-affinity produce two
+      NodeClaims, two market RFP VMs join with no ssh; pod A on node A reaches pod B on node B, DNS
+      resolves through CoreDNS; the NetworkPolicy matrix (was G2-NETPOL-MATRIX, GAP-6): deny-all ingress,
+      egress deny, egress allow to one ipBlock, namespaceSelector allow, default-deny plus DNS-allow,
+      each cross-node and each read with and without the policy; then the pods go, the nodes scale in one
+      by one to 0, vm.delete 200 for each, the control plane stays Ready. Zero ssh sessions to guests in
+      the web app, clusterprovider and bidder logs. This is plan 0005's acceptance (ACC-ZERO, ACC-MESH,
+      ACC-NOSSH) as a repeatable test, replacing plan 0001 P4 and G1-ACCEPT-SCRIPT.
+    files: ["test/integration/scale_to_zero_test.go"]
+    done_when: the test passes in CI.
+    risks: ["A tenant job image pull from the internet makes the test depend on the registry; pin the test images by digest."]
+    status: todo
+    evidence: []
+  - id: G2-IT-BIDDER-RESTART
+    milestone: G2
+    title: Integration test - a bidder kill, restart and upgrade keep its VMs and still release them
+    depends_on: ["G2-IT-HARNESS", "0007:M6-LIVE-RECOVERY", "0007:M6-BIDDER-UPGRADE"]
+    decision: >
+      Proposed by Claude: the regression form of 0007 M6-LIVE-RECOVERY cases (a)-(c) and M6-BIDDER-UPGRADE
+      (was G3-RESTART-LEAK, GAP-3): rent a guest, then kill -9 the bidder's core, restart its unit, and
+      `upgrade --binary` it to a build with a different closure; after each the VM unit's InvocationID,
+      firecracker pid and start ticks are unchanged, the ComputeVM is Running, the issuer URL is the same,
+      the guest's next onNetwork is accepted; release gives vm.delete 200 and nothing is left. Case (d)
+      (user-manager restart) stays a manual reading in 0007: it stops every unit of the account.
+    files: ["test/integration/bidder_restart_test.go"]
+    done_when: the test passes in CI.
+    risks: []
+    status: todo
+    evidence: []
+  - id: G2-IT-FAILOVER
+    milestone: G2
+    title: Integration test - two bidders, one dies mid-contract, the other takes the node
+    depends_on: ["G2-IT-HARNESS"]
+    decision: >
+      Proposed by Claude (was G3-MULTI-BIDDER, GAP-2, ACC-FAILOVER; Q8): market network with
+      --with-gateway and two bidders, each its own MarketBidder application with its own kcp. Both win
+      contracts over a series of RFPs. Then one bidder's core and DenoPods are stopped after accept and
+      before the node joins: the NodeClaim goes Lost after its join grace, the requester sends a new RFP,
+      the other bidder wins, the node joins and the pod runs; when the stopped bidder comes back it
+      releases the orphaned ComputeVM (0007 M4-CONTRACT-RESTORE) and the old receipt is released. No
+      market protocol change; if one turns out to be needed, it is asked first.
+    files: ["test/integration/failover_test.go"]
+    done_when: the test passes in CI.
+    risks: ["firstFree means the faster bidder wins most RFPs; the test sets the requester policy so both bidders win before the kill."]
+    status: todo
+    evidence: []
+  - id: G3-CI-INTEGRATION
+    milestone: G3
+    title: GitLab CI runs the integration suite
+    depends_on: ["G1-CI-GATE", "G2-IT-REQUEST-SECRETS", "G2-IT-SCALE-TO-ZERO", "G2-IT-BIDDER-RESTART", "G2-IT-FAILOVER"]
+    decision: >
+      Proposed by Claude: a job on the hat-8 runner (kvm, test-0001 slots) runs `go test -tags integration
+      ./test/integration/...` on every merge to main and nightly, tests in parallel, each in its own
+      market network built from the commit under test with scripts/build-socialweb-computer.sh --dev.
+      A failed run keeps the harness output as a pipeline artifact. Merges to main wait for it once it is
+      green twice in a row.
+    files: [".gitlab-ci.yml"]
+    done_when: two consecutive green runs on main (ACC-REPEAT, first half).
+    risks: ["16 VM slots are shared with agents' live runs; the job takes at most 6 and waits for slots."]
+    status: todo
+    evidence: []
+  - id: G3-PROD-CANARY
+    milestone: G3
+    title: A scheduled GitLab pipeline whose job runs on a prod tenant cluster that scales from zero
+    depends_on: ["0006:M5-FRESH-DEPLOY", "G1-CI-GATE"]
+    decision: >
+      Proposed by Claude (Q6, Q7; was G1-RUNNER and the prod half of G1-ACCEPT-SCRIPT): one long-lived
+      canary tenant cluster on the prod gateway, created through the web app as the canary identity
+      (headless sign-in from the credential file on the deploy host, never printed). A gitlab-runner with
+      the kubernetes executor, its KUBECONFIG from the web app download, runs as a pod in that cluster
+      or as a user unit beside the hat-8 CI runner, registered with a tag unique to the canary so no
+      other runner takes its jobs (the M6-RUNNER1 lesson). A scheduled pipeline (nightly and after each
+      prod deploy) runs one job on it: the cluster scales from 0 to a market RFP VM from the hat-8
+      bobvmbuilder bidder, the job clones this repository from the GitLab server and passes, the cluster
+      scales back to 0 with the control plane Ready. The job writes its readings (UTC times of claim,
+      join, job, scale-in) as a pipeline artifact. This is the only part of this plan that touches prod,
+      and only through the product's own front door.
+    files: [".gitlab-ci.yml (canary schedule)", "deploy/canary/"]
+    done_when: two consecutive green canary pipelines on prod (ACC-REPEAT, second half).
+    risks: ["A canary failure pages nobody yet; the pipeline status on the GitLab server is the signal."]
+    status: todo
+    evidence: []
+  - id: G4-NO-DEBUG-SSH
+    milestone: G4
+    title: Delete the debug node ssh path from the web app
+    depends_on: ["R0-REASSESS"]
+    decision: >
+      Proposed by Claude (Q9; was G4-NO-SSH-GUARD, GAP-8): nodes are never reached by ssh and nothing is
+      kept for back-compat, so the path goes rather than being guarded: the debug-node-ssh-dir option
+      (cli-args-env.json, DEBUG_SOCIALWEB_NODE_SSH_DIR), its keygen and known-hosts code in
+      hono-socialweb-computer-k8s/mod.ts, opts.debugSsh and sshAuthorizedKeys in
+      socialweb-computer-k8s-node-market, the option-map entry and the gateway values notes. Tests that
+      break are deleted. After it, no code path puts an ssh authorized key into a tenant node's
+      user_data.
+    files: ["socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts", "socialweb-computer-k8s/hono-socialweb-computer-k8s/cli-args-env.json", "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market/mod.ts", "deploy/apps/option-map.yaml", "deploy/apps/gateway/prod.values.yaml", "deploy/apps/gateway/market-network.values.yaml"]
+    done_when: git grep finds no debug-node-ssh or sshAuthorizedKeys on the node market path; deno task check green.
+    risks: ["0009 M3-REQUESTER-CONTROLLER rewrites the node market; this change is small and lands first."]
+    status: todo
+    evidence: []
+  - id: G4-CLEANUP
+    milestone: G4
+    title: Remove the plan 0005 acceptance leftovers
+    depends_on: ["0006:M5-FRESH-DEPLOY"]
+    decision: >
+      Proposed by Claude (Q10; was G5-CLEANUP, GAP-10): with the user's yes, right after 0006
+      M5-FRESH-DEPLOY: unregister runner 6 on the GitLab server, delete branches acc-0005 and acc-clone
+      in kcp-ci-probe, and remove the 14 exited fc-* containers on hat-8 together with the old bidder
+      image (0006 M5-RETIRE removes the old image with the user). Clusters acc-gitlab-0001/0002 need no
+      step: they went with the old gateway. Nothing is kept as a canary; G3-PROD-CANARY is the canary.
+    files: []
+    done_when: the listed objects are gone.
+    risks: []
+    status: todo
+    evidence: []
+dropped_items:
+  - id: G1-GITLAB-FIXTURE
+    verdict: dropped
+    why: The GitLab server at gitlab.dorper-matrix.ts.net:8443 hosts this repository and its CI; a throwaway GitLab container is a second GitLab to keep working and contradicts "the gateway runs no containers". GAP-9 is void.
+  - id: G1-RUNNER
+    verdict: rewritten
+    why: Became the runner of G3-PROD-CANARY (and the CI runner of G1-CI-GATE).
+  - id: G1-ACCEPT-SCRIPT
+    verdict: rewritten
+    why: Split into G2-IT-SCALE-TO-ZERO (repeatable, on a market network) and G3-PROD-CANARY (prod, scheduled). No headless-browser script against prod for every change.
+  - id: G2-NETPOL-MATRIX
+    verdict: folded
+    why: Into G2-IT-SCALE-TO-ZERO; a test, so after prod.
   - id: G3-MULTI-BIDDER
-    milestone: G3
-    title: Two real bidders on prod and failover mid-contract
-    decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: a second bidder identity and host (R0 picks
-      which); prove both win contracts, then kill one after accept and before the node joins and show
-      the claim fails, is released, and the node is re-requested and won by the other. Market
-      protocol changes, if any turn out to be needed, are asked first. Covers GAP-2 and ACC-FAILOVER.
-    status: todo
-    evidence: []
+    verdict: rewritten
+    why: G2-IT-FAILOVER on a market network with two bidders; a second prod bidder is Q8.
   - id: G3-RESTART-LEAK
-    milestone: G3
-    title: A bidder restart does not leak guests
-    decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: R0 decides whether this plan or plan 0007
-      fixes it. If here: the bidder re-adopts or reaps guests it finds at start, so vm.delete after a
-      restart finds its guest; then delete the 14 exited fc-* containers on hat-8 once the user
-      agrees. Covers GAP-3.
-    status: todo
-    evidence: []
+    verdict: folded
+    why: The fix is 0007 M4-CONTRACT-RESTORE (done); the live proof is 0007 M6-LIVE-RECOVERY and M6-BIDDER-UPGRADE; the regression test is G2-IT-BIDDER-RESTART.
   - id: G4-KERNEL-CONTRACT
-    milestone: G4
-    title: The guest kernel and rootfs agree, checked at image build
-    decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: socialweb-nodeimage refuses an image whose
-      rootfs lacks the kernel's CONFIG_MODPROBE_PATH target, a modules tree for the kernel version it
-      boots, or the netfilter modules kube-router's rules load (nft_log, nft_limit, nft_compat,
-      xt_NFLOG, xt_limit, ...); alternative is shipping a matched kernel. Covers GAP-4.
-    status: todo
-    evidence: []
+    verdict: dropped
+    why: 0007 M1-GUEST-IMAGE ships a pinned kernel with CONFIG_MODULES=n and the netfilter options built in; there is no module tree or modprobe path left to check. 0007 M6-NOSSH-JOIN proves it.
   - id: G4-DEAD-SUBSTRATE
-    milestone: G4
-    title: Remove what is left of the retired local substrates
-    decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: delete internal/nodefirecracker and the
-      substrate network and address vocabulary that only the retired substrates used, keeping what
-      the image builder still needs under a name that says so; or fold into plan 0006. Covers GAP-5.
-    status: todo
-    evidence: []
+    verdict: folded
+    why: Into 0006 M5-RETIRE (Q11).
   - id: G4-SCHED-SINGLE-SERVER
-    milestone: G4
-    title: Leader election off only while a cluster has one k3s server
-    decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: clusterstack refuses to render leaderElect false
-      for a spec with more than one server, with a test, so an HA control plane cannot inherit it
-      silently. Covers GAP-7.
-    status: todo
-    evidence: []
+    verdict: dropped
+    why: 0006 M3-CP-SLOTS turned scheduler leader election on for every market cluster; GAP-7's premise is gone. Closes NEXT.yaml P10's open note.
   - id: G4-NO-SSH-GUARD
-    milestone: G4
-    title: Zero ssh to guests is enforced by the build or by a prod check
-    decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: either a build tag that leaves the debug ssh
-      path out of release builds, or deploy.sh and the acceptance script refusing a prod
-      container.env with DEBUG_SOCIALWEB_NODE_SSH_DIR set and asserting no ssh authorized_keys module
-      in any prod user_data. Covers GAP-8.
-    status: todo
-    evidence: []
+    verdict: rewritten
+    why: G4-NO-DEBUG-SSH deletes the path instead of guarding it.
   - id: G5-CLEANUP
-    milestone: G5
-    title: Tear down or adopt the plan 0005 acceptance leftovers
-    decision: >
-      Proposed by Claude, to be refined in R0-REASSESS: per the user's answer, remove runner 6,
-      acc-gitlab-0001/0002 and the acc-* branches, or keep them as a standing canary driven by
-      G1-ACCEPT-SCRIPT. Covers GAP-10.
-    status: todo
-    evidence: []
+    verdict: rewritten
+    why: G4-CLEANUP, after 0006 M5-FRESH-DEPLOY.
