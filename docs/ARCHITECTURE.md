@@ -6983,6 +6983,44 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   (3) `SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE` in `dev up`'s environment does not reach the
   `--with-gateway` child's clusterprovider.
 
+- **Each market node is dialled by its node name, the scaler follows unschedulable pods, and the
+  scale settings reach the `--with-gateway` child (2026-10-12, the three defects above).**
+  (1) Cause: k3s's tunnel server maps every Node InternalIP/ExternalIP to its node name, and the
+  apiserver's default `kubelet-preferred-address-types` puts InternalIP first; every guest reports
+  172.30.0.2, so the last node written owned that address and exec, logs and port-forward for any
+  node went to it. Now a market cluster's apiserver prefers only the Hostname address; the tunnel
+  server sends a host name to the agent session of that node name and dials the kubelet on its
+  loopback, so no new path into a guest opens and N nodes work. The k3s join module sets the guest
+  hostname to the node name before the agent starts (k3s takes the Hostname address from the OS
+  hostname), and `nodeprovider.NodeName` refuses a name over 64 bytes. Rejected: a per-node
+  `--node-ip` (kubelet needs it on a local interface, and no unique range is known before the Node
+  registers; a pod-CIDR address would collide with socialweb-meshd's routes). InternalIP stays
+  172.30.0.2 on every node: in-cluster scrapers that dial node IPs (metrics-server) still reach their
+  own node. (2) Cause: the target was demand over pods per node only. Now the target is at least the
+  largest group of live pods that repel each other by required pod anti-affinity on
+  `kubernetes.io/hostname`, and a Pending pod with PodScheduled=False/Unschedulable that the scheduler
+  refused on all current nodes ("0/N nodes are available", N = the node count) adds one node, but only
+  when no node is joining, every node has been Ready for 5 s and every node holds workload (an
+  unschedulable pod beside an empty node would not fit a fresh one either). A want above max-nodes is
+  clamped and logged once per change as a warning naming the pods it keeps Pending. (3) Cause: the
+  child's env is not `dev up`'s. Now `GatewaySpec.clusterProvider` and `NetworkApp.clusterProvider`
+  (scaleHold, scaleMaxNodes, scalePodsPerNode; Gateway schema revision 7, MarketNetwork revision 8)
+  carry them; `dev up` fills the gateway app from `SOCIALWEB_CLUSTERPROVIDER_SCALE_*` where the values
+  leave a field unset, and the gateway sets the clusterprovider env from the spec. Readings (`dev up
+  --profile market-network --bidders 1 --with-gateway`, VM slots of test-0001, env
+  `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES=3 SCALE_HOLD=30s`, pods per node at its default 8, hat-8
+  load about 110, UTC): the child's clusterprovider started with hold 30s, maxNodes 3, podsPerNode 8.
+  A 2-replica Deployment with required anti-affinity, no filler pods, applied at zero nodes 22:41:50.5;
+  one pass 22:41:56.3 provisioned 2 ("2 pods of default/app=nad-spread repel each other"), claims
+  22:41:55 and 22:41:56, ComputeVMs Running 22:42:19, nodes Ready 22:43:17 and 22:43:28, both pods
+  Running by 22:43:48, still 2 claims 15 s later. Both Nodes: InternalIP 172.30.0.2, Hostname = node
+  name. kubectl exec and logs into the pod on each node at 22:44:09 and 22:44:14: 2 of 2 answered from
+  the right node. Scaled to 4 replicas 22:44:22.8 with max-nodes 3: a third claim 22:44:35, Ready
+  22:46:07, the fourth pod stays Pending, warning 22:44:32.6 "the cluster wants 4 nodes ... cap is 3".
+  Deployment deleted 22:46:14.9: claims, Nodes and ComputeVMs gone 22:47:01.9 (47 s, hold 30 s);
+  `dev down` 30 s, no unit, VM or process left. Not proven live: the one-node step for a pod refused by
+  resources or selectors.
+
 - **Defects of the 0006 M5-FRESH-DEPLOY run: a failed or released VM ends its contract at once, a claim
   never waits twice, short VM timeouts, one closure per DenoPod (2026-10-12).** On prod a ComputeVM went
   Preparing -> Failed after the accept, and the claim stayed Provisioning until vmReadyTimeoutSec (600 s);
