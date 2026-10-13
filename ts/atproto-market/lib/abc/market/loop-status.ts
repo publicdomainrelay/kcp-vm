@@ -47,8 +47,20 @@ export class MarketLoopTally implements MarketLoopRecorder {
   #streams = new Map<string, MarketStreamTally>();
   #onChange: () => void;
 
-  constructor(onChange: () => void = () => {}) {
+  constructor(onChange: () => void = () => {}, initial?: Partial<MarketLoopView>) {
     this.#onChange = onChange;
+    this.#rfpsSeen = initial?.rfpsSeen ?? 0;
+    this.#rfpsScoped = initial?.rfpsScoped ?? 0;
+    for (const d of initial?.declinedByReason ?? []) this.#declined.set(d.reason, d.count);
+    this.#bids = initial?.bids ?? 0;
+    this.#wins = initial?.wins ?? 0;
+    this.#contractsActive = initial?.contractsActive ?? 0;
+    for (const st of initial?.streams ?? []) this.#streams.set(st.source, { ...st });
+  }
+
+  cursorOf(source: string): number | undefined {
+    const cursor = this.#streams.get(source)?.cursor;
+    return typeof cursor === "number" && cursor > 0 ? cursor : undefined;
   }
 
   #changed(): void {

@@ -15,6 +15,7 @@ export interface ATProtoEventStream {
    */
   watch(opts: {
     wantedCollections: string[];
+    cursor?: number;
     onEvent(event: FirehoseRecordEvent): void | Promise<void>;
     onProgress?(progress: FirehoseProgress): void;
     log?: LoggerInterface;

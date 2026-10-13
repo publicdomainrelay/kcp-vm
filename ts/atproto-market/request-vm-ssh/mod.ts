@@ -27,11 +27,11 @@ import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp"
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import { createComputeContractKcpStore } from "@publicdomainrelay/compute-contract-kcp";
-import type { ComputeContract, ComputeContractPhase, ComputeContractStatus, MarketLoopStatus, NodeClaimContract } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import type { ComputeContract, ComputeContractPhase, ComputeContractStatus, MarketLoopStatus, MarketRequester, NodeClaimContract } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import { MARKET_REQUESTER_RESOURCE } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import { ExecutionState, type KcpCondition } from "@publicdomainrelay/kcp-client-abc";
 import { createCoalescedStatusWriter, createKcpRestClient, statusFieldWrite } from "@publicdomainrelay/kcp-client-rest";
-import { MarketLoopTally } from "@publicdomainrelay/market-abc";
+import { MarketLoopTally, type MarketLoopView } from "@publicdomainrelay/market-abc";
 import cliArgsEnv from "./cli-args-env.ts";
 
 interface PolicySpec {
@@ -89,10 +89,18 @@ const contractKcp = createKcpRestClient({
   caCert: readCa(o.computeContractKcpCaCertFile),
 });
 
-function marketLoop(): MarketLoopTally | undefined {
+async function marketLoop(): Promise<MarketLoopTally | undefined> {
   const root = o.marketRootName as string | undefined;
   if (!root) return undefined;
-  const write = statusFieldWrite(contractKcp, { resource: MARKET_REQUESTER_RESOURCE, workspace: o.computeContractKcpWorkspace }, root, "market");
+  const target = { resource: MARKET_REQUESTER_RESOURCE, workspace: o.computeContractKcpWorkspace };
+  const prior = await contractKcp.get(target, root).then(
+    (obj) => (obj as MarketRequester | null)?.status?.market,
+    (err: unknown) => {
+      logger.warn("requester_market_status_read_failed", { root, error: String(err) });
+      return undefined;
+    },
+  );
+  const write = statusFieldWrite(contractKcp, target, root, "market");
   const writer = createCoalescedStatusWriter<null>({
     write: () => {
       const market: MarketLoopStatus = tally.view(new Date());
@@ -100,16 +108,21 @@ function marketLoop(): MarketLoopTally | undefined {
     },
     onError: (err) => logger.warn("requester_market_status_failed", { root, error: String(err) }),
   });
-  const tally = new MarketLoopTally(() => writer.set(null));
+  const tally = new MarketLoopTally(() => writer.set(null), prior as Partial<MarketLoopView> | undefined);
   return tally;
 }
-const loop = marketLoop();
+const loop = await marketLoop();
 
 const firehoseMode = (o.firehoseMode as string) || "off";
 const eventStreams = createDefaultATProtoEventStreamsClient({
   onlyRelays: explicitRelayUrls(network, firehoseMode),
   log: logger,
-  onProgress: (source, p) => loop?.streamProgress(source, p.cursor, p.eventTime, new Date()),
+  cursorStore: loop
+    ? {
+      load: (source) => loop.cursorOf(source),
+      save: (source, p) => loop.streamProgress(source, p.cursor, p.eventTime, new Date()),
+    }
+    : undefined,
 });
 const relayUrls = eventStreams.relays.map((r) => r.url);
 

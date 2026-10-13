@@ -17,6 +17,37 @@ export interface FirehoseProgress {
   eventTime?: string;
 }
 
+export type StreamKind = "relay" | "jetstream";
+
+export interface StreamCursorStore {
+  load(source: string): number | undefined;
+  save(source: string, progress: FirehoseProgress): void;
+}
+
+export interface StreamResumeOverlap {
+  subscribeReposEvents: number;
+  jetstreamMicros: number;
+}
+
+export const DEFAULT_RESUME_OVERLAP: StreamResumeOverlap = {
+  subscribeReposEvents: 1_000,
+  jetstreamMicros: 30_000_000,
+};
+
+export function streamSource(kind: StreamKind, url: string): string {
+  return `${kind}:${url}`;
+}
+
+export function resumeCursor(
+  kind: StreamKind,
+  stored: number | undefined,
+  overlap: StreamResumeOverlap = DEFAULT_RESUME_OVERLAP,
+): number | undefined {
+  if (stored === undefined || !Number.isFinite(stored) || stored <= 0) return undefined;
+  const back = kind === "relay" ? overlap.subscribeReposEvents : overlap.jetstreamMicros;
+  return Math.max(0, stored - back);
+}
+
 /** AT-URI + CID uniquely identifies a record version for dedup. */
 export function eventKey(event: FirehoseRecordEvent): string {
   return `${event.uri}|${event.cid}`;

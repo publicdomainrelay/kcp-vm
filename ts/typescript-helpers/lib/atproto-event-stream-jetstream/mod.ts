@@ -16,6 +16,7 @@ export function createATProtoJetstream(
       return createFirehoseWatcher({
         url,
         wantedCollections: wo.wantedCollections,
+        cursor: wo.cursor,
         onRecord: wo.onEvent,
         onProgress: wo.onProgress,
         log: wo.log ?? log,

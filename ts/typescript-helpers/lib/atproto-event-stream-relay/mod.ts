@@ -28,6 +28,7 @@ export function createATProtoRelay(
       return createFirehoseWatcher({
         url: subscribeReposUrl,
         wantedCollections: wo.wantedCollections,
+        cursor: wo.cursor,
         onRecord: wo.onEvent,
         onProgress: wo.onProgress,
         log: wo.log ?? log,

@@ -5,7 +5,7 @@ import { registerErrorMiddleware } from "@publicdomainrelay/hono-error-middlewar
 import { createLogger, type LoggerInterface } from "@publicdomainrelay/logger";
 import { hostnameToDid, hostnameOnly } from "@publicdomainrelay/hostname-helpers";
 import { now } from "@publicdomainrelay/atproto-relay-common";
-import { splitRecordPath } from "@publicdomainrelay/firehose-common";
+import { FUTURE_CURSOR_ERROR, splitRecordPath } from "@publicdomainrelay/firehose-common";
 import type {
   HostStore,
   AccountStore,
@@ -162,6 +162,13 @@ export function createRelayFactory(opts: RelayFactoryOptions): RelayFactory {
       return {
         onOpen(_evt, ws) {
           (async () => {
+            const head = sequencer.head();
+            if (since !== undefined && since > head) {
+              log.warn("subscribe_repos_future_cursor", { cursor: since, head });
+              ws.send(JSON.stringify({ error: FUTURE_CURSOR_ERROR, message: `cursor ${since} is past the relay's newest event ${head}` }));
+              ws.close(1000, FUTURE_CURSOR_ERROR);
+              return;
+            }
             try {
               // Subscribe to live events FIRST so no frames escape during backfill.
               const liveIter = sequencer.live();

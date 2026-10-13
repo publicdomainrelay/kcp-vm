@@ -5,7 +5,7 @@ import type {
   FirehoseWatcherOptions,
 } from "@publicdomainrelay/firehose-watcher-abc";
 import type { SubscribeReposFrame } from "@publicdomainrelay/firehose-common";
-import { splitRecordPath } from "@publicdomainrelay/firehose-common";
+import { FUTURE_CURSOR_ERROR, isSubscribeReposError, splitRecordPath } from "@publicdomainrelay/firehose-common";
 
 const OPERATIONS: Record<string, FirehoseOperation> = {
   create: "create",
@@ -56,6 +56,8 @@ export function createFirehoseWatcher(
   function connect(): void {
     if (closed) return;
     log?.info("firehose_connecting", { url, cursor });
+    const asked = cursor;
+    let first = true;
     try {
       ws = new WebSocket(endpoint());
     } catch (err) {
@@ -72,8 +74,22 @@ export function createFirehoseWatcher(
       retryCount = 0;
       try {
         if (typeof event.data !== "string") return;
-        const frame = JSON.parse(event.data) as Partial<SubscribeReposFrame>;
+        const parsed: unknown = JSON.parse(event.data);
+        if (isSubscribeReposError(parsed)) {
+          if (parsed.error === FUTURE_CURSOR_ERROR) {
+            log?.warn("firehose_future_cursor", { url, cursor: asked, message: parsed.message, next: "from the relay's oldest event" });
+            cursor = undefined;
+          } else {
+            log?.warn("firehose_error_frame", { url, error: parsed.error, message: parsed.message });
+          }
+          return;
+        }
+        const frame = parsed as Partial<SubscribeReposFrame>;
         if (typeof frame.seq === "number") {
+          if (first && asked !== undefined && frame.seq > asked + 1) {
+            log?.warn("firehose_cursor_gap", { url, cursor: asked, firstSeq: frame.seq, missed: frame.seq - asked - 1 });
+          }
+          first = false;
           cursor = frame.seq;
           opts.onProgress?.({ cursor: frame.seq, ...(frame.time ? { eventTime: frame.time } : {}) });
         }

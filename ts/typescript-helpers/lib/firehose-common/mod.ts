@@ -27,3 +27,14 @@ export function splitRecordPath(path: string): RecordPath | undefined {
   if (slashIdx <= 0) return undefined;
   return { collection: path.slice(0, slashIdx), rkey: path.slice(slashIdx + 1) };
 }
+
+export const FUTURE_CURSOR_ERROR = "FutureCursor";
+
+export interface SubscribeReposErrorFrame {
+  error: string;
+  message?: string;
+}
+
+export function isSubscribeReposError(frame: unknown): frame is SubscribeReposErrorFrame {
+  return !!frame && typeof frame === "object" && typeof (frame as { error?: unknown }).error === "string";
+}

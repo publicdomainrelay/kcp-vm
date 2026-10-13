@@ -46,6 +46,7 @@ export interface RelaySequencer {
   append(frame: SubscribeReposFrame): SubscribeReposFrame;
   backfill(since?: number): AsyncIterable<SubscribeReposFrame>;
   live(): AsyncIterable<SubscribeReposFrame>;
+  head(): number;
 }
 
 export interface CollectionIndex {

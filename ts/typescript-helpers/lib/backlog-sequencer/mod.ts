@@ -9,6 +9,7 @@ export interface BacklogSequencer<TIn, TFrame extends { seq: number }> {
   append(evt: TIn): TFrame;
   backfill(since?: number): AsyncIterable<TFrame>;
   live(): AsyncIterable<TFrame>;
+  head(): number;
 }
 
 export function createBacklogSequencer<TIn, TFrame extends { seq: number }>(
@@ -27,6 +28,9 @@ export function createBacklogSequencer<TIn, TFrame extends { seq: number }>(
       if (backlog.length > max) backlog.shift();
       bus.publish(frame);
       return frame;
+    },
+    head(): number {
+      return seq;
     },
     async *backfill(since?: number) {
       for (const f of backlog) {
