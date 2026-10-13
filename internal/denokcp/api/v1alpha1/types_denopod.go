@@ -31,7 +31,63 @@ type DenoPodSpec struct {
 	ActiveDeadlineSeconds *int64 `json:"activeDeadlineSeconds,omitempty"`
 
 	TTLSecondsAfterFinished *int64 `json:"ttlSecondsAfterFinished,omitempty"`
+
+	Projected []ProjectedCredential `json:"projected,omitempty"`
 }
+
+type ProjectedCredential struct {
+	Name string `json:"name"`
+
+	ServiceAccountToken *ProjectedServiceAccountToken `json:"serviceAccountToken,omitempty"`
+
+	KcpCA *ProjectedKcpCA `json:"kcpCA,omitempty"`
+
+	OpenBaoClient *ProjectedOpenBaoClient `json:"openBaoClient,omitempty"`
+
+	File *ProjectedFile `json:"file,omitempty"`
+}
+
+type ProjectedServiceAccountToken struct {
+	Name string `json:"name"`
+
+	Namespace string `json:"namespace,omitempty"`
+
+	Workspace string `json:"workspace,omitempty"`
+
+	ExpirationSeconds int64 `json:"expirationSeconds,omitempty"`
+}
+
+type ProjectedKcpCA struct{}
+
+type ProjectedOpenBaoClient struct {
+	Server string `json:"server"`
+
+	Client string `json:"client"`
+
+	Workspace string `json:"workspace,omitempty"`
+}
+
+type ProjectedFile struct {
+	Path string `json:"path"`
+}
+
+type DenoPodProjected struct {
+	Name string `json:"name"`
+
+	Env string `json:"env"`
+
+	Path string `json:"path"`
+
+	UpdatedAt string `json:"updatedAt,omitempty"`
+
+	ExpiresAt string `json:"expiresAt,omitempty"`
+
+	Message string `json:"message,omitempty"`
+}
+
+const ProjectedEnv = "KCP_PROJECTED"
+
+const ProjectedEnvPrefix = "KCP_PROJECTED_"
 
 type DenoPodPhase string
 
@@ -67,6 +123,8 @@ type DenoPodStatus struct {
 	Address string `json:"address,omitempty"`
 
 	Listeners []DenoPodListener `json:"listeners,omitempty"`
+
+	Projected []DenoPodProjected `json:"projected,omitempty"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }

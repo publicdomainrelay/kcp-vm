@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-5.denopods.deno.computer
+  name: v1alpha1-6.denopods.deno.computer
 spec:
   group: deno.computer
   names:
@@ -71,6 +71,50 @@ spec:
               ttlSecondsAfterFinished:
                 type: integer
                 format: int64
+              projected:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                    serviceAccountToken:
+                      type: object
+                      required:
+                        - name
+                      properties:
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                        workspace:
+                          type: string
+                        expirationSeconds:
+                          type: integer
+                          format: int64
+                    kcpCA:
+                      type: object
+                    openBaoClient:
+                      type: object
+                      required:
+                        - server
+                        - client
+                      properties:
+                        server:
+                          type: string
+                        client:
+                          type: string
+                        workspace:
+                          type: string
+                    file:
+                      type: object
+                      required:
+                        - path
+                      properties:
+                        path:
+                          type: string
             required:
               - script
           status:
@@ -125,6 +169,27 @@ spec:
                         - unix
                         - relay
                     address:
+                      type: string
+              projected:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - name
+                    - env
+                    - path
+                  properties:
+                    name:
+                      type: string
+                    env:
+                      type: string
+                    path:
+                      type: string
+                    updatedAt:
+                      type: string
+                    expiresAt:
+                      type: string
+                    message:
                       type: string
               conditions:
                 type: array

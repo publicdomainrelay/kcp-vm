@@ -179,6 +179,31 @@ func (in *DenoPodSpec) DeepCopyInto(out *DenoPodSpec) {
 		v := *in.TTLSecondsAfterFinished
 		out.TTLSecondsAfterFinished = &v
 	}
+	if in.Projected != nil {
+		out.Projected = make([]ProjectedCredential, len(in.Projected))
+		for i := range in.Projected {
+			in.Projected[i].DeepCopyInto(&out.Projected[i])
+		}
+	}
+}
+
+func (in *ProjectedCredential) DeepCopyInto(out *ProjectedCredential) {
+	*out = *in
+	if in.ServiceAccountToken != nil {
+		v := *in.ServiceAccountToken
+		out.ServiceAccountToken = &v
+	}
+	if in.KcpCA != nil {
+		out.KcpCA = &ProjectedKcpCA{}
+	}
+	if in.OpenBaoClient != nil {
+		v := *in.OpenBaoClient
+		out.OpenBaoClient = &v
+	}
+	if in.File != nil {
+		v := *in.File
+		out.File = &v
+	}
 }
 
 func (in *ExecProbe) DeepCopyInto(out *ExecProbe) {
@@ -297,6 +322,10 @@ func (in *DenoPodStatus) DeepCopyInto(out *DenoPodStatus) {
 	if in.Listeners != nil {
 		out.Listeners = make([]DenoPodListener, len(in.Listeners))
 		copy(out.Listeners, in.Listeners)
+	}
+	if in.Projected != nil {
+		out.Projected = make([]DenoPodProjected, len(in.Projected))
+		copy(out.Projected, in.Projected)
 	}
 	if in.Conditions != nil {
 		out.Conditions = make([]metav1.Condition, len(in.Conditions))

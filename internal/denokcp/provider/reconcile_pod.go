@@ -58,6 +58,11 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 	if err := p.ensurePodFinalizer(ctx, ref, pod); err != nil {
 		return 0, false, err
 	}
+	var pr projection
+	var projectErr error
+	if !terminal && pod.DeletionTimestamp == nil {
+		pr, projectErr = p.project(ctx, ref, pod)
+	}
 	runID := res.RunID
 	if runID != pod.Status.RunID || terminal {
 		if address != "" || pod.Status.Address != "" || len(reported) > 0 || len(pod.Status.Listeners) > 0 {
@@ -75,7 +80,11 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 				}
 			}
 		case denopod.OpStartRun:
-			req, err := p.podRequest(ctx, ref, &pod.Spec.DenoPodTemplate)
+			if projectErr != nil {
+				res.Message = projectErr.Error()
+				continue
+			}
+			req, err := p.podRequest(ctx, ref, &pod.Spec.DenoPodTemplate, pr)
 			if err != nil {
 				return 0, false, err
 			}
@@ -97,6 +106,7 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 		Ready:          res.Ready,
 		Address:        address,
 		Listeners:      reported,
+		Projected:      pr.status,
 		Conditions:     res.Conditions,
 	}
 	status.Phase = res.Phase
@@ -115,6 +125,7 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 		switch op {
 		case denopod.OpRemoveFinalizer:
 			p.removeRunDirs(ctx, p.opts.PodRunner, "DenoPod", ref.Name, pod.Status.RunID, runID)
+			p.removeProjected(ref)
 			if err := p.opts.Runtime.RemovePodFinalizer(ctx, ref); err != nil {
 				return 0, false, err
 			}
@@ -204,10 +215,18 @@ func (p *Provider) runProbe(ctx context.Context, runID string, probe *v1alpha1.E
 	return passed
 }
 
-func (p *Provider) podRequest(ctx context.Context, ref Ref, tmpl *v1alpha1.DenoPodTemplate) (runner.PodRequest, error) {
-	args, err := denospec.Args(tmpl.Permissions.DenoSpec())
+func (p *Provider) podRequest(ctx context.Context, ref Ref, tmpl *v1alpha1.DenoPodTemplate, pr projection) (runner.PodRequest, error) {
+	args, err := denospec.Args(withProjected(tmpl.Permissions.DenoSpec(), pr))
 	if err != nil {
 		return runner.PodRequest{}, fmt.Errorf("provider: %s permissions: %w", ref.Name, err)
+	}
+	env := p.podEnv(ctx, ref, tmpl)
+	if len(pr.env) > 0 {
+		value, err := projectedEnvValue(pr)
+		if err != nil {
+			return runner.PodRequest{}, err
+		}
+		env[v1alpha1.ProjectedEnv] = value
 	}
 	req := runner.PodRequest{
 		Name:           ref.Name,
@@ -216,7 +235,7 @@ func (p *Provider) podRequest(ctx context.Context, ref Ref, tmpl *v1alpha1.DenoP
 		DenoLock:       tmpl.DenoLock,
 		Script:         tmpl.Script,
 		PermissionArgs: args,
-		Env:            p.podEnv(ctx, ref, tmpl),
+		Env:            env,
 		Server:         p.serverFor(tmpl, ref),
 		Workspace:      ref.LogicalCluster,
 	}

@@ -90,6 +90,8 @@ type Options struct {
 
 	Minter TokenMinter
 
+	ProjectedSources ProjectedSources
+
 	PodRunner runner.PodRunner
 
 	EngineRunner runner.EngineRunner
@@ -200,6 +202,8 @@ type Provider struct {
 	clusterCA []byte
 
 	paths *kcpstore.PathCache
+
+	projected projectedStore
 }
 
 type Pass struct {

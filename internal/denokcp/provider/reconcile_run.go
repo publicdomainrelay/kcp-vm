@@ -53,7 +53,7 @@ func (p *Provider) reconcileRun(ctx context.Context, ref Ref, run *v1alpha1.Deno
 			if p.alreadyStarted(ref, run) {
 				return p.opts.MinTransitionPoll, false, nil
 			}
-			req, err := p.podRequest(ctx, ref, &run.Spec.DenoPodTemplate)
+			req, err := p.podRequest(ctx, ref, &run.Spec.DenoPodTemplate, projection{})
 			if err != nil {
 				return 0, false, err
 			}

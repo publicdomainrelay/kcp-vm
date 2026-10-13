@@ -166,6 +166,7 @@ func Run(ctx context.Context, c Config) error {
 		Runtime:           registry,
 		RestConfig:        restCfg,
 		Minter:            registry,
+		ProjectedSources:  openBaoServerSources{cfg: restCfg},
 		PodRunner:         pods,
 		EngineRunner:      engines,
 		Host:              restCfg.Host,
