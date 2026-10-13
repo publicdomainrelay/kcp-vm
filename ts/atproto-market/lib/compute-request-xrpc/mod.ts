@@ -787,6 +787,7 @@ export type ComputeRequestOptions =
   >
   & {
     relayUrl?: string;
+    returnSignal?: AbortSignal;
     offeringWatcherDids?: () => string[];
     logger?: StructuredLoggerInterface;
     payloadFactory?: () => Promise<{ uri: string; cid: string }>;
@@ -1002,6 +1003,8 @@ export async function requestCompute(
     : createContractState({ vmName, requesterDid: pds.did, marketDid, at: nowIso() });
   const latch = new ReturnLatch();
   let ended = false;
+  if (opts.returnSignal?.aborted) latch.request("return_requested");
+  else opts.returnSignal?.addEventListener("abort", () => latch.request("return_requested"), { once: true });
 
   const advance = (phase: ContractState["phase"], patch: ContractStatePatch) => {
     if (CONTRACT_PHASES.indexOf(phase) < CONTRACT_PHASES.indexOf(state.phase)) {

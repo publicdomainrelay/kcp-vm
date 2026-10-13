@@ -369,6 +369,11 @@ const handlers: ComputeRequestHandlers = {
 };
 
 logger.info("requester_contract_start", { name: contracts.name, resume: state?.phase ?? null, vmName: spec.vmName });
+const releaseEarly = new AbortController();
+const flowDone = new AbortController();
+void contracts.waitFor((c) => c.spec?.release === true, flowDone.signal).then((asked) => {
+  if (asked) releaseEarly.abort();
+});
 let handle: ComputeRequestHandle;
 try {
   handle = await requestCompute(pds, {
@@ -392,7 +397,9 @@ try {
     offeringWatcherDids: () => [...offeringDids],
     eventStreams,
     resume: state,
+    returnSignal: releaseEarly.signal,
   }, handlers);
+  flowDone.abort();
 } catch (err) {
   await writeStatus("Failed", `the contract flow threw: ${err instanceof Error ? err.message : String(err)}`);
   await idle();
