@@ -8,42 +8,17 @@ loopback, so GitLab has to be able to reach loopback on this host.
 
 ## 1. Run the control plane
 
-Host needs `/dev/kvm`, `/dev/net/tun`, Docker. One container:
+The gateway is the `socialweb-computer` binary under its own lingering account; the host needs no
+`/dev/kvm`, no `/dev/net/tun` and no container runtime. Install it with `scripts/deploy.sh` (see the
+repository README, "Run it"): it runs `socialweb-computer install gateway` the first time and
+`upgrade` after, and waits until the web app answers `/api/config`.
+
+Check it as the account:
 
 ```bash
-deploy/run-container.sh
-docker logs -f socialweb
+systemctl --user status socialweb-computer-gateway.service
+curl -fsS http://127.0.0.1:8788/api/config
 ```
-
-Under the hood that is:
-
-```bash
-docker run -d --name socialweb \
-  --device=/dev/kvm --device=/dev/net/tun \
-  --security-opt seccomp=unconfined \
-  --cap-add NET_ADMIN --cap-add SYS_ADMIN \
-  -v socialweb-state:/var/lib/socialweb \
-  -p 127.0.0.1:8443:8443 \
-  socialweb-control-plane:local
-```
-
-Wait for ready. Exit 0 on ready, non-zero with the log tail otherwise:
-
-```bash
-deploy/wait-ready.sh socialweb 300
-```
-
-Check it:
-
-```bash
-docker logs socialweb | grep -o '"phase":"[A-Za-z]*"' | tail -1   # "phase":"Ready"
-curl -sk https://127.0.0.1:8443/                                  # 404, the gateway
-```
-
-It comes up with no `-e` at all: the entrypoint defaults everything, and a container it creates
-named `SOCIALWEB_CONTAINER_CLUSTER` (default `socialweb`) is the tenant cluster. Override with
-`--env-file deploy/container.env.example`. Terminate TLS with your own cert by mounting it and
-setting `SOCIALWEB_CONTAINER_TLS_CERT` / `SOCIALWEB_CONTAINER_TLS_KEY`.
 
 ## 2. The tenant cluster
 
@@ -138,10 +113,10 @@ table in `docs/plans/0004` section 7. Anything that big is pulled by the guest i
 ### Check the host before booting anything
 
 ```bash
-go run ./cmd/socialweb-computer-kcp-check-host -config /path/to/nodeimage.json
+socialweb-computer check-host -role gateway -state-dir <state dir>
 ```
 
-One summary line, three categories: HOLDS, MISSING, MUST BE PASSED IN.
+It exits 1 naming every check that fails, each with its fix (`docs/host-contract.md`).
 
 ## 4. Mint the runner's credential
 

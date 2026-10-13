@@ -15,111 +15,42 @@ Agents working in this repo should read [`AGENTS.md`](AGENTS.md) first; it point
 
 ## Prerequisites
 
-- Linux, and Docker. No `/dev/kvm` and no `/dev/net/tun`: a node is a VM rented from the compute
-  market and built by the winning bidder's cloud-init, so nothing about it runs on this host (see
-  "Substrates").
-- A Go toolchain newer than `go.mod` for building.
-- The container publishes only `127.0.0.1:8443` (TLS). Nothing else is exposed.
+- Linux with systemd >= 253 and a lingering user manager (the host contract, `docs/host-contract.md`).
+  The gateway and bidder hosts need no container runtime: the gateway runs no containers.
+- A gateway host needs no `/dev/kvm` and no `/dev/net/tun`: a node is a VM rented from the compute
+  market and built by the winning bidder's cloud-init, so nothing about it runs on the gateway (see
+  "Nodes"). A bidder host needs both (`check-host -role bidder`).
+- A Go toolchain newer than `go.mod`, deno, and docker or podman (the `swc-userns-stage` asset and
+  the guest image builds), for building.
+
+## Build
+
+```bash
+scripts/build-socialweb-computer.sh --dev                     # one build of the working tree
+scripts/build-socialweb-computer.sh --platform linux/amd64 --commit "$(git rev-parse HEAD)"
+```
+
+The result is one `socialweb-computer` binary with its pinned assets and the TypeScript closure
+embedded (`internal/versions/versions.json`, `deploy/ts-entries.yaml`). Guest images are not built
+here: `scripts/build-guest-image.sh` builds them on a Linux build host and `versions.json` pins them.
 
 ## Run it
 
-The deployment is one container. This builds the image and starts it detached under the name
-`socialweb`:
+A gateway: `scripts/deploy.sh` builds or takes the release binary (`BINARY`, `SHA256`), ships it
+over ssh (`SSH_TARGET`, `SSH_KEY`), runs `socialweb-computer install gateway` (the one root step)
+the first time and `upgrade` after, and writes the caddy sites for `https://k8s.<domain>` (the web
+app) and `https://kcp.<domain>` (the kcp front). `GATEWAY_ENV_FILE` becomes the account's
+`gateway.env` and `GATEWAY_SPEC_FILE` the Gateway spec:
 
 ```bash
-deploy/run-container.sh
-docker logs -f socialweb
+SSH_KEY=~/.ssh/key GATEWAY_ENV_FILE=gateway.env GATEWAY_SPEC_FILE=gateway-spec.yaml scripts/deploy.sh
 ```
 
-The container name and the state volume are `SOCIALWEB_CONTAINER_NAME` and
-`SOCIALWEB_STATE_VOLUME`. That script is `docker build` plus `docker run
--v <volume>:/var/lib/socialweb -p 127.0.0.1:8443:8443 <image>`. No host systemd unit, no root on
-the host, nothing to install.
+A bidder: `socialweb-computer install bidder` as root, then `socialweb-computer run bidder` per handle
+as the account.
 
-Wait for it to be ready (exit 0 on ready, non-zero with the log tail otherwise):
-
-```bash
-deploy/wait-ready.sh socialweb 300
-```
-
-By hand, if you prefer the flags in front of you:
-
-```bash
-docker run -d --name socialweb \
-  -v socialweb-state:/var/lib/socialweb \
-  -p 127.0.0.1:8443:8443 \
-  socialweb-control-plane:local
-
-deploy/wait-ready.sh socialweb 300
-```
-
-It comes up with no `-e` at all: the entrypoint defaults every setting so a fresh volume reaches
-`phase: Ready` in about 30 s. Check that:
-
-```bash
-docker logs socialweb | grep -o '"phase":"[A-Za-z]*"' | tail -1     # "phase":"Ready"
-
-curl -sk https://127.0.0.1:8443/                                     # 404, the gateway
-curl -sk -X POST https://127.0.0.1:8443/v1/credential                # 401, the gateway
-```
-
-The gateway binds `127.0.0.1:8080` inside the container on purpose (it serves plaintext), so a TLS
-terminator inside the container is what listens on the published port. `curl -k` is needed because
-the default certificate is self-signed; the entrypoint logs its SHA-256 fingerprint:
-
-```bash
-docker logs socialweb | grep -i fingerprint
-```
-
-Override the defaults with the documented file, or with `-e`:
-
-```bash
-docker run -d --name socialweb \
-  -v socialweb-state:/var/lib/socialweb \
-  -p 127.0.0.1:8443:8443 \
-  --env-file deploy/container.env.example \
-  socialweb-control-plane:local
-```
-
-Terminate TLS with your own certificate instead of a generated one:
-
-```bash
-docker run -d --name socialweb \
-  -v socialweb-state:/var/lib/socialweb \
-  -v "$PWD/tls:/tls:ro" \
-  -p 127.0.0.1:8443:8443 \
-  -e SOCIALWEB_CONTAINER_TLS_CERT=/tls/tls.crt \
-  -e SOCIALWEB_CONTAINER_TLS_KEY=/tls/tls.key \
-  socialweb-control-plane:local
-```
-
-Run a one-off command in the image instead of the stack (the entrypoint execs its arguments):
-
-```bash
-docker run --rm \
-  socialweb-control-plane:local \
-  socialweb-computer-kcp-check-host -config /home/johnandersen777/kcp-image/nodeimage.json
-```
-
-Stop and clean up:
-
-```bash
-docker rm -f socialweb
-docker volume rm socialweb-state
-```
-
-`docker restart socialweb` works: the provider adopts the store it already started instead of
-refusing, and a recycled pid no longer reads as a live postmaster.
-
-## Build the image
-
-```bash
-deploy/control-plane-container/build.sh controlplane
-```
-
-Targets: `controlplane` (the control-plane half, which is what `run-container.sh` builds and tags
-`socialweb-control-plane:local`) and `k8s`. Guest images are not built here: `scripts/build-guest-image.sh`
-builds them on a Linux build host and `internal/versions/versions.json` pins them.
+A market network for development (its own fake PLC, relay, PDS, bidders and requesters):
+`socialweb-computer dev up --profile market-network` (`deploy/market-network/README.md`).
 
 ## Gate
 
@@ -172,34 +103,19 @@ The gate it drove is unchanged and still runs against a live cluster:
 SOCIALWEB_REQUIRE_LIVE=1 go test ./...     # everything; a skip is a failure
 ```
 
-## Validate the containerized control plane
-
-Runs the host-contract probe inside the image, then drives the real zero-node proof
-(`TestTheControlPlaneReachesReadyAtZeroNodes`) inside the container:
-
-```bash
-deploy/control-plane-container/validate.sh
-```
-
-It needs Docker, the Go toolchain and caches, and prints `PROOF: --- PASS: ...` on success. It takes
-about ten seconds and needs no root and no `/dev/kvm`.
-
 ## Probe the host contract
 
-One binary answers what a host can run, and the same binary inside a container answers what the
-container was handed. It prints one summary line in three categories -- HOLDS, MISSING, MUST BE
-PASSED IN:
+`install` runs it as the account; run it by hand the same way:
 
 ```bash
-go run ./cmd/socialweb-computer-kcp-check-host -config /home/johnandersen777/kcp-image/nodeimage.json
+socialweb-computer check-host -role gateway -state-dir /var/lib/socialweb-computer/socialweb
 ```
 
-On this host it answers `21 checks: 21 HOLDS, 0 MISSING, 0 MUST BE PASSED IN` and exits 0; the count
-grows as checks are added, so read the line rather than a number written down here.
+It exits 1 naming every check that fails, each with its fix (`docs/host-contract.md`).
 
-## Standalone kcp (no container)
+## Standalone kcp
 
-For running just kcp against your own kine, outside the container:
+For running just kcp against your own kine:
 
 ```bash
 KCP_INSTANCE=dev KCP_SECURE_PORT=6444 KCP_KINE_ENDPOINT=http://127.0.0.1:20001 \
@@ -210,28 +126,24 @@ KCP_INSTANCE=dev KCP_SECURE_PORT=6444 KCP_KINE_ENDPOINT=http://127.0.0.1:20001 \
 
 | Binary | What it is |
 | --- | --- |
-| `socialweb-clusterprovider` | the reconciler: owns each `Cluster` CR, spawns and reaps its process group and writes its nodes' claims |
-| `socialweb-gateway` | the front door: device-key minting and the XRPC surface |
+| `socialweb-computer` | the one host binary; the gateway, the clusterprovider, the vault, the CCM and check-host are its verbs, and a dev build adds `nodeimage guest-rootfs` and `nodeimage guest-manifest`, the two Go steps of `scripts/build-guest-image.sh` |
 | `socialweb-credential` | the kubeconfig exec plugin the gateway hands a tenant |
-| `socialweb-vault` | applies the root vault layout (init, unseal, mounts, policies, roles, secrets) |
-| `socialweb-computer-kcp-check-host` | the host-contract probe above |
-| `socialweb-computer` | the one host binary; the gateway, the clusterprovider, the vault and check-host are its verbs, and a dev build adds `nodeimage guest-rootfs` and `nodeimage guest-manifest`, the two Go steps of `scripts/build-guest-image.sh` |
 | `socialweb-vmexec` | the tiny VM-unit asset: creates the tap and bridge in pasta's namespace and execs firecracker |
 
-## Substrates
+## Nodes
 
-**`market` is the only node path.** A node is a VM rented from the compute market: the
+**The compute market is the only node path.** A node is a VM rented from the compute market: the
 clusterprovider writes a `NodeClaim`, the market's door fulfils it under the cluster owner's own
 atproto OAuth session, and the winning bidder boots the guest from the requester's cloud-init
-`user_data`. Nothing about a node runs on this host -- no VMM, no guest network, no image, no
+`user_data`. Nothing about a node runs on the gateway -- no VMM, no guest network, no image, no
 `/dev/kvm`.
 
 The local `firecracker` and `qemu` substrates were retired on 2026-10-07 (plan
-[`0005-zero-ssh-market-nodes.yaml`](docs/plans/0005-zero-ssh-market-nodes.yaml), M1-MARKET-ONLY);
-their code, their tests and their deployment paths are gone, and a configuration that still names
-one is refused at startup by a message that says so. A bidder boots the guest the market rents as
-a VM unit of the Linux VM runtime (`internal/vmruntime`, `socialweb-computer internal vm`), on the
-bidder's host rather than this one; `socialweb-nodeboot` and its runner container are deleted.
+[`0005-zero-ssh-market-nodes.yaml`](docs/plans/0005-zero-ssh-market-nodes.yaml), M1-MARKET-ONLY), and
+their last code (`internal/nodefirecracker`, `internal/nodevm`, `internal/noderecord`, the
+`SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` setting) was deleted with the container path (plan 0006
+M5-RETIRE). A bidder boots the guest the market rents as a VM unit of the Linux VM runtime
+(`internal/vmruntime`, `socialweb-computer internal vm`), on the bidder's host.
 
 ## Where things are
 
@@ -243,19 +155,16 @@ bidder's host rather than this one; `socialweb-nodeboot` and its runner containe
 | The operator handoff | [`handoff.yaml`](handoff.yaml) |
 | The plan series for work in flight | `docs/plans/` |
 | Running GitLab CI against a tenant cluster | [`docs/gitlab/`](docs/gitlab/) |
-| Everything the deployment is | `deploy/`, `deploy/control-plane-container/` |
+| Everything the deployment is | `deploy/`, `scripts/deploy.sh` |
 
 ## Troubleshooting
 
-- **`/dev/kvm` or `/dev/net/tun` errors**: nothing asks for them any more. A node is a market guest
-  (see "Substrates"), so a message naming either is from a build or a script older than the
-  retirement on 2026-10-07.
-- **`curl` to 8080 fails**: 8080 is container-local. Publish and use 8443; that is the TLS
-  terminator, which forwards to the loopback gateway.
+- **`/dev/kvm` or `/dev/net/tun` errors on a gateway**: nothing there asks for them. A node is a
+  market guest (see "Nodes"); only a bidder host needs them.
 - **`--full` fails**: it names the missing variable for each failing test. It is the only mode that
   may be called "everything ran".
-- **Container not ready**: `deploy/wait-ready.sh <name> <seconds>` prints the last 40 log lines and
-  exits non-zero, rather than hanging.
+- **Gateway not ready**: `scripts/deploy.sh` waits for `/api/config` and prints the last 60 lines of
+  `socialweb-computer-gateway.service` when it never answers.
 
 ## Experiments tree
 

@@ -43,8 +43,8 @@ That value is the `host` you put in the runner config.
 
 Then the kcp host has to publish an authenticated front for the apiserver, and that widens a trust
 boundary this project keeps at loopback on purpose. Nothing in this repo does it today, and it is
-not done silently: `cmd/socialweb-gateway/config.go` refuses to bind anything but loopback, and
-`deploy/container-entrypoint.sh` publishes exactly one port, whose only upstream is the gateway.
+not done silently: `internal/gatewaymain/config.go` refuses to bind anything but loopback, and the
+host's caddy publishes only the web app and the kcp front (`scripts/deploy.sh`).
 Instructions stop at that boundary; see [01](01-kcp-server.md#gitlab-on-its-own-vm-does-not-work).
 
 ## The limits you will hit first

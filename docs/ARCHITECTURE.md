@@ -262,7 +262,7 @@ HostProcesses, and listeners behind the edge bind port 0.
 | 6 | k3s cloud-init module | sibling repo, `UserDataModule` | Installs k3s in a market guest. The only sanctioned way a guest-side component arrives |
 | 7 | OpenBao plus ESO | deploy config | The vault, at two levels: a root vault one per deployment and a cluster vault one per ON cluster, both in the production stack. OpenBao holds the per-cluster 13-entry identity bundle and is its AUTHORITATIVE store — the wake reads it out of the vault and materialises the file tree at `<DataDir>/server/tls`+`cred/`, because k3s has no vault plugin and must read files at runtime (sections 9, 14 and 15). ESO materialises vault-backed Secrets into the tenant cluster (row 9); the bundle is custody and wake-time restore, not the runtime location |
 | 8 | Cluster links | Go, `internal/clusterlink` + `internal/clusterprovider/links.go` | Two `dumbpipe listen-tcp` members of every cluster's process group, one in front of the k3s apiserver and one in front of the cluster vault, each an iroh endpoint whose key lives in that cluster's vault. A node dials the cluster through them; the door holds no per-node connection. Recorded as `ClusterLink` objects (plan 0005 M3) |
-| 9 | External Secrets pair | pinned upstream binary, `internal/eso` + `internal/clusterprovider/externalsecrets.go` | The External Secrets Operator v2.11.0 run as TWO members of every cluster's process group, beside the control plane: the controller (`external-secrets`) and its admission webhook (`external-secrets webhook`), one binary copied digest-pinned into the control-plane image. They dial the tenant apiserver with a minted credential and reach the cluster vault on loopback, so an ExternalSecret syncs at ZERO nodes and on every substrate. The tenant keeps only the bundle's CRDs, ClusterRoles and a URL webhook registration; no ESO pod runs in it (`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE) |
+| 9 | External Secrets pair | pinned upstream binary, `internal/eso` + `internal/clusterprovider/externalsecrets.go` | The External Secrets Operator v2.11.0 run as TWO members of every cluster's process group, beside the control plane: the controller (`external-secrets`) and its admission webhook (`external-secrets webhook`), one digest-pinned binary the release embeds as its `external-secrets` asset. They dial the tenant apiserver with a minted credential and reach the cluster vault on loopback, so an ExternalSecret syncs at ZERO nodes. The tenant keeps only the bundle's CRDs, ClusterRoles and a URL webhook registration; no ESO pod runs in it (`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE) |
 
 | 10 | Node network | Rust `rust/socialweb-meshd`, Go `internal/tenantnet`, TS `lib/cloud-init-plugin-k3s-join` + `lib/socialweb-computer-k8s-downloads-fs` | Market clusters run `--flannel-backend=none`; each market node gets, from its `user_data`, a bridge CNI conflist on its Node's pod CIDR, cluster-CIDR-external SNAT, the sha256-pinned `socialweb-meshd` (downloaded from the door by hash) carrying pod traffic to other nodes over iroh, and `169.254.20.10` for its own CoreDNS; every tenant gets the meshd node reader RBAC and the per-node DNS DaemonSet as baseline (plan 0005 M5-MESHD, M5-DNS; section 9) |
 
@@ -379,14 +379,14 @@ vault at all (ESO-3). Both are closed by moving the operator into the process gr
 - **Two members, one binary.** `procgroup.ComponentExternalSecretsWebhook` then
   `procgroup.ComponentExternalSecrets`, after the cloud controller manager in `StackOrder`. The
   binary is the upstream `ghcr.io/external-secrets/external-secrets:v2.11.0` image's own
-  `/usr/bin/external-secrets`, copied by digest into the control-plane image
-  (`deploy/control-plane-container/Dockerfile`, `internal/versions/versions.json`); the webhook is
+  `/usr/bin/external-secrets`, embedded by digest as the release's `external-secrets` asset
+  (`internal/versions/versions.json`); the webhook is
   its `webhook` subcommand. The cert-controller is not run: its only job was minting the webhook's
   serving certificate and injecting caBundles, which the provider now does itself.
 - **The webhook step installs the tenant half, before either process starts.** Its `Prepare`
   (`internal/clusterprovider/externalsecrets.go`) mints the pair's tenant credential, mints the
   webhook's serving pair, and calls `eso.InstallBeside` with the cluster's admin client against the
-  pinned bundle (`/opt/socialweb/eso/external-secrets.yaml`, sha256-checked at image build).
+  pinned bundle (the `external-secrets-bundle` asset, sha256-checked at release build).
   `eso.SplitBundle` sorts every bundle object three ways and refuses a kind it does not place: KEPT
   (the 25 CRDs and the ClusterRoles `external-secrets-controller`, `-view`, `-edit`,
   `-servicebindings`), RE-REGISTERED (the two ValidatingWebhookConfigurations), RETIRED (everything
@@ -418,11 +418,11 @@ vault at all (ESO-3). Both are closed by moving the operator into the process gr
 - **Ports and singletons.** The upstream defaults (`:8080` metrics, `:8082` controller health,
   `:8081` webhook health, `10250` webhook) are one set for the host, so each cluster leases three
   (section 8): the controller's `--live-addr` and the webhook's `--healthz-addr` bind `127.0.0.1`;
-  metrics are off (`--metrics-addr=0`: nothing in the container scrapes them, and a leased port
+  metrics are off (`--metrics-addr=0`: nothing scrapes them, and a leased port
   nobody reads is a lease held for nothing); leader election is off, because the process group is
   already the singleton per cluster. The webhook's `--port` has no host flag and binds every
-  interface (measured: `Serving webhook server` with an empty host); the container publishes no
-  such port, and the listener answers only admission reviews under a CA no client but the tenant
+  interface (measured: `Serving webhook server` with an empty host); no public edge entry point
+  forwards to it, and the listener answers only admission reviews under a CA no client but the tenant
   apiserver trusts.
 - **Readiness.** The webhook's gate waits for its `/readyz` (which itself checks the serving
   pair) and then dials the serving port verifying the minted CA for `127.0.0.1`, which is what the
@@ -501,9 +501,9 @@ plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
 - **What runs.** Per cluster, `dumbpipe listen-tcp --host 127.0.0.1:<target> --ipv4-addr
   0.0.0.0:<link port>` twice: target = the k3s secure port (k3s binds loopback) for
   `apiserver-link`, the vault's leased port for `openbao-link`. dumbpipe v0.39.0, the same release
-  the guests install (`DUMBPIPE_VERSION` in the control-plane Dockerfile).
-- **On or off.** On when `SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE` names the binary; the container
-  entrypoint defaults it to `/usr/local/bin/dumbpipe`. Unset leaves every cluster without links
+  the guests install (the `dumbpipe` asset in `internal/versions/versions.json`).
+- **On or off.** On when `SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE` names the binary; the gateway sets
+  it to the extracted `dumbpipe` asset (`internal/stack/gatewaykcp`). Unset leaves every cluster without links
   (the live rigs and tests that build their own env), and the provider logs `cluster links on=false`
   once at start. Links need the vault in the Stack (`ErrNoLinkSeam`) and a recorder
   (`ErrNoLinkRecorder`).
@@ -644,67 +644,18 @@ own dial line, and a tail that has already evicted it fails loudly rather than p
 BEST-EFFORT with its errors dropped, because returning them would make `exec` stop copying and close
 the child's stdout — a full log disk must not SIGPIPE the apiserver.
 
-### A market bidder is a template unit, one instance per account
+### A market bidder is an application instance of one installed account
 
-This is today's shape. Plan 0007 M5-RUN-BIDDER replaces it with a USER unit of one shared lingering
-account, no docker and no launcher script (see "Host processes and the VM lifecycle" below); until that
-lands, everything in this subsection is what runs.
-
-No bidder runs on prod (plan 0005 M0-PROD-BIDDER); both doors rely on bidders their users run. A
-host that runs them is prepared by `scripts/deploy-firecracker-bidder.sh` (over ssh, or `--local`
-through `sudo -n`; `--dry-run` prints every step) and runs one systemd SYSTEM template instance per
-atproto account:
-
-```
-sudo systemctl enable --now socialweb-computer-bidder@<handle>.service
-journalctl -u socialweb-computer-bidder@<handle> -f     # the QR and its qr.fedfork.com URL
-```
-
-- **Files.** `deploy/bidder/socialweb-computer-bidder@.service` is installed as
-  `/etc/systemd/system/socialweb-computer-bidder@.service`; `deploy/bidder/socialweb-computer-bidder-run`
-  as `/usr/local/libexec/socialweb-computer-bidder-run`; the host's shared settings (paths, policy,
-  firecracker flags, `DENO_DIR`) are rendered by the script into
-  `/etc/socialweb-computer-bidder/common.env`; an optional `/etc/socialweb-computer-bidder/<handle>.env`
-  overrides any of them for one account. The script never enables an instance and never writes
-  anything of an account's; it restarts a running instance only when one of those three files changed.
-- **%i is the handle, and only %i.** `%I` would unescape `-` to `/`, so a hyphenated handle would name
-  another directory. The launcher refuses (exit 78, `RestartPreventExitStatus=78`) an instance that is
-  not a lowercase handle with at least one dot, which also keeps `host`, the shared directory, from
-  ever being an instance.
-- **State.** `StateDirectory=socialweb-computer-bidder/%i` (mode 0711, so a guest's container, uid 1000,
-  can traverse to `guests/` but not list) holds `secrets/` (0700: `oauth-session.json`,
-  `bidder-key.hex`), `pds/` (`--pds-state-path`; the QR branch of `hono-bidder/mod.ts` does not read it
-  today, it is passed so a mode that does stays per account) and `guests/` (0777, the provider's work
-  root, the mode the retired fixed unit measured as working). The session file is written with the
-  process umask, which is why it sits in a 0700 directory instead of relying on its own mode. What all
-  instances share (image store, image inputs, `socialweb-nodeimage`, module cache, undici preload) is
-  under `/var/lib/socialweb-computer-bidder/host`, the unit's one `ReadWritePaths=`; code and a deno
-  binary of its own are under `/opt/socialweb-computer-bidder`. Every instance runs as `swc-bidder`
-  (in the docker group, `SupplementaryGroups=docker`), so instances are separated by directory, not uid.
-- **Sign-in is QR only; no password exists anywhere.** The launcher runs the bidder with
-  `--atproto-oauth-qr --oauth-session-file <state>/secrets/oauth-session.json` and never
-  `--atproto-handle`. The bidder's QR flow signs in whichever account scans, so the launcher holds the
-  sign-in to %i itself: it relays every line of the bidder's output to the journal, reads the handle
-  from `oauth_qr_session_restored` (logged by `tryRestoreOAuthQRSession`) or `oauth_qr_session_ready`
-  (a fresh scan), and on another handle, or on `bidder_ready` with no handle seen, logs
-  `bidder_account_refused`, deletes that session, stops the bidder and exits 1 so the unit restarts
-  into a fresh QR. The comparison is against the handle the session reports, case-insensitively; it
-  is not a fresh DID-document resolution. An expired session makes the bidder delete the file and exit
-  1, and `Restart=always`, `RestartSec=10`, `StartLimitIntervalSec=0` bring the QR back.
-- **More than one instance per host** shares the guest slice budget, and each needs its own
-  `BIDDER_FC_RANGE_BASE` in its `<handle>.env`, or their guests are handed the same addresses.
-  `BIDDER_SERVE_PORT` defaults to 0 for the same reason.
-- **docker's cgroup parent.** `MANAGE_DOCKER_DAEMON=no` writes `socialweb-guests.slice` but leaves
-  `/etc/docker/daemon.json` alone and does not restart docker, for a host whose docker runs other
-  containers; guests are then NOT bounded by the slice, and the script says so.
-- **The shipped image is the build host's answer.** The script asks
-  `socialweb-nodeimage -ensure -json -reuse-stale` locally which image the configuration names and
-  takes the kernel paths from that answer, so a configuration whose kernel fields say `discover`
-  ships; the retired fixed-unit script took the first `sha256-*` directory and refused `discover`.
-- **A bidder waiting for its QR has no key on disk yet.** `hono-bidder/mod.ts` writes
-  `--private-key-hex-path` only after sign-in, so every restart before a scan registers a new
-  did:plc on the PLC directory. Measured on hat-8 2026-10-07: the waiting instance's `secrets/` held no
-  `bidder-key.hex`. That is atproto-market's to change, not this unit's.
+The container-era bidder (a systemd SYSTEM template unit per handle, `scripts/deploy-firecracker-bidder.sh`,
+an account in the docker group, guests as runner containers) is gone. A bidder host is set up by the one
+root step `socialweb-computer install bidder`, which creates the lingering `swc-bidder` account, its
+subuid/subgid range for per-VM user namespaces and the kvm group membership, and ends by running
+`check-host -role bidder` as the account (`docs/host-contract.md`). Each bidder is then
+`socialweb-computer run bidder`: it applies its MarketBidder root object with
+`--profile prod-qr|market-network|dev-local` into the handle's own kcp, so every handle is its own
+application instance (section 0). Its guests are VM units of `internal/vmruntime` under the account's
+user manager, born only from the cloud-init `user_data` of the RFP flow (plan 0007 M2-VM-RUNTIME,
+M5-RUN-BIDDER; "Host processes and the VM lifecycle" below).
 
 ### Host processes and the VM lifecycle (planned: plans 0006, 0007, 0008)
 
@@ -835,7 +786,7 @@ deno's permission sandbox is the boundary between a bidder's deno and its user m
 `user@<uid>`, removing linger or `loginctl terminate-user` stops every unit and is treated as a reboot.
 
 **Control-plane continuity across upgrades (user, 2026-10-12).** There is no cutover: the finished binary
-is deployed fresh and the container path is deleted (plan 0006 M5-FRESH-DEPLOY, M5-RETIRE); no
+was deployed fresh and the container path was deleted (plan 0006 M5-FRESH-DEPLOY, M5-RETIRE); no
 backwards compatibility, migration, rollback or prod-downtime handling is planned before the finished
 solution exists, and the gateway runs no containers. Continuity is for upgrades of the finished system:
 a per-cluster TCP front owns the existing apiserver port (guest tickets, node secrets, kubeconfigs and
@@ -1037,8 +988,8 @@ the new fields (a write returns `unknown field` warnings and drops them). Creati
 re-pointing the export moves that ALREADY-BOUND `APIBinding`'s `boundResources` to `v1alpha1-2` within
 seconds, with the identity hash unchanged (so the etcd prefix and every stored claim are untouched),
 the pre-upgrade claim intact, and the new fields then persisting. No binding is deleted or recreated:
-the migration IS `install-provider.sh` applying the new schema and then the re-pointed export, in the
-order it already does. Without the re-point the binding stays on `v1alpha1-1` and the proof fails.
+the migration IS the manifest set (`deploy/sets.yaml`, `socialweb-computer apply`) applying the new
+schema and then the re-pointed export, in that order. Without the re-point the binding stays on `v1alpha1-1` and the proof fails.
 The deployed `v1alpha1-1` NodeClaim schema is kept at
 `testdata/apiresourceschema/v1alpha1-1.nodeclaims.socialweb.computer.yaml`, checked against the lock.
 
@@ -2461,15 +2412,11 @@ marked "decided by Claude, user may veto".
    `socialweb-meshd-aarch64` at `public-origin` (`meshdPinOf`); with either missing, or no
    `public-origin`, the door offers no meshd and logs `meshd_not_offered` (nodes still get the
    bridge, masquerade and DNS). Decided by Claude, user may veto: the binaries are built on the host
-   by `rust/build.sh` inside `deploy/control-plane-container/build.sh k8s` (or taken from
-   `KCP_MESHD_DIST`), checked against their sidecars, and passed as the `meshd` named context, not
-   built in a Docker builder stage: the image's Go stages already take the host toolchain as named
-   contexts with no network, and `rust/build.sh` needs rustup's musl targets, clang and rust-lld,
-   which a builder stage would have to download unpinned. The `k8s` stage copies the pair AFTER its
-   `chown -R kcp:kcp /opt/org-root`, so the 17.2 MB is not copied up a second time (measured: the
-   first placement made that layer 82.8 MB instead of 65.6 MB), and checks them again with
-   `sha256sum -c`. The node images do not embed meshd yet; the install path that keeps an embedded
-   binary is ready for when they do.
+   by `rust/build.sh` (static musl), checked against their sidecars and placed in the door's downloads
+   directory. The control-plane container image was the step that placed them there; it is deleted
+   (0006 M5-RETIRE), and no step of the socialweb-computer release places them yet, so until one does
+   the door logs `meshd_not_offered`. The node images do not embed meshd yet; the install path that
+   keeps an embedded binary is ready for when they do.
 
 Not carried by the mesh: node addresses. Traffic to another node's InternalIP (NodePort on another
 node, hostNetwork pods, kubelet ports) has no route; apiserver-to-kubelet and apiserver-to-pod
@@ -3263,11 +3210,9 @@ internal/${concept}/   one package per concern; the interface declared where con
 internal/atprotoauth/  verifies an atproto service-auth token for one XRPC method: signature, audience, method, admitted DID methods and a 5-minute lifetime cap
 internal/execplugin/   the client-go exec credential plugin: mint, on-disk cache, refuse an empty or already-expired token
 internal/nodeprovider/ derives a node's DNS-1123 name from the (cluster label, node id) pair
-internal/nodevm/       what is left of the node half after 0006 M3-FOLD: the image and guest types, the VMM names and the per-node k3s password file
-internal/nodefirecracker/ the old host-built node image, its manifest and input fingerprint, read only by check-host's build report until 0006 M5-RETIRE
 internal/vmruntime/    the Linux VM runtime: one-shot prep and one transient VM unit per guest (swc-userns-stage -> pasta -> socialweb-vmexec -> firecracker); `socialweb-computer internal vm start|inspect|stop|list` is its CLI, and the bidder's firecracker provider drives it (0007 M2-VM-RUNTIME)
 internal/nodeimagemain/ the two Go steps of scripts/build-guest-image.sh, `socialweb-computer nodeimage guest-rootfs|guest-manifest`, compiled only into a dev build (0006 M3-FOLD)
-internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes a NodeClaim into the cluster's home workspace and returns, reads the claim's status for the join wait and its fatal message, and closes the node by deleting the claim and waiting for the door to destroy the machine
+internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes a NodeClaim into the cluster's home workspace and returns, reads the claim's status for the join wait and its fatal message, and closes the node by deleting the claim and waiting for the door to destroy the machine; it also keeps each node's own k3s node-password file
 internal/hostos/       the one platform seam, primitives only (locking, process identity, liveness, termination, command line, boot id, port range, SysProcAttr) with Linux, darwin and Windows files; darwin refuses with ErrUnsupported (plan 0012)
 internal/denorun/      builds every deno argv: --no-code-cache and --node-modules-dir=none always, DENO_DIR = <state>/deno/<closure sha256>, production adds --cached-only --frozen and DENO_NO_UPDATE_CHECK=1 (plan 0008 M1-DENO)
 internal/tsbundle/     where the TypeScript comes from: the embedded closure (tar.zst + manifest, extracted read-only to <state>/ts/<sha256>/) in a release build, this checkout (SOCIALWEB_COMPUTER_SOURCE_ROOT, or the walk up to the directory that holds deno.json and deploy/ts-entries.yaml) in a dev build; internal/tsbundle/tsbuild (behind cmd/socialweb-tsbundle, never linked into the core) builds the closure from deploy/ts-entries.yaml (M1-TS-SOURCE, M1-TS-CLOSURE)
@@ -3275,16 +3220,16 @@ internal/stack/denoruntime/ the owned deno-kcp provider (internal/denokcp) in-pr
 internal/plcresolver/  resolves a did:plc or did:web to its key IDs for the revocation sweep; NXDOMAIN is an outage, not an absence
 internal/plcsweep/     the periodic pass that lists DIDs, resolves them and revokes those whose keys are gone
 internal/sweepkcp/     the kcp side of that sweep: build the account worklist from workspaces and AtprotoIdentity records, write the deny, plan the fan-out
-internal/foldmain/     the Invocation a folded binary runs with (args, env, stdio, the resolved bin/<sha>/ path, the verb words) and the re-exec argv it builds
-internal/${binary}main/ the body of a folded host binary (gatewaymain, providermain, vaultmain, checkhostmain, ccmmain, tenantcredentialmain) behind Main(ctx, Invocation) int; socialweb-computer dispatches its verb to it with the raw args, and the clusterprovider re-execs the CCM as `<bin/sha path> internal cloud-controller-manager` with the CCM's three-variable env rebuilt explicitly (0006 M3-FOLD)
+internal/foldmain/     the Invocation a verb body runs with (args, env, stdio, the resolved bin/<sha>/ path, the verb words) and the re-exec argv it builds
+internal/${binary}main/ the body of a host verb (gatewaymain, providermain, vaultmain, checkhostmain, ccmmain, tenantcredentialmain) behind Main(ctx, Invocation) int; socialweb-computer dispatches its verb to it with the raw args, and the clusterprovider re-execs the CCM as `<bin/sha path> internal cloud-controller-manager` with the CCM's three-variable env rebuilt explicitly (0006 M3-FOLD)
 cmd/socialweb-computer/ the multi-call CLI; every host verb lives here
-cmd/${binary}/         a one-line shim `os.Exit(<pkg>.Main(context.Background(), foldmain.OS()))` kept only while the container build compiles it (0006 M5-RETIRE deletes both); socialweb-vmexec (VM-unit asset), socialweb-credential (download asset), socialweb-tsbundle and socialweb-apigen (build tools) stay standalone; socialweb-nodeboot, socialweb-nodeimage and socialweb-nodeinit are deleted (0006 M3-FOLD)
-deploy/                install scripts, manifests, the audit policy
+cmd/${binary}/         standalone binaries only: socialweb-vmexec (VM-unit asset), socialweb-credential (download asset), socialweb-tsbundle and socialweb-apigen (build tools), openbao-plugin-auth-sshsig (its own module); the one-line shims of the folded verbs are deleted (0006 M5-RETIRE), as are socialweb-nodeboot, socialweb-nodeimage and socialweb-nodeinit (0006 M3-FOLD)
+deploy/                manifests and manifest sets, the audit policy, check.sh, ts-entries.yaml
 rust/                  a cargo workspace; rust/socialweb-meshd is the per-node pod mesh daemon that runs INSIDE a market guest (section 9), rust/build.sh its static musl build
 ```
 
-Dependencies flow one way: `api` <- `internal` <- `cmd`. A new substrate or transport is a NEW
-PACKAGE, not a branch inside an existing one.
+Dependencies flow one way: `api` <- `internal` <- `cmd`. A new transport is a NEW PACKAGE, not a
+branch inside an existing one.
 
 **A cluster's key is derived once, from its home workspace.** `kcpclient.ClusterKey` is the only
 spelling: it takes a home workspace path `root:<accountHash>:<name>` — `HomePath` builds the one the
@@ -3302,8 +3247,8 @@ workspace and are unique there; what the key keeps apart is everything OUTSIDE i
 
 `internal/providermain/migrate.go` is why an existing single-cluster deployment keeps working.
 Before the first pass, and only when the CR tree names a given bare name exactly ONCE, it renames
-`<state dir>/pdr-<name>` to `pdr-<key>`, `<state dir>/<name>` to `<key>` (the node records, renamed
-with their directory), the mint credential `<mint dir>/<name>` to `<key>`, and re-keys that cluster's
+`<state dir>/pdr-<name>` to `pdr-<key>`, `<state dir>/<name>` to `<key>` (the per-node data
+dirs under it), the mint credential `<mint dir>/<name>` to `<key>`, and re-keys that cluster's
 port and subnet leases in place, preserving their ports and ranges. A name two accounts share is left
 alone and reported: which home it belongs to is not knowable from the name, and renaming it onto one
 of them would hand that cluster the other's data. It is a one-way move — a downgrade finds the keyed
@@ -3312,156 +3257,35 @@ recorded in section 15.
 
 Binaries: `socialweb-computer` (the gateway, the clusterprovider, the vault and check-host are its
 verbs), `socialweb-credential` and `socialweb-vmexec`; outside `cmd/`, `rust/build.sh` builds
-`socialweb-meshd`, which runs inside a market guest beside the k3s agent. The guest image is built off
-the bidder by `scripts/build-guest-image.sh`, whose Go steps are the dev-build verbs `socialweb-computer
-nodeimage guest-rootfs|guest-manifest`; it is a TOOL, never a controller, because provisioning must not
-be coupled to a boot plus a bootstrap, and the image boots `root=/dev/vda` with no initramfs init
-(0006 M3-FOLD deleted `socialweb-nodeboot`, `socialweb-nodeimage` and `socialweb-nodeinit`). The image
-build is a BUILD STAGE rather than a step anyone schedules, and check-host is the
-host contract itself: it is what the host and the control-plane container are both measured against,
-and its answer is what separates "this host cannot run this" from "this container must be handed
-this". The one placement is `internal/nodemarket`, whose node is a claim rather than a process; the
-VMM packages are what the BIDDER runs, and the composition root of this provider places a node by
-writing a claim.
+`socialweb-meshd`, which runs inside a market guest beside the k3s agent. The one placement is
+`internal/nodemarket`, whose node is a claim rather than a process; the VM runtime
+(`internal/vmruntime`) is what the BIDDER runs.
 
-**A node image is named by its inputs, and nothing asks whether it is stale.** The build fingerprints
-everything it read — the VMM it is built for, the module list, the initramfs module list, the seeded
-image references, and the
-kernel, its config file, the base image and the k3s binary by path and by digest, plus the
-configuration's own path — and publishes at `<out_dir>/<fingerprint>/` by renaming a staging
-directory into that name only once it is whole. So a build killed by a crash, a full disk or a signal
-leaves a name nothing asks for, which matters because `Validate` is presence checks only: a
-half-written directory used to validate and be consumable. A run asks whether the name its inputs
-give EXISTS, which is a fact rather than a comparison — an unchanged configuration is left alone with
-no build, no write and no pull, and a changed one asks for a name that does not exist.
+`check-host` is the host contract and nothing else (`internal/hostcontract`, `docs/host-contract.md`):
+`install` runs it as the account, and it probes the gateway or bidder host the binary runs on. Its old
+build report (the node image store, kernel, module tree, kvm, VMM and in-container postgres checks of
+the retired local substrates) was deleted with `internal/nodefirecracker`, `internal/nodevm`,
+`internal/noderecord` and `internal/kernelmodules` (0006 M5-RETIRE).
 
-**The runtime derives that name too, and is told neither it nor the directory.** The consumer that
-does this is the BIDDER, not this provider: `deploy-firecracker-bidder.sh` runs
-`socialweb-nodeimage -ensure -json -reuse-stale` against the store it is about to ship and takes the
-fingerprint out of the answer, and the bidder's compute provider boots the guest from that directory.
-The clusterprovider places no node image at all any more (plan 0005 M1-MARKET-ONLY): its node is a
-claim, and the machine behind the claim belongs to the bidder. It hashes the configuration's inputs
-exactly as the builder did, joins the fingerprint onto
-the store, and then holds what it finds at that name to three things: that the manifest's own record
-hashes to the name, that the manifest's operative fields and recorded digests match the configuration
-(the same `CheckInputs` the substrate already ran), and that the kernel, the initramfs and the rootfs
-are there. A directory name an operator computed by hand was the one input to a node's boot that no
-build ever wrote, and a stale one is a directory that exists, validates and boots — so a node came up
-from an old image with nothing saying so, which is the fingerprint's own failure one layer up, at the
-configuration boundary. What is configurable about a node's boot is now the store and the inputs, and
-nothing else.
+`internal/versions/versions.json` pins component versions, the release assets and the guest image
+inputs; `scripts/stage-assets.sh` and `socialweb-computer` read it.
 
-Removal is its
-own mode (`-gc`), never a side effect of building: it keeps the name the configuration resolves to,
-every `-keep` name, and the newest `-retain` images, reaps a staging directory only when the pid in
-its name is gone, and leaves anything not named like its own store. Keep-N rather than a byte cap,
-because every image here is one build of one configuration and a count is what an operator can check
-by looking.
+### The guest image, and the live gate
 
-**The build is a STAGE of the control plane's container build, not a tool someone remembers to run.**
-This is what answers "what builds the node image, and when": the same multi-stage build that produces
-the control-plane image produces the node image in an earlier stage, so the artefact and the thing that
-needs it are built together and neither can be the stale one. The ordering stops being a property of a
-procedure and becomes a property of the build graph — a stage whose inputs did not change is not
-re-run, and a stage whose inputs changed cannot be skipped, which is the same question `Fingerprint`
-answers by hand. The two are not redundant and neither may be deleted: the build system holds the
-ORDER, and the fingerprint is what the RUNTIME uses when it asks whether the files lying on a given
-host are the ones this build produced — one fact with two readers, the same shape as the builder's
-`VerifyModules` and the guest's own module check. What the stage bakes is the **kernel, the rootfs, the
-containerd/runc/k3s-agent binaries, the module tree and the seeded image set**: plain portable files,
-with no snapshot anywhere in it, because snapshot restore is refuted as the provisioning primitive
-(section 9) and a node boots cold from its own clone of the rootfs. So the baked artefact is coupled
-neither to the building host's CPU nor to a firecracker version, and reaching the host is files landing
-at paths rather than a restore. Those paths are the container's edge, and the binary below is what
-states them: `socialweb-computer-kcp-check-host` runs the host contract in both places, so the same
-checks that say "this host can run the host stack" also say what a container is missing and what it
-must be handed.
+A guest image is a kernel, a rootfs and `image.json` per hypervisor and arch. `scripts/build-guest-image.sh`
+builds it on any Linux host with docker or podman from the pinned inputs in `versions.json`
+`.guestImages`; its Go steps are the dev-build verbs `socialweb-computer nodeimage guest-rootfs|guest-manifest`.
+Each output is pinned by its sha256, never embedded in the binary, and fetched and verified by
+`internal/guestimage` (plan 0007 M1-GUEST-IMAGE). It is a TOOL, never a controller, and the image boots
+`root=/dev/vda` with no initramfs init. The bidder's VM runtime boots it; the gateway places no image,
+because its node is a claim.
 
-**Every seeded image is pinned as `<tag>@<sha256:...>`, and the tag is not decoration.** A tag is not
-an identity: a registry can be pushed to at any time, and when it is, a tag-only entry is unchanged,
-so the name is unchanged, and the store serves the image the tag *used to* mean — a node runs a
-previous release's images under the current name, and nothing in the cluster says so, because a
-cluster whose images are all one release old is as internally consistent as one that is current.
-Recording the digest makes it an input, so a re-pushed tag produces a second image instead of
-silently serving the first. The tag must stay in the entry because containerd matches a pod's request
-against the tag in its store, and a digest with no tag seeds an image no pod ever asks for — and in a
-guest with no resolver that falls through to a pull that waits rather than fails. The builder refuses
-a bare tag and hands back the exact entry to paste, resolving it to a digest with two manifest GETs
-and no layer bytes, before any pull, so a bad entry costs a refusal rather than 2.3 GB.
-
-**The name follows the file, not the spelling.** The configuration path and every recorded input are
-symlink-resolved before hashing, on both sides of the substrate's comparison, because one file
-reached two ways is one file and a store that follows the spelling holds two copies of one 2.3 GB
-image. A path that cannot be resolved is refused rather than recorded as spelled — an unresolvable
-input is the one case where a stale image and a current one look identical. An input that is merely
-ABSENT is not a resolution failure: it still records its canonical spelling and fails later where
-"cannot tell" already lives.
-
-That input is covered now, and the shape of the coverage is the point: the record weighs the module
-tree the build copies into the image — every file's path and contents, and every symlink's target — and
-not only the names read out of it, so pointing `module_source` at another host's tree of the same
-kernel version moves the image's name. It was the second of two inputs the record did not mention, and
-section 15 records what closed both and what held the family shut.
-
-`internal/versions/versions.json` pins component versions. It has no production importer: its
-consumer is its own test.
-
-### The node image, and the live gate
-
-**The container build produces the node image the BIDDER boots.** `deploy/control-plane-container/Dockerfile`
-has one `nodeimage` stage, parameterized by its own configuration: it reads `nodeimage.json`, builds
-what it names and leaves the result in the store the build then ships. The `extract` stage copies that
-stage's `/dist` into one root, so the image built here is the artefact a bidder's compute provider
-boots a market guest from. `build.sh`'s `nodeimage` target means exactly the stage it names,
-`nodeimages` builds it through `extract`, and `nodeimage-image` tags it.
-
-Until 2026-10-07 there was a second stage and a second image: a `nodeimage-qemu` stage built a qemu
-image, the `extract` stage joined both, and a `computer` target shipped a container that could boot
-either as a guest of this host. The local substrates were retired (plan 0005 M1-MARKET-ONLY), so the
-qemu stage, the `computer` target and the qemu configuration are deleted, and `run-container.sh` keeps
-the `k8s` target alone. The firecracker image survives unchanged because a bidder still boots it --
-the difference is whose host runs it. MEASURED 2026-09-25, before the retirement: `build.sh computer`
-built the firecracker image at `sha256-6f0163f5b34f4b7c793709cdbb90c74a9df700466f9d8ed6c9dedb2569319e3e` and the
-qemu image at `sha256-e356da745efe1dab4b6c233045f33b491cc7cfe0851fdaa5856501991a565afd` in the same
-run, 122 s wall.
-
-**The live gate's privileged rig is GONE with the local substrates (plan 0005 M1-MARKET-ONLY), and
-the market network is what replaced it.** `deploy/test-rig` and `cmd/socialweb-rig-inputs` existed to
-boot the product's own `computer` image with `/dev/kvm` and `/dev/net/tun` and run
-`SOCIALWEB_REQUIRE_LIVE=1 go test ./...` inside it, deriving the tenant inputs from the running
-product rather than asking for them. Every one of those inputs was an input to a node this host
-STARTED: the image directories, the agent, the store and the two image configurations were resolved
-with `internal/nodefirecracker.LoadImage`, and the rig's whole reason to exist was that no local
-substrate has a market network of its own. The market has one: `deploy/market-network` with
-`internal/marketnetwork` runs a local dispatcher, a bidder and a requester, and the guest is born from the
-RFP flow this project exists for — the same flow production uses, rather than a rig standing beside
-it. The gate itself is unchanged and still takes a live cluster:
-`SOCIALWEB_REQUIRE_LIVE=1 go test ./...`, where a skip is a failure.
-
-**Why the relaxation is confined to the rig, and what was measured.** A guest needs `/dev/kvm`,
-`/dev/net/tun` and a user and network namespace to build. Docker's default seccomp profile denies the
-`unshare` that the namespace wiring performs, so the rig's `docker run` line carries
-`--device=/dev/kvm --device=/dev/net/tun --security-opt seccomp=unconfined --security-opt
-apparmor=unconfined` and NO added capability: the tap and bridge are created INSIDE the namespace
-pasta hands the agent, where the process is root-mapped and holds its own capability set, so
-`NET_ADMIN` and `SYS_ADMIN` are not needed. MEASURED 2026-09-25: with exactly that minimal set and no
-capability, `TestALiveQEMUGuestBootsAndIsReaped` passed in 0.93 s and
-`TestLiveTheGuestsGatewayIsAnsweredOnItsOwnLink` (firecracker) passed in 2.47 s, each with the product
-stack Ready in ~30 s. A privileged container can escape to the host, so the flags live only on the
-rig's command line: the shipped image, the shipped `container-entrypoint.sh` and
-`deploy/control-plane-container/validate.sh` are unchanged. The strict control-plane proof keeps
-running as non-root with no device, no capability and no host network, documented where it always was
-(section 9's container build and the check-host contract); MEASURED 2026-09-25,
-`validate.sh` against this image still printed `PROOF: --- PASS:
-TestTheControlPlaneReachesReadyAtZeroNodes (8.08s)`. The rig is a test harness, not a deployment path.
-
-**The irreducible inputs.** A node image and a live boot cannot be made from the tree alone. The guest
-boots this host's own kernel, so `/boot/vmlinuz-$(uname -r)`, `/boot/config-$(uname -r)` and
-`/lib/modules/$(uname -r)` are read as they are, and the base userspace is
-`artifacts/img/ubuntu-24.04.squashfs`; `build.sh` refuses to run without any of them rather than
-inventing one. A live boot adds `/dev/kvm`. The rig derives everything else, and `build.sh`'s refusal
-is what keeps a missing kernel, module tree or base image from becoming an image that silently boots
-the wrong userspace.
+The control-plane container build that once produced a host-built node image (its `nodeimage` stage,
+the fingerprinted image store and `check-host`'s report on it) is deleted (0006 M3-FOLD, M5-RETIRE), and
+so is the privileged test rig that booted that image locally (plan 0005 M1-MARKET-ONLY). The live gate
+still takes a live cluster: `SOCIALWEB_REQUIRE_LIVE=1 go test ./...`, where a skip is a failure, and a
+guest comes up only through the RFP flow on a market network (`deploy/market-network`,
+`internal/marketnetwork`).
 
 ### The market network (vendored deno-kcp)
 
