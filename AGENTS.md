@@ -30,7 +30,8 @@ needs the argument behind it. Do not read it end to end.
 | What a host must provide | `socialweb-computer check-host -role gateway` or `-role bidder`, `docs/host-contract.md` |
 | The market network | `deploy/market-network/README.md` |
 | The operator handoff | `handoff.yaml` |
-| What CI runs on a push, and its runner | `.gitlab-ci.yml`; `scripts/ci-runner-install.sh` (account socialweb-ci on hat-8, shell executor) |
+| What CI runs on a push, and its runner | `.github/workflows/ci.yml` on GitHub-hosted runners: the gate on `main` and `task/*`, the release builds, the guest image and the Spaces publish on `main` and `v*` tags |
+| Where the integration suite runs | the hat-8 runner only (`.gitlab-ci.yml`, `scripts/ci-runner-install.sh`, account socialweb-ci): it needs kvm, `systemd --user` and an `/etc/subuid` range, which a hosted runner has not |
 | A throwaway GitLab for integration runs | `scripts/gitlab-fixture.sh up` / `down`, `deploy/gitlab-fixture/template/` |
 
 ## Layout
@@ -183,8 +184,8 @@ A prod deployment does not preserve anything.
   and `deno check <the entry you changed>` (`deploy/ts-entries.yaml`). Do not run the full gate per
   change.
 - The full gate runs ONCE, right before "ready": `go build ./...`, `go vet ./...`, `deno task check`,
-  `deploy/check.sh --fast` and the release closure. GitLab CI runs the same gate on every push to
-  `main` and `task/*` (`.gitlab-ci.yml`); read the branch's pipeline on the GitLab server.
+  `deploy/check.sh --fast` and the release closure. GitHub CI runs the same gate on every push to
+  `main` and `task/*` (`.github/workflows/ci.yml`); read the branch's run on GitHub.
   - `deploy/check.sh --fast`: gofmt, go build, apigen generate and its diff (generated code must
     match its source), go vet, `deno task check`, `deno install --frozen`, the cross-OS builds and the
     release builds. `--local` and `--full` run the live proofs this host can run.

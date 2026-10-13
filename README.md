@@ -420,7 +420,7 @@ Symptoms: a gateway log line `no oauth session stored for did:...` means the web
 > Warning: a production deployment preserves nothing. Losing sessions, VMs, clusters, claims, or receipts during a deploy is acceptable, so deploy fresh. Only the lead runs a production deployment.
 
 ```bash
-# 1. confirm the commit's pipeline is green on the GitLab server (.gitlab-ci.yml)
+# 1. confirm the commit's run is green on GitHub (.github/workflows/ci.yml)
 # 2. build the release
 C=$(git rev-parse HEAD); TMPDIR=~/.tmp/swc-lead-tmp scripts/build-socialweb-computer.sh --platform linux/amd64 --commit $C
 B=~/.tmp/socialweb-computer-build/release/$C/socialweb-computer-linux-amd64; SHA=$(sha256sum $B | cut -d' ' -f1)
@@ -506,7 +506,7 @@ Environment variables:
 | `SOCIALWEB_IT_ARTIFACTS` | The directory for logs. | `~/.tmp/swc-it/<run>` |
 | `SOCIALWEB_IT_LIVE_SLOT` | The host's live-slot script; `none` turns it off. | the lead's `~/.tmp/swc-lead/live-slot.ts` when it exists |
 
-The GitLab CI integration job runs the whole suite on `main` and on `v*` tags, on its own market networks, as this runner's account with its own VM slots.
+The integration job on the hat-8 runner runs the whole suite on `main` and on `v*` tags, on its own market networks, as that runner's account with its own VM slots.
 
 ## License
 
