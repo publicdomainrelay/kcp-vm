@@ -85,6 +85,42 @@ deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.aliceoa_bsky_social_sou
 
 Scale from zero: apply a pod to a tenant cluster at 0 nodes -> NodeClaim -> RFP -> VM -> node Ready -> pod Running (prod: ~60 s). Delete pod -> back to 0 nodes, vm.delete (~2-3 min incl. hold).
 
+## Release -> prod (lead only; prod keeps nothing, deploy fresh OK)
+
+```bash
+# 1. CI green on the commit
+deno run -A ~/.tmp/swc-lead/ci-wait.ts $(git rev-parse HEAD)
+# 2. release build (cached by input hash)
+C=$(git rev-parse HEAD); TMPDIR=~/.tmp/swc-lead-tmp scripts/build-socialweb-computer.sh --platform linux/amd64 --commit $C
+B=~/.tmp/socialweb-computer-build/release/$C/socialweb-computer-linux-amd64; SHA=$(sha256sum $B | cut -d' ' -f1)
+# 3. gateway (socialweb.computer): ship, install first time / upgrade after, caddy sites
+BINARY=$B SHA256=$SHA SSH_KEY=~/.ssh/id_ed25519_no_password \
+  GATEWAY_ENV_FILE=~/.tmp/deploy/gateway.env GATEWAY_SPEC_FILE=~/.tmp/deploy/gateway-spec.yaml scripts/deploy.sh
+# 4. bidder (hat-8): stage binary, upgrade as account (restarts core, VMs keep running)
+R=/var/tmp/swc-release/socialweb-computer-${C:0:8}; sudo install -m 0755 $B $R
+sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) \
+  CONFIG_PATH_SOCIALWEB_COMPUTER=/var/lib/socialweb-computer/swc-bidder/config.json $R upgrade --binary $R --sha256 $SHA
+# 5. verify: scale from zero and back on prod canary cluster (~60 s up, ~3 min down)
+#    apply pod finish-line on canary (gateway k3s kubectl, see Probe), then:
+cd ~/.tmp/deploy && deno run -A finish.ts up      # exits when pod Running on a market node
+#    delete pod finish-line, then:
+deno run -A finish.ts down                         # exits at 0 nodes, 0 ComputeVMs
+# rollback (as the account): socialweb-computer rollback
+```
+
+Once per host / when changed:
+
+```bash
+# guest image on bidder host (pinned sha256 in internal/versions/versions.json)
+scripts/build-guest-image.sh --target firecracker-x86_64 --out /var/tmp/guest-image
+sudo install -d -m 0755 /var/lib/socialweb-computer/guest-image && sudo install -m 0644 /var/tmp/guest-image/{vmlinux,rootfs.ext4,image.json} /var/lib/socialweb-computer/guest-image/
+# OAuth client scope (qr.fedfork.com, separate host; needed when the bidder writes a new record type)
+cd ../did-key-associator && SSH_KEY=~/.ssh/id_ed25519_no_password scripts/deploy.sh --static-only   # --dry-run first
+# then re-sign the bidder (clear old session) and alice (web app) with scripts/oauth-signin.ts (see Bidder / Gateway)
+```
+
+Deploy inputs (gateway.env, gateway-spec.yaml, finish.ts) = orphan branch `swc-deploy`, worktree `~/.tmp/deploy`. Creds `~/.aliceoa_bsky_social_source`, `~/.bobvmbuilder_bsky_social_source` (0600, never print).
+
 ## Probe every kcp layer
 
 Every app = own kcp. Kubeconfig = `<app state>/kcp/admin.kubeconfig`. Server URL ends `/clusters/<ws>`; swap ws to walk.
