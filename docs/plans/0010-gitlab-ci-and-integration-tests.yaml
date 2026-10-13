@@ -189,8 +189,8 @@ items:
     files: [".gitlab-ci.yml", "scripts/ci-runner-install.sh", ".github/workflows/typescript.yml (deleted)"]
     done_when: a push to a task branch shows a green pipeline on the GitLab server running the full gate; the GitHub workflow is gone.
     risks: ["deploy/check.sh --fast runs the cross-OS builds; on a shared hat-8 runner its cost competes with agents' live runs. One concurrent job until measured."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: G1-CI-RELEASE
     milestone: G1
     title: CI builds and publishes the release binary and the guest images
