@@ -13,6 +13,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vmruntime"
 )
 
@@ -66,7 +67,7 @@ func (a *app) vmRuntime(ctx context.Context, vals clicfg.Values) (vmruntime.Runt
 	if err != nil {
 		return nil, nil, err
 	}
-	grace, err := time.ParseDuration(vals.String("vm-stop-grace"))
+	grace, err := vmStopGrace(vals)
 	if err != nil {
 		p.manager.Close()
 		return nil, nil, err
@@ -129,11 +130,12 @@ func (a *app) devVM(vals clicfg.Values, l devinstance.Layout) (*devinstance.VMRu
 	if !filepath.IsAbs(rt) {
 		return nil, fmt.Errorf("vm-runtime-dir %q must be absolute: each VM's API socket lives under it", rt)
 	}
-	if _, err := time.ParseDuration(vals.String("vm-stop-grace")); err != nil {
-		return nil, fmt.Errorf("vm-stop-grace: %w", err)
+	grace, err := vmStopGrace(vals)
+	if err != nil {
+		return nil, err
 	}
 	vm := &devinstance.VMRuntime{Handle: handle, Backend: backend, ImageSource: vals.String("guest-image-source"),
-		StopGrace: vals.String("vm-stop-grace"), RuntimeDir: rt, Executables: map[string]string{}}
+		StopGrace: grace.String(), RuntimeDir: rt, Executables: map[string]string{}}
 	for _, x := range vmExecutables {
 		p, err := a.vmExe(vals, x.name, x.option)
 		if err != nil {
@@ -142,6 +144,17 @@ func (a *app) devVM(vals clicfg.Values, l devinstance.Layout) (*devinstance.VMRu
 		vm.Executables[x.name] = p
 	}
 	return vm, nil
+}
+
+func vmStopGrace(vals clicfg.Values) (time.Duration, error) {
+	if s := vals.String("vm-stop-grace"); s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return 0, fmt.Errorf("vm-stop-grace: %w", err)
+		}
+		return d, nil
+	}
+	return versions.VMStopGrace()
 }
 
 func (a *app) instanceVMRuntime(ctx context.Context, rec devinstance.Record) (vmruntime.Runtime, hostsvc.Manager, error) {

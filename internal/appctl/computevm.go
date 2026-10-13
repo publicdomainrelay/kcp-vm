@@ -17,10 +17,9 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vmruntime"
 )
-
-const DefaultVMStopGrace = "10s"
 
 type BidderKcp struct {
 	Server    string
@@ -52,7 +51,11 @@ func ChildVM(app v1alpha1.NetworkApp, l devinstance.Layout, parent devinstance.R
 	if k.GuestImageSource == "" {
 		return nil, fmt.Errorf("apps[%s].kcp names no guestImageSource; the ComputeVM controller fetches the pinned guest image from it", app.Name)
 	}
-	grace := DefaultVMStopGrace
+	d, err := versions.VMStopGrace()
+	if err != nil {
+		return nil, err
+	}
+	grace := d.String()
 	if k.StopGraceSeconds > 0 {
 		grace = strconv.Itoa(int(k.StopGraceSeconds)) + "s"
 	}

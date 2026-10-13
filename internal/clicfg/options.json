@@ -500,9 +500,8 @@
     },
     "vm-stop-grace": {
       "type": "string",
-      "description": "internal vm and dev up --handle: how long a stop waits after SendCtrlAltDel before SIGKILL (Go duration; x86_64 only, arm64 kills at once)",
-      "env": "SOCIALWEB_VM_STOP_GRACE",
-      "default": "10s"
+      "description": "internal vm, dev up --handle and run bidder: how long a stop waits after SendCtrlAltDel before SIGKILL (Go duration; x86_64 only, arm64 kills at once); unset, the vmStop.graceSeconds measured into internal/versions/versions.json",
+      "env": "SOCIALWEB_VM_STOP_GRACE"
     },
     "userns-stage-path": {
       "type": "string",

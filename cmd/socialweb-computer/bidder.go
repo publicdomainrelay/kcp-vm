@@ -414,9 +414,9 @@ func (r *bidderRun) installedCore(ctx context.Context) int {
 	if err != nil {
 		return r.a.fail(exitFailed, "%s: %v", verb, err)
 	}
-	grace, err := time.ParseDuration(r.vals.String("vm-stop-grace"))
+	grace, err := vmStopGrace(r.vals)
 	if err != nil {
-		return r.a.fail(exitRefused, "%s: vm-stop-grace: %v", verb, err)
+		return r.a.fail(exitRefused, "%s: %v", verb, err)
 	}
 	runtimeDir := r.vals.String("vm-runtime-dir")
 	if !filepath.IsAbs(runtimeDir) {

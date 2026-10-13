@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 //go:embed versions.json
@@ -33,6 +34,23 @@ type manifestShape struct {
 	Assets     map[string]Asset     `json:"assets"`
 	Guest      GuestImageSet        `json:"guestImages"`
 	KcpCompat  []KcpCompat          `json:"kcpCompat"`
+	VMStop     VMStop               `json:"vmStop"`
+}
+
+type VMStop struct {
+	GraceSeconds int    `json:"graceSeconds"`
+	Measured     string `json:"measured"`
+}
+
+func VMStopGrace() (time.Duration, error) {
+	m, err := load()
+	if err != nil {
+		return 0, err
+	}
+	if m.VMStop.GraceSeconds <= 0 {
+		return 0, fmt.Errorf("versions: vmStop.graceSeconds %d is not a positive number of seconds", m.VMStop.GraceSeconds)
+	}
+	return time.Duration(m.VMStop.GraceSeconds) * time.Second, nil
 }
 
 type KcpCompat struct {

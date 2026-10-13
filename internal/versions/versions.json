@@ -329,6 +329,10 @@
     {"from": "v0.33.0", "to": "v0.33.1", "storageCompatible": true, "diffSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
     {"from": "v0.32.5", "to": "v0.33.0", "storageCompatible": false, "diffSHA256": "490da758445c62e6bcd5bd8e5d6e0affe39cd023051c73ce86848d572a1ac58e"}
   ],
+  "vmStop": {
+    "graceSeconds": 10,
+    "measured": "placeholder until 0007 M6-BIDDER-UPGRADE measures SendCtrlAltDel to unit inactive with a k3s workload"
+  },
   "guestImages": {
     "note": "guest images (kernel + rootfs + image.json) per hypervisor x arch, built by scripts/build-guest-image.sh on any Linux host with docker or podman (plan 0007 M1-GUEST-IMAGE); reproducible from the inputs below, pinned by the sha256 of each output, never embedded, fetched and verified by internal/guestimage",
     "builder": {
