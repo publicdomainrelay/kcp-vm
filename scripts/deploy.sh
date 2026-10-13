@@ -12,6 +12,7 @@ KCP_ORIGIN="${KCP_ORIGIN:-kcp.${DOMAIN}}"
 ACCOUNT="${ACCOUNT:-socialweb}"
 STATE_DIR="${STATE_DIR:-/var/lib/socialweb-computer/${ACCOUNT}}"
 GATEWAY_ENV_FILE="${GATEWAY_ENV_FILE:-}"
+GATEWAY_SPEC_FILE="${GATEWAY_SPEC_FILE:-}"
 BINARY="${BINARY:-}"
 SHA256="${SHA256:-}"
 WEB_APP_PORT=8788
@@ -53,6 +54,11 @@ if [ -n "$GATEWAY_ENV_FILE" ]; then
   ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat > $(q "$INCOMING.env")" < "$GATEWAY_ENV_FILE"
 fi
 
+if [ -n "$GATEWAY_SPEC_FILE" ]; then
+  say "shipping $GATEWAY_SPEC_FILE as the Gateway spec"
+  ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat > $(q "$INCOMING.spec")" < "$GATEWAY_SPEC_FILE"
+fi
+
 REMOTE_ENV="ACCOUNT=$(q "$ACCOUNT") STATE_DIR=$(q "$STATE_DIR") INCOMING=$(q "$INCOMING") SHA256=$(q "$SHA256") ORIGIN=$(q "$ORIGIN") KCP_ORIGIN=$(q "$KCP_ORIGIN") WEB_APP_PORT=$(q "$WEB_APP_PORT") KCP_PORT=$(q "$KCP_PORT") GATEWAY_TLS_PORT=$(q "$GATEWAY_TLS_PORT")"
 
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "$REMOTE_ENV bash -s" <<'REMOTE_EOF'
@@ -63,7 +69,15 @@ say() {
 }
 
 command -v caddy >/dev/null || { say "no caddy on this host: the public names are served by its automatic HTTPS"; exit 1; }
-trap 'rm -f "$INCOMING" "$INCOMING.env"' EXIT
+trap 'rm -f "$INCOMING" "$INCOMING.env" "$INCOMING.spec"' EXIT
+SPEC="/var/lib/socialweb-computer/gateway-spec-${ACCOUNT}.yaml"
+spec_args=()
+if [ -f "$INCOMING.spec" ]; then
+  install -m 0644 "$INCOMING.spec" "$SPEC"
+fi
+if [ -f "$SPEC" ]; then
+  spec_args=(--gateway-spec-file "$SPEC")
+fi
 
 if [ -f "$INCOMING.env" ]; then
   install -d -m 0700 "$STATE_DIR"
@@ -71,7 +85,7 @@ if [ -f "$INCOMING.env" ]; then
 fi
 if [ ! -f "/var/lib/socialweb-computer/install-${ACCOUNT}.json" ]; then
   say "install gateway (the one root step)"
-  "$INCOMING" install gateway --account "$ACCOUNT" --state-dir "$STATE_DIR"
+  "$INCOMING" install gateway --account "$ACCOUNT" --state-dir "$STATE_DIR" "${spec_args[@]}"
 else
   uid="$(id -u "$ACCOUNT")"
   copy="$STATE_DIR/incoming-$SHA256"
