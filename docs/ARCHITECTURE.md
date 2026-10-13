@@ -3844,9 +3844,8 @@ refutation.
   TypeScript (ssh2), and the iroh dial goes to a unix socket in the gateway's state dir where
   `socialweb-computer internal iroh-dial` runs `dumbpipe connect <ticket>` per connection, so the
   DenoPod has no `--allow-run` (the dumbpipe ProxyCommand still carries every session; it runs in
-  the HostProcess). The DenoPod has `--allow-env=<list>` (service template `permissions.envAllow`);
-  node-compat `process.env` throws on a variable outside the list and on enumeration, so the entry
-  preloads `env-preload.ts`, which reads an unlisted variable as unset. The requester evaluates
+  the HostProcess). The DenoPod's env grant is a list (the service template renders `--allow-env=<list>`
+  and `--ignore-env`, so the npm closure's stray reads of `process.env` see nothing). The requester evaluates
   gha-lite policies net-only, as the bidder does, because the full sandbox spawns deno. Readings,
   market network `sgnet` on hat-8, bidder handle `ssh-gateway-1.bob.test`: the gateway CLI under
   `--allow-run=dumbpipe` 17:26:07Z-17:26:44Z ran `echo SWC_GUEST_OK; hostname` in guest
