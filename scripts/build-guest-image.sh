@@ -124,8 +124,12 @@ if ! "$container" image inspect "$builder" >/dev/null 2>&1; then
   "$container" build -q -t "$builder" -f "$dockerfile" "$(dirname "$dockerfile")" >&2
 fi
 
+builder_user="$(id -u):$(id -g)"
+case "$(basename "$container")" in
+  podman) [ "$(id -u)" = 0 ] || builder_user="0:0" ;;
+esac
 in_builder() {
-  "$container" run --rm --network none --user "$(id -u):$(id -g)" --security-opt label=disable \
+  "$container" run --rm --network none --user "$builder_user" --security-opt label=disable \
     -e HOME=/build -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 -e SOURCE_DATE_EPOCH="$sde" "$@"
 }
 
