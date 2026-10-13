@@ -3767,6 +3767,38 @@ open list, are two stated LIMITS rather than open work: each marks where a behav
 being true, which is a fact about the design rather than a question left in it, and each sits here
 because it bounds a mechanism the rest of this document leans on.
 
+- **Disk use of a long-running instance is bounded by rule; the soak reading is open (plan 0013
+  M3-DISK-RETENTION, closes with M4-SOAK-READING).** The rules, by owner:
+  - Run directories (`<state>/denokcp/runs/<pod|engine>-<id>`). The deno-kcp provider removes the
+    run directory of a DenoPod, DenoRun or PolicyEngine when it removes the object's finalizer. Once a
+    minute it sweeps the directories that no DenoPod, DenoRun or PolicyEngine status names and whose
+    process is not alive: at provider start every such directory last active before the start goes,
+    after that every such directory idle for `RunDirKeep` (1 h), so the run a DenoPod restart replaced
+    stays an hour for diagnosis. `stdout.txt` and `stderr.txt` open with O_APPEND and are rotated over
+    `RunLogCap` (16 MiB).
+  - File logs. Rotation is copytruncate with one `.1` copy that keeps the newest `cap` bytes
+    (`internal/logcap`), safe because every writer opens with O_APPEND (devsup, systemd `append:`, the
+    run logs). The core rotates every `*.log` in its logs dir and the devsup logs over 64 MiB once a
+    minute. The HostProcess supervisor enforces `spec.output.capBytes` (64 MiB when unset) on every
+    pass; before this the field was declared and nothing enforced it.
+  - The journal. A user manager cannot get its own journald size limit: journald keeps user units in
+    `user-<uid>.journal` files that share the host's SystemMaxUse pool (default 10% of the file system,
+    at most 4 GiB), and LogNamespace= is refused for units of a user manager. So `install` does not
+    change the host's journald.conf (the bidder host is shared); it writes `LogRateLimitIntervalSec=30s`
+    and `LogRateLimitBurst=10000` into the core unit templates, which caps the message rate of each
+    core whatever the host's journald.conf says (journald still scales a burst by free disk space). Units that write
+    to a file (kcp, kine, the front, postgres, OpenBao, the VMM) are under the file rules above.
+  - Guest images (`<state>/images/<hypervisor>/<arch>/<manifest sha256>`). Every 10 minutes the
+    ComputeVM controller asks the VM runtime to collect the store. An image stays when a ComputeVM
+    status names it, a VM work dir under `<state>/handles/*/vms/*` boots it, this binary's
+    versions.json pins it, or `bin/current` or `bin/previous` names it (`version --json` lists
+    `guestImages`). Everything else goes, and `.fetch-` scratch dirs older than an hour go too.
+  - Unchanged: the DENO_DIR closure keys, the asset cache GC and the VM work dir collection (an orphan
+    work dir goes after `OrphanGrace`).
+  - The reading. Each application's appctl samples its state dir every 3 minutes (bytes on disk from
+    st_blocks, file count) and writes the last sample into `status.stateDir` of its root object with
+    the next status write. M4-SOAK-READING records the series; the item closes when it is flat.
+
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
   refusal to lease a range overlapping the host's networks is a property of the NETWORK NAMESPACE the

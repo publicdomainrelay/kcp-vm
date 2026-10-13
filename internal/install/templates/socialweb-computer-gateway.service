@@ -12,6 +12,8 @@ ExecStart={{.State}}/bin/current/socialweb-computer serve gateway kcp
 Restart=always
 RestartSec=5
 KillMode=control-group
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=10000
 
 [Install]
 WantedBy=default.target
