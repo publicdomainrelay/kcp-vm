@@ -35,7 +35,9 @@ const (
 	EnvSkipBuild  = "SOCIALWEB_IT_SKIP_BUILD"
 	EnvGuestImage = "SOCIALWEB_IT_GUEST_IMAGE"
 	EnvArtifacts  = "SOCIALWEB_IT_ARTIFACTS"
+	EnvRunRoot    = "SOCIALWEB_IT_RUN_ROOT"
 
+	defaultRunRoot    = "/var/tmp/swcit"
 	defaultAccount    = "test-0001"
 	defaultGuestImage = "file:///var/lib/socialweb-computer/guest-image"
 
@@ -45,6 +47,7 @@ const (
 	commandTimeout = 30 * time.Second
 	healthEvery    = 3 * time.Second
 	healthTimeout  = 20 * time.Second
+	maxSocketPath  = 107
 )
 
 type Harness struct {
@@ -116,8 +119,9 @@ func setup() (*Harness, error) {
 		return nil, err
 	}
 	hs.Sudo = cur.Uid != acct.Uid
-	hs.RunID = strings.ToLower(time.Now().UTC().Format("20060102t150405")) + "-" + randHex(2)
-	hs.Artifacts = envOr(EnvArtifacts, filepath.Join(cur.HomeDir, ".tmp", "swc-it", hs.RunID))
+	hs.RunID = randHex(2)
+	hs.Artifacts = envOr(EnvArtifacts, filepath.Join(cur.HomeDir, ".tmp", "swc-it",
+		strings.ToLower(time.Now().UTC().Format("20060102t150405"))+"-"+hs.RunID))
 	if err := os.MkdirAll(hs.Artifacts, 0o755); err != nil {
 		return nil, err
 	}
@@ -139,14 +143,19 @@ func setup() (*Harness, error) {
 	if _, err := os.Stat(hs.Bin); err != nil {
 		return nil, fmt.Errorf("no published binary (%s unset or a failed build): %w", EnvSkipBuild, err)
 	}
-	runs := filepath.Join(hs.Publish, "runs")
+	runs := envOr(EnvRunRoot, defaultRunRoot)
 	if err := os.MkdirAll(runs, 0o755); err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(runs, 0o1777); err != nil {
-		return nil, err
+	if fi, err := os.Stat(runs); err != nil || fi.Mode().Perm() != 0o777 || fi.Mode()&os.ModeSticky == 0 {
+		if err := os.Chmod(runs, 0o777|os.ModeSticky); err != nil {
+			return nil, fmt.Errorf("%s (%s) must be mode 1777 so the VM account can make its run dir there: %w", runs, EnvRunRoot, err)
+		}
 	}
 	hs.Root = filepath.Join(runs, hs.RunID)
+	if _, err := os.Stat(hs.Root); err == nil {
+		return nil, fmt.Errorf("the run dir %s exists; another run holds it", hs.Root)
+	}
 	hs.Tmp = filepath.Join(hs.Root, "tmp")
 	if r := hs.As(context.Background(), "mkdir", "-p", "-m", "0755", hs.Root, hs.Tmp); r.Err != nil {
 		return nil, fmt.Errorf("creating the run root as %s: %v", hs.Account, r.Err)
@@ -322,10 +331,13 @@ func StartNetwork(t testing.TB, opts NetworkOptions) *Network {
 	if opts.UpTimeout == 0 {
 		opts.UpTimeout = upTimeout
 	}
-	inst := "it" + randHex(3)
-	n := &Network{h: h, t: t, Instance: inst, Dir: filepath.Join(h.Root, inst), Started: time.Now()}
-	n.StateRoot = filepath.Join(n.Dir, "state")
+	inst := "i" + randHex(3)
+	n := &Network{h: h, t: t, Instance: inst, Dir: filepath.Join(h.Root, "f-"+inst), StateRoot: h.Root, Started: time.Now()}
 	n.StateDir = filepath.Join(n.StateRoot, "dev", inst)
+	if long := filepath.Join(n.StateDir, "apps", "dev", inst+"-gateway", "clusterprovider", "fronts", randHex(8)+".sock"); len(long) > maxSocketPath {
+		t.Fatalf("the state dir %s is too long: a tenant cluster's front socket would be %d bytes, over the %d-byte sun_path limit (%s)",
+			n.StateDir, len(long), maxSocketPath, EnvRunRoot)
+	}
 	n.Logs = filepath.Join(h.Artifacts, testName.ReplaceAllString(t.Name(), "_")+"-"+inst)
 	if err := os.MkdirAll(n.Logs, 0o755); err != nil {
 		t.Fatal(err)
@@ -440,6 +452,16 @@ func (n *Network) start(label string, timeout time.Duration, watch bool, args ..
 		p.werr = p.cmd.Wait()
 		close(p.done)
 	}()
+	if watch {
+		n.t.Cleanup(func() {
+			select {
+			case <-p.done:
+			default:
+				p.Kill(errors.New("the test ended"))
+				p.Wait()
+			}
+		})
+	}
 	if watch {
 		go p.watch()
 	}
@@ -674,10 +696,10 @@ func (n *Network) Leftovers() []string {
 	if r := n.h.As(ctx, "test", "-e", n.StateDir); r.Code == 0 {
 		out = append(out, "the state dir "+n.StateDir)
 	}
-	if r := n.h.As(ctx, "find", n.Dir, "-maxdepth", "12", "-path", "*/handles/*/vms/*", "-prune"); strings.TrimSpace(r.Stdout) != "" {
+	if r := n.h.As(ctx, "find", n.StateDir, "-maxdepth", "12", "-path", "*/handles/*/vms/*", "-prune"); strings.TrimSpace(r.Stdout) != "" {
 		out = append(out, "VM work dirs: "+strings.Join(strings.Fields(r.Stdout), " "))
 	}
-	pids, err := n.processesMentioning(n.Dir)
+	pids, err := n.processesMentioning(n.StateDir)
 	if err != nil {
 		out = append(out, "process scan failed: "+err.Error())
 	}
@@ -780,7 +802,7 @@ func (n *Network) processesMentioning(values ...string) ([]string, error) {
 	return out, nil
 }
 
-func (n *Network) FilesContaining(dir string, values []string, excludeDirs ...string) ([]string, error) {
+func (n *Network) FilesContaining(dirs []string, values []string, excludeDirs ...string) ([]string, error) {
 	p, rm, err := n.patternFile(values...)
 	if err != nil {
 		return nil, err
@@ -790,11 +812,11 @@ func (n *Network) FilesContaining(dir string, values []string, excludeDirs ...st
 	for _, d := range excludeDirs {
 		args = append(args, "--exclude-dir="+d)
 	}
-	r := n.h.As(context.Background(), append(args, dir)...)
+	r := n.h.As(context.Background(), append(args, dirs...)...)
 	if r.Code == 2 {
 		for _, l := range strings.Split(strings.TrimSpace(r.Stderr), "\n") {
 			if l != "" && !strings.Contains(l, "No such file or directory") {
-				return nil, fmt.Errorf("grep under %s: %s", dir, l)
+				return nil, fmt.Errorf("grep under %v: %s", dirs, l)
 			}
 		}
 	} else if r.Code != 0 && r.Code != 1 {

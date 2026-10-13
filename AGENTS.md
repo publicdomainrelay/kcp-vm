@@ -116,8 +116,9 @@ These rules come from the org-root CLAUDE.md. They apply to all TypeScript here.
   `user_data` (`buildUserData` and the module registry in `ts/atproto-market/lib/common/cloud-init-common`).
   The requester reaches the guest only through the relay. Never start a container or VM by hand in
   code or in a test, never install a guest agent outside cloud-init, never add a transport that the
-  RFP cloud-init does not install. A test that needs a live guest drives `runComputeContract` against a
-  local bidder (`ts/atproto-market/test/bidder_container_integration_test.ts` is the harness).
+  RFP cloud-init does not install. A test that needs a live guest is an integration test in
+  `test/integration`: its own market network, and `socialweb-computer run request` (which keeps
+  `runComputeContract`) or a tenant cluster of the network's gateway rents the guest.
 
 ## Tests: no tests
 
@@ -134,7 +135,17 @@ works in prod."
   (`socialweb-computer run bidder`).
 - Integration tests come only at the end: after a tenant k3s cluster on that gateway scales to zero
   and gets nodes as market RFP VMs from that bidder. Only integration tests get written then.
+  That point came on 2026-10-12 (plan 0006 M5-FRESH-DEPLOY): integration tests are allowed now.
 - A manual live run is proof, not a test.
+- Integration tests are Go tests in `test/integration`, build tag `integration`, plan 0010 G2. Each
+  test brings up its own market network (`dev up`, a unique instance, port 0, VM slots of the VM
+  account under its slot lock), drives it with the `socialweb-computer` verbs, ends at once on a
+  failed network, child application, ComputeVM or NodeClaim, and runs `dev down` and checks that
+  nothing is left, also on failure. Run them as an account that may `sudo -n -u test-0001`:
+  `go test -tags integration -timeout 40m -v ./test/integration/`. `SOCIALWEB_IT_ACCOUNT` (the VM
+  account), `SOCIALWEB_IT_GUEST_IMAGE` (default `file:///var/lib/socialweb-computer/guest-image`),
+  `SOCIALWEB_IT_PUBLISH`, `SOCIALWEB_IT_SKIP_BUILD` and `SOCIALWEB_IT_ARTIFACTS` (the logs, default
+  `~/.tmp/swc-it/<run>`) change the defaults.
 
 ## Prod deployments
 

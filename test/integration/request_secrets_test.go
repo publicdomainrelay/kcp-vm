@@ -60,6 +60,7 @@ func encodings(value string) []string {
 }
 
 func TestRequestSecretsReachTheGuestThroughTheRFPFlow(t *testing.T) {
+	t.Parallel()
 	n := StartNetwork(t, NetworkOptions{Bidders: 1})
 	started := time.Now()
 	secret := "it-secret-" + randHex(16)
@@ -85,8 +86,9 @@ func TestRequestSecretsReachTheGuestThroughTheRFPFlow(t *testing.T) {
 	}
 
 	patterns := encodings(secret)
+	scanned := []string{n.StateDir, filepath.Join(n.StateRoot, "requests", name)}
 	var leaks []string
-	files, err := n.FilesContaining(n.StateRoot, patterns, "vms")
+	files, err := n.FilesContaining(scanned, patterns, "vms")
 	if err != nil {
 		t.Errorf("scanning the state: %v", err)
 	}
@@ -100,11 +102,26 @@ func TestRequestSecretsReachTheGuestThroughTheRFPFlow(t *testing.T) {
 	for _, pr := range procs {
 		leaks = append(leaks, "process argument or environment "+pr)
 	}
-	stores, _ := n.FilesNamed(n.StateRoot, "kv.sqlite3", "kine.db")
-	t.Logf("scanned %s while the guest held the secret: %d kine stores, %d record stores (Deno KV), process arguments and environments",
-		n.StateRoot, countSuffix(stores, "kine.db"), countSuffix(stores, "kv.sqlite3"))
-	if countSuffix(stores, "kine.db") < 3 || countSuffix(stores, "kv.sqlite3") < 3 {
-		t.Errorf("the scan did not cover every kcp (network, bidder, requester) and record store (relay, PDSes): %v", stores)
+	if c, err := n.JournalContains(patterns, started); err != nil {
+		t.Errorf("reading the journal: %v", err)
+	} else if c > 0 {
+		leaks = append(leaks, fmt.Sprintf("journal of %s: %d line(s)", h.Account, c))
+	}
+	for _, f := range n.LogsContaining(patterns) {
+		if f != p.base+".stdout" {
+			leaks = append(leaks, "log "+f)
+		}
+	}
+	stores, _ := n.FilesNamed(n.StateDir, "kv.sqlite3", "kine.db", "pds")
+	t.Logf("scanned %s, the processes and the journal while the guest held the secret: %d kine stores (every kcp), %d record stores (Deno KV of the relay, the PDSes and the requester's own repo)",
+		strings.Join(scanned, " and "), countSuffix(stores, "kine.db"), countSuffix(stores, "kv.sqlite3")+countSuffix(stores, "/pds"))
+	if countSuffix(stores, "kine.db") < 3 || countSuffix(stores, "kv.sqlite3") < 3 || countSuffix(stores, "/pds") < 1 {
+		t.Errorf("the scan did not cover every kcp (network, bidder, requester) and record store (relay, PDSes, the requester's repo): %v", stores)
+	}
+	if len(leaks) > 0 {
+		p.Kill(fmt.Errorf("the secret leaked"))
+		p.Wait()
+		t.Fatalf("the secret value is outside the guest while the contract is held:\n  %s", strings.Join(leaks, "\n  "))
 	}
 	if err := p.Input("done\n"); err != nil {
 		t.Fatalf("ending the guest command: %v", err)
@@ -159,7 +176,7 @@ func TestRequestSecretsReachTheGuestThroughTheRFPFlow(t *testing.T) {
 			leaks = append(leaks, "log "+f)
 		}
 	}
-	files, err = n.FilesContaining(n.StateRoot, patterns, "vms")
+	files, err = n.FilesContaining(scanned, patterns, "vms")
 	if err != nil {
 		t.Errorf("scanning the state after the release: %v", err)
 	}
