@@ -144,7 +144,93 @@ func (u *uninstaller) remove(host string) error {
 	return u.change("remove "+host, func() error { return os.Remove(full) })
 }
 
+func isDropIn(f string) bool { return strings.HasSuffix(filepath.Dir(f), ".d") }
+
+func isLinkDir(name string) bool {
+	return strings.HasSuffix(name, ".wants") || strings.HasSuffix(name, ".requires") || strings.HasSuffix(name, ".upholds")
+}
+
+func (u *uninstaller) recordedUnits() (map[string]bool, []string) {
+	names := map[string]bool{}
+	seen := map[string]bool{}
+	var dirs []string
+	add := func(d string) {
+		if d != "" && !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	for _, f := range u.rec.UnitFiles {
+		if isDropIn(f) || isLinkDir(filepath.Base(filepath.Dir(f))) {
+			continue
+		}
+		names[filepath.Base(f)] = true
+		add(u.path(filepath.Dir(f)))
+	}
+	if u.uo.Staged {
+		if c, err := os.UserConfigDir(); err == nil {
+			add(filepath.Join(c, "systemd", "user"))
+		}
+		if r := OwnRuntimeDir(); r != "" {
+			add(filepath.Join(r, "systemd", "user"))
+		}
+	}
+	return names, dirs
+}
+
+func (u *uninstaller) removeLink(p string) error {
+	st, err := os.Lstat(p)
+	if err != nil {
+		return nil
+	}
+	if st.Mode()&fs.ModeSymlink == 0 && !st.Mode().IsRegular() {
+		return nil
+	}
+	return u.change("remove "+p, func() error { return os.Remove(p) })
+}
+
+func (u *uninstaller) sweepUnitLinks(names map[string]bool, dirs []string) (bool, error) {
+	swept := false
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			p := filepath.Join(dir, e.Name())
+			if e.IsDir() && isLinkDir(e.Name()) {
+				subs, err := os.ReadDir(p)
+				if err != nil {
+					continue
+				}
+				left := len(subs)
+				for _, s := range subs {
+					if !names[s.Name()] {
+						continue
+					}
+					if err := u.removeLink(filepath.Join(p, s.Name())); err != nil {
+						return swept, err
+					}
+					swept, left = true, left-1
+				}
+				if left == 0 && len(subs) > 0 {
+					os.Remove(p)
+				}
+				continue
+			}
+			if names[e.Name()] && e.Type()&fs.ModeSymlink != 0 {
+				if err := u.removeLink(p); err != nil {
+					return swept, err
+				}
+				swept = true
+			}
+		}
+	}
+	return swept, nil
+}
+
 func (u *uninstaller) removeUnitFiles(units []hostsvc.UnitStatus, um UserManager) error {
+	names, dirs := u.recordedUnits()
 	for _, f := range u.rec.UnitFiles {
 		if filepath.Base(filepath.Dir(f)) != WantsDir && !strings.HasSuffix(filepath.Dir(f), ".d") {
 			link := filepath.Join(filepath.Dir(f), WantsDir, filepath.Base(f))
@@ -157,11 +243,18 @@ func (u *uninstaller) removeUnitFiles(units []hostsvc.UnitStatus, um UserManager
 		if err := u.remove(f); err != nil {
 			return err
 		}
-		if strings.HasSuffix(filepath.Dir(f), ".d") {
+		if isDropIn(f) {
 			os.Remove(u.path(filepath.Dir(f)))
 		}
 	}
+	swept, err := u.sweepUnitLinks(names, dirs)
+	if err != nil {
+		return err
+	}
 	u.rec.UnitFiles = nil
+	if swept && um != nil {
+		return u.change("systemctl --user daemon-reload as "+u.uo.Account, func() error { return um.Reload(u.ctx) })
+	}
 	return nil
 }
 
@@ -277,8 +370,11 @@ func (u *uninstaller) purge(units []hostsvc.UnitStatus, um UserManager) error {
 		u.installer.rec = kept
 		return u.saveRecord()
 	}
-	if u.rec.created(StepStateDir) {
-		state := u.path(u.rec.StateDir)
+	if err := purgeableState(u.rec.StateDir); err != nil {
+		return err
+	}
+	state := u.path(u.rec.StateDir)
+	if _, err := os.Lstat(state); err == nil {
 		if err := u.change("remove the state dir "+u.rec.StateDir, func() error { return removeTree(state) }); err != nil {
 			return err
 		}
@@ -296,12 +392,45 @@ func (u *uninstaller) purge(units []hostsvc.UnitStatus, um UserManager) error {
 	return nil
 }
 
-func removeTree(root string) error {
+func purgeableState(state string) error {
+	clean := filepath.Clean(state)
+	if !filepath.IsAbs(clean) || strings.Count(clean, "/") < 2 {
+		return fmt.Errorf("uninstall: the recorded state dir %q is not an absolute path two levels deep; --purge refuses to remove it", state)
+	}
+	if home, err := os.UserHomeDir(); err == nil && filepath.Clean(home) == clean {
+		return fmt.Errorf("uninstall: the recorded state dir %s is the invoking user's home; --purge refuses to remove it", state)
+	}
+	return nil
+}
+
+func writableTree(root string) {
 	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if d != nil && d.IsDir() {
-			os.Chmod(p, 0o700)
+		if d == nil || d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		if st, serr := os.Lstat(p); serr == nil {
+			mode := st.Mode().Perm() | 0o600
+			if d.IsDir() {
+				mode |= 0o700
+			}
+			if mode != st.Mode().Perm() {
+				os.Chmod(p, mode)
+			}
 		}
 		return nil
 	})
-	return os.RemoveAll(root)
+}
+
+func removeTree(root string) error {
+	writableTree(root)
+	if err := os.RemoveAll(root); err != nil {
+		writableTree(root)
+		if err := os.RemoveAll(root); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Lstat(root); err == nil {
+		return fmt.Errorf("uninstall: %s is still there after its removal", root)
+	}
+	return nil
 }
