@@ -81,6 +81,10 @@ type DenoPodListener struct {
 
 const AnnotationEdge = "deno.computer/edge"
 
+const AnnotationRestart = "deno.computer/restart"
+
+const ReasonRestartRequested = "RestartRequested"
+
 const ReasonFixedPortBehindTheEdge = "FixedPortBehindTheEdge"
 
 const FinalizerDenoPod = "denopod.deno.computer/run"

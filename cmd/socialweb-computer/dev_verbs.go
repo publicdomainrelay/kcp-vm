@@ -144,8 +144,15 @@ type restartReport struct {
 
 func runDevRestart(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
 	started := time.Now()
-	if len(rest) != 1 || rest[0] != "core" {
-		return a.fail(exitRefused, "dev restart: only core is restarted here (dev restart core [--binary path]); kcp and cluster rolls are dev roll (M3-KCP-ROLL)")
+	if len(rest) == 2 {
+		vals = vals.With("instance", rest[0])
+		rest = rest[1:]
+	}
+	if len(rest) != 1 {
+		return a.fail(exitRefused, "dev restart: dev restart [<instance>] core [--binary path] | dev restart [<instance>] [<app>/][<workspace>:]<denopod>; kcp and cluster rolls are dev roll (M3-KCP-ROLL)")
+	}
+	if rest[0] != "core" {
+		return runDevRestartPod(ctx, a, vals, rest[0])
 	}
 	readyTimeout, err := time.ParseDuration(vals.String("ready-timeout"))
 	if err != nil {

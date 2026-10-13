@@ -235,8 +235,23 @@ func (r *Reconciler) start(o Observed, res Result) Result {
 		"Starting", "the deno process is starting")
 	setCondition(&res, o.Pod.Generation, metav1.ConditionFalse, v1alpha1.ConditionComplete,
 		"Running", "the deno process is long-running")
+	if want := requestedRestart(o.Pod); want != "" {
+		setCondition(&res, o.Pod.Generation, metav1.ConditionTrue, v1alpha1.ConditionRestarted,
+			v1alpha1.ReasonRestartRequested, want)
+	}
 	res.RequeueAfter = RequeueAfter
 	return res
+}
+
+func requestedRestart(pod v1alpha1.DenoPod) string {
+	return pod.Annotations[v1alpha1.AnnotationRestart]
+}
+
+func honouredRestart(conditions []metav1.Condition) string {
+	if c := meta.FindStatusCondition(conditions, v1alpha1.ConditionRestarted); c != nil {
+		return c.Message
+	}
+	return ""
 }
 
 func (r *Reconciler) running(o Observed, res Result) Result {
@@ -248,6 +263,14 @@ func (r *Reconciler) running(o Observed, res Result) Result {
 
 	if o.LivenessFailed {
 		return r.restart(o, res, "LivenessProbeFailed", "the liveness probe failed; restarting the deno process")
+	}
+
+	if want := requestedRestart(o.Pod); want != "" && want != honouredRestart(res.Conditions) {
+		res = r.restart(o, res, v1alpha1.ReasonRestartRequested,
+			"a restart was requested ("+v1alpha1.AnnotationRestart+"="+want+"); restarting the deno process")
+		setCondition(&res, o.Pod.Generation, metav1.ConditionTrue, v1alpha1.ConditionRestarted,
+			v1alpha1.ReasonRestartRequested, want)
+		return res
 	}
 
 	ready := true

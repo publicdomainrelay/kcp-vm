@@ -104,4 +104,6 @@ const (
 	ConditionSuspended = "Suspended"
 
 	ConditionCancelled = "Cancelled"
+
+	ConditionRestarted = "Restarted"
 )

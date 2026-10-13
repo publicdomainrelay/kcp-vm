@@ -72,7 +72,7 @@ func Tree() []Verb {
 		{Path: "dev logs", Summary: "a unit's log: dev logs <kine-a|front|kcp-a|kcp-b|core|devsup> [--tail N]", Needs: []Need{NeedProc}},
 		{Path: "dev env", Summary: "exports for shells and TS tools (KUBECONFIG, kcp URL, ports, leases; --json)", Needs: []Need{NeedProc}},
 		{Path: "dev check", Summary: "report the dev host prerequisites; never fixes them", Needs: []Need{NeedProc}},
-		{Path: "dev restart", Summary: "dev restart core [--binary path]: replace the dev core, adopting every other unit", Needs: []Need{NeedProc}},
+		{Path: "dev restart", Summary: "dev restart [<instance>] core [--binary path]: replace the dev core, adopting every other unit; dev restart [<instance>] [<app>/][<workspace>:]<denopod>: restart one DenoPod through its kcp object (deno.computer/restart), wait until it is Running with its listeners, print the old and new pid", Needs: []Need{NeedProc}},
 		{Path: "dev roll", Summary: "roll a dev instance's kcp (a tenant cluster rolls with units roll cluster)", Needs: []Need{NeedProc}},
 		{Path: "dev roll kcp", Summary: "blue/green kcp slot swap behind the instance's front", Needs: []Need{NeedProc}},
 		{Path: "dev gc", Summary: "collect the per-user asset cache (refused while a devsup of this user runs)", Needs: []Need{NeedProc}},
