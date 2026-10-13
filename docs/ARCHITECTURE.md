@@ -6834,6 +6834,35 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `release` vm.delete 200 at 14:51:02Z, no ComputeVM, HostProcess or VM unit of either bidder left 10 s
   later; `dev down` 14:51:12Z to 14:51:35Z with no process, VM unit or state left.
 
+- **socialweb-computer run bidder; hono-bidder runs only as the bidder DenoPod's entry, with no
+  subprocess (plan 0007 M5-RUN-BIDDER, 2026-10-12).** `run bidder --profile prod-qr|market-network|dev-local`
+  applies a MarketBidder root object into the handle's own kcp. With `--network <market network>`
+  (host-backend proc) it adds a MarketBidder child to the network and returns when the network reports it
+  Ready with its did; without, on proc it brings up the handle's own instance (its core runs the
+  ComputeVM controller for the handle), renders the MarketIdentity sign-in and returns when Ready; on
+  systemd-user it is the installed unit's process: it checks it runs as the account install bidder made
+  for the handle and runs the bidder's core in the foreground. The bidder signs in only through its
+  MarketIdentity `bidder` (oauthQr, pdsAccount or localRepo by profile); identity-prompt-tty is deleted
+  and hono-bidder exits 2 naming `socialweb-computer run bidder` without its DenoPod's kcp environment.
+  The QR guard is in Go: a core that sees a QR sign-in into another account removes the session from the
+  bidder's vault, stops the bidder DenoPod and starts it again with a fresh QR. The bidder's provider is
+  compute-provider-kcp; `spec.firecracker` is refused. The bidder DenoPod's deno argv has no -A,
+  --allow-run or --allow-ffi: the guest issuer verifies the guest's SSHSIG in TypeScript (WebCrypto
+  Ed25519, namespace prove-sshd) instead of ssh-keygen, and gha-lite policies run net-only (user decision
+  2026-10-12: keep gha-lite, forced net-only): every `uses:` action runs in the permission-restricted
+  Worker from the bundled-actions dir in the TypeScript tree, the built-in workflows have no `run:` step
+  and the verdict is the action's `allow` output carried as a job output, and a policy with a `run:`
+  step, a composite action or an action to download is refused (no bid, the reason logged). A core start
+  stops the DenoPod processes a previous core of its instance left running before the deno runtime starts
+  its own. Reading on hat-8 (market networks of test-0001, `run bidder --network`): the bidder Ready
+  45 s after `run bidder`; `run request --network --secrets --hold` read the secret in the guest, the
+  guest's host keys were accepted by the TypeScript SSHSIG check (14:49:14Z) and its token exchange at
+  /v1/oidc/issue answered (`issue token`, 14:49:15Z, no rbac denial); kill -9 of the bidder's core at
+  15:01:43Z, the restarted core reaped the old run and one bidder process ran 24 s later and 20 s after
+  that; vm.delete 200 at 15:03:08Z, no VM unit left; `dev down` left no process. With two bidders, the
+  only-me bidder's net-only gha-lite scope gate rejected an unassociated requester's RFP at 15:12:05Z, the
+  open bidder bid and won, and 643 samples at 100 ms of both bidders' deno processes saw no child process.
+
 ## 16. Vocabulary
 
 | | |
