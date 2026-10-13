@@ -106,13 +106,14 @@ sets:
             for: Ready
 
   - name: bidder
-    summary: the ComputeVM schema and export beside the provider's, the bidder WorkspaceType binding denoruntime, computevms and hostprocesses (plan 0007 M1-API), and the computevms binding in root that the ComputeVM controller of a bidder application instance applies with it (plan 0007 M2-CONTROLLER); needs the provider workspace and the hostprocesses set
+    summary: the ComputeVM and Bid schemas and their export (computevms) beside the provider's, the bidder WorkspaceType binding denoruntime, computevms and hostprocesses (plan 0007 M1-API), and the computevms binding in root that the ComputeVM controller of a bidder application instance applies with it (plan 0007 M2-CONTROLLER); needs the provider workspace and the hostprocesses set
     values: None
     phases:
       - name: schemas
         workspace: root:socialweb-provider
         files:
           - path: computevm-apiresourceschema.yaml
+          - path: bid-apiresourceschema.yaml
           - path: computevm-apiexport.yaml
         after:
           - kind: APIExport

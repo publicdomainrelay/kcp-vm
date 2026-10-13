@@ -21,6 +21,9 @@ export type ComputeVMPhase = typeof COMPUTE_VM_PHASES[number];
 export const COMPUTE_VM_LOST_REASONS = ["HostRebooted", "UnitGone", "UnitFailed", "OOMKilled", "VMMExited", "IdentityMismatch"] as const;
 export type ComputeVMLostReason = typeof COMPUTE_VM_LOST_REASONS[number];
 
+export const BID_PHASES = ["Deciding", "Published", "Won", "Lost", "Expired", "Failed"] as const;
+export type BidPhase = typeof BID_PHASES[number];
+
 export const HOST_PROCESS_RESTART_POLICYS = ["Never", "OnFailure", "Always"] as const;
 export type HostProcessRestartPolicy = typeof HOST_PROCESS_RESTART_POLICYS[number];
 
@@ -169,6 +172,57 @@ export interface ComputeVMHostKey {
   type: string;
   publicKey: string;
   fingerprint?: string;
+}
+
+export interface Bid {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: BidSpec;
+  status?: BidStatus;
+}
+
+export interface BidSpec {
+  rfp: BidRecordRef;
+  requester: string;
+  payloadNsid?: string;
+  offer: BidOffer;
+  provider: string;
+  policy: BidPolicy;
+  expiresAt: string;
+}
+
+export interface BidRecordRef {
+  uri: string;
+  cid?: string;
+}
+
+export interface BidOffer {
+  kind: string;
+  cost?: number;
+}
+
+export interface BidPolicy {
+  scope?: string;
+  attached?: BidRecordRef[];
+  verdict: string;
+}
+
+export interface BidStatus {
+  phase?: BidPhase;
+  message?: string;
+  bid?: BidRecordRef;
+  accept?: BidRecordRef;
+  computeVM?: string;
+  timings?: BidTimings;
+}
+
+export interface BidTimings {
+  rfpSeenAt?: string;
+  decidedAt?: string;
+  publishedAt?: string;
+  acceptedAt?: string;
+  finishedAt?: string;
 }
 
 export interface HostProcess {
@@ -552,6 +606,17 @@ export const COMPUTE_VM_RESOURCE: ApiResource = {
   export: "computevms",
 };
 
+export const BID_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "Bid",
+  listKind: "BidList",
+  plural: "bids",
+  singular: "bid",
+  schema: "v1alpha1-1.bids.socialweb.computer",
+  export: "computevms",
+};
+
 export const HOST_PROCESS_RESOURCE: ApiResource = {
   group: "socialweb.computer",
   version: "v1alpha1",
@@ -585,9 +650,17 @@ export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
   export: "hostprocesses",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, HOST_PROCESS_RESOURCE, POSTGRES_RESOURCE, OPEN_BAO_SERVER_RESOURCE];
+export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, BID_RESOURCE, HOST_PROCESS_RESOURCE, POSTGRES_RESOURCE, OPEN_BAO_SERVER_RESOURCE];
 
 export type ApiTypeName =
+  | "Bid"
+  | "BidOffer"
+  | "BidPhase"
+  | "BidPolicy"
+  | "BidRecordRef"
+  | "BidSpec"
+  | "BidStatus"
+  | "BidTimings"
   | "ComputeVM"
   | "ComputeVMContract"
   | "ComputeVMGuestLogin"
@@ -768,6 +841,165 @@ export function validate(typeName: ApiTypeName, value: unknown): ApiIssue[] {
 }
 
 const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
+  "Bid": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "BidSpec"
+      },
+      "status": {
+        "ref": "BidStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "BidOffer": {
+    "properties": {
+      "cost": {
+        "type": "integer"
+      },
+      "kind": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind"
+    ],
+    "type": "object"
+  },
+  "BidPhase": {
+    "enum": [
+      "Deciding",
+      "Published",
+      "Won",
+      "Lost",
+      "Expired",
+      "Failed"
+    ],
+    "type": "string"
+  },
+  "BidPolicy": {
+    "properties": {
+      "attached": {
+        "items": {
+          "ref": "BidRecordRef"
+        },
+        "type": "array"
+      },
+      "scope": {
+        "type": "string"
+      },
+      "verdict": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "verdict"
+    ],
+    "type": "object"
+  },
+  "BidRecordRef": {
+    "properties": {
+      "cid": {
+        "type": "string"
+      },
+      "uri": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "uri"
+    ],
+    "type": "object"
+  },
+  "BidSpec": {
+    "properties": {
+      "expiresAt": {
+        "type": "string"
+      },
+      "offer": {
+        "ref": "BidOffer"
+      },
+      "payloadNsid": {
+        "type": "string"
+      },
+      "policy": {
+        "ref": "BidPolicy"
+      },
+      "provider": {
+        "type": "string"
+      },
+      "requester": {
+        "type": "string"
+      },
+      "rfp": {
+        "ref": "BidRecordRef"
+      }
+    },
+    "required": [
+      "rfp",
+      "requester",
+      "offer",
+      "provider",
+      "policy",
+      "expiresAt"
+    ],
+    "type": "object"
+  },
+  "BidStatus": {
+    "properties": {
+      "accept": {
+        "ref": "BidRecordRef"
+      },
+      "bid": {
+        "ref": "BidRecordRef"
+      },
+      "computeVM": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "phase": {
+        "ref": "BidPhase"
+      },
+      "timings": {
+        "ref": "BidTimings"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "BidTimings": {
+    "properties": {
+      "acceptedAt": {
+        "type": "string"
+      },
+      "decidedAt": {
+        "type": "string"
+      },
+      "finishedAt": {
+        "type": "string"
+      },
+      "publishedAt": {
+        "type": "string"
+      },
+      "rfpSeenAt": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "ComputeVM": {
     "properties": {
       "apiVersion": {
@@ -2654,6 +2886,150 @@ export function assertComputeVMHostKey(value: unknown): asserts value is Compute
 
 export function parseComputeVMHostKey(value: unknown): ComputeVMHostKey {
   assertComputeVMHostKey(value);
+  return value;
+}
+
+export function validateBid(value: unknown): ApiIssue[] {
+  return validate("Bid", value);
+}
+
+export function isBid(value: unknown): value is Bid {
+  return validate("Bid", value).length === 0;
+}
+
+export function assertBid(value: unknown): asserts value is Bid {
+  const issues = validate("Bid", value);
+  if (issues.length > 0) throw new ApiValidationError("Bid", issues);
+}
+
+export function parseBid(value: unknown): Bid {
+  assertBid(value);
+  return value;
+}
+
+export function validateBidSpec(value: unknown): ApiIssue[] {
+  return validate("BidSpec", value);
+}
+
+export function isBidSpec(value: unknown): value is BidSpec {
+  return validate("BidSpec", value).length === 0;
+}
+
+export function assertBidSpec(value: unknown): asserts value is BidSpec {
+  const issues = validate("BidSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("BidSpec", issues);
+}
+
+export function parseBidSpec(value: unknown): BidSpec {
+  assertBidSpec(value);
+  return value;
+}
+
+export function validateBidRecordRef(value: unknown): ApiIssue[] {
+  return validate("BidRecordRef", value);
+}
+
+export function isBidRecordRef(value: unknown): value is BidRecordRef {
+  return validate("BidRecordRef", value).length === 0;
+}
+
+export function assertBidRecordRef(value: unknown): asserts value is BidRecordRef {
+  const issues = validate("BidRecordRef", value);
+  if (issues.length > 0) throw new ApiValidationError("BidRecordRef", issues);
+}
+
+export function parseBidRecordRef(value: unknown): BidRecordRef {
+  assertBidRecordRef(value);
+  return value;
+}
+
+export function validateBidOffer(value: unknown): ApiIssue[] {
+  return validate("BidOffer", value);
+}
+
+export function isBidOffer(value: unknown): value is BidOffer {
+  return validate("BidOffer", value).length === 0;
+}
+
+export function assertBidOffer(value: unknown): asserts value is BidOffer {
+  const issues = validate("BidOffer", value);
+  if (issues.length > 0) throw new ApiValidationError("BidOffer", issues);
+}
+
+export function parseBidOffer(value: unknown): BidOffer {
+  assertBidOffer(value);
+  return value;
+}
+
+export function validateBidPolicy(value: unknown): ApiIssue[] {
+  return validate("BidPolicy", value);
+}
+
+export function isBidPolicy(value: unknown): value is BidPolicy {
+  return validate("BidPolicy", value).length === 0;
+}
+
+export function assertBidPolicy(value: unknown): asserts value is BidPolicy {
+  const issues = validate("BidPolicy", value);
+  if (issues.length > 0) throw new ApiValidationError("BidPolicy", issues);
+}
+
+export function parseBidPolicy(value: unknown): BidPolicy {
+  assertBidPolicy(value);
+  return value;
+}
+
+export function validateBidStatus(value: unknown): ApiIssue[] {
+  return validate("BidStatus", value);
+}
+
+export function isBidStatus(value: unknown): value is BidStatus {
+  return validate("BidStatus", value).length === 0;
+}
+
+export function assertBidStatus(value: unknown): asserts value is BidStatus {
+  const issues = validate("BidStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("BidStatus", issues);
+}
+
+export function parseBidStatus(value: unknown): BidStatus {
+  assertBidStatus(value);
+  return value;
+}
+
+export function validateBidPhase(value: unknown): ApiIssue[] {
+  return validate("BidPhase", value);
+}
+
+export function isBidPhase(value: unknown): value is BidPhase {
+  return validate("BidPhase", value).length === 0;
+}
+
+export function assertBidPhase(value: unknown): asserts value is BidPhase {
+  const issues = validate("BidPhase", value);
+  if (issues.length > 0) throw new ApiValidationError("BidPhase", issues);
+}
+
+export function parseBidPhase(value: unknown): BidPhase {
+  assertBidPhase(value);
+  return value;
+}
+
+export function validateBidTimings(value: unknown): ApiIssue[] {
+  return validate("BidTimings", value);
+}
+
+export function isBidTimings(value: unknown): value is BidTimings {
+  return validate("BidTimings", value).length === 0;
+}
+
+export function assertBidTimings(value: unknown): asserts value is BidTimings {
+  const issues = validate("BidTimings", value);
+  if (issues.length > 0) throw new ApiValidationError("BidTimings", issues);
+}
+
+export function parseBidTimings(value: unknown): BidTimings {
+  assertBidTimings(value);
   return value;
 }
 

@@ -28,6 +28,8 @@ import { nsidFromUri } from "@publicdomainrelay/market-abc";
 import type { PolicyEvalCtx, PolicyResult } from "@publicdomainrelay/policy-engine-abc";
 import type {
   ActiveContract,
+  BidClaim,
+  BidLedger,
   CallbackFactoryDeps,
   CallbackSet,
   ContractEvent,
@@ -129,6 +131,8 @@ export interface VmBidderDeps {
   resolve: RecordResolver;
   acceptToContract?: Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>;
   terminatedReceipts?: TerminatedReceipts;
+  bids?: BidLedger;
+  scopePolicy?: string;
 }
 
 function refKey(ref: { uri: string; cid: string }): string {
@@ -372,7 +376,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     );
   });
 
-  const onRfp: SubmitRfpCallback = async ({ rfpUri, rfpCid, rfp, issuerDid, log: cbLog }) => {
+  const onRfp: SubmitRfpCallback = async ({ rfpUri, rfpCid, rfp, issuerDid, receivedAt, log: cbLog }) => {
     cbLog("info", "bidder received VM RFP", { rfpUri, rfpCid, issuerDid });
 
     // Evaluate each attached policy strongRef; first deny short-circuits.
@@ -409,28 +413,70 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
 
     const nowIso = new Date().toISOString();
 
-    const configRef = await computeProvider.createBidConfig(nowIso);
-    const bidConfigRef = { uri: configRef.uri, cid: configRef.cid };
-    cbLog("info", "bidder created bid config", { configUri: configRef.uri });
+    if (deps.bids) {
+      const payloadRef = rfp.payload as { uri: string; cid: string } | undefined;
+      let claim: BidClaim;
+      try {
+        claim = await deps.bids.claim({
+          rfp: { uri: rfpUri, cid: rfpCid },
+          requester: issuerDid,
+          ...(payloadRef ? { payloadNsid: nsidFromUri(payloadRef.uri) } : {}),
+          offer: { kind: "free", cost: 0 },
+          provider: computeProvider.name,
+          policy: {
+            ...(deps.scopePolicy ? { scope: deps.scopePolicy } : {}),
+            attached: policyRefs.map((r) => ({ uri: r.uri, cid: r.cid })),
+            verdict: "allow",
+          },
+          rfpSeenAt: receivedAt ?? nowIso,
+          decidedAt: nowIso,
+        });
+      } catch (err) {
+        cbLog("error", "bid_claim_failed", { rfpUri, error: String(err) });
+        return { body: { ok: false, error: "bid ledger unavailable" } };
+      }
+      if (!claim.claimed) {
+        cbLog("info", "bid_already_claimed", { rfpUri, bid: claim.entry.name, phase: claim.entry.phase });
+        return {
+          body: {
+            ok: true,
+            duplicate: true,
+            ...(claim.entry.bid ? { bidUri: claim.entry.bid.uri, bidCid: claim.entry.bid.cid } : {}),
+          },
+        };
+      }
+    }
 
-    const { uri: payloadUri, cid: payloadCid } = await createRepoRecord(
-      "com.publicdomainrelay.temp.market.bids.free",
-      { $type: "com.publicdomainrelay.temp.market.bids.free", cost: 0, createdAt: nowIso },
-    );
+    let published: { bidUri: string; bidCid: string; signedBid: Record<string, unknown> };
+    try {
+      const configRef = await computeProvider.createBidConfig(nowIso);
+      const bidConfigRef = { uri: configRef.uri, cid: configRef.cid };
+      cbLog("info", "bidder created bid config", { configUri: configRef.uri });
 
-    const bidRecord: Record<string, unknown> = {
-      $type: BID_NSID,
-      rfp: strongRef(rfpUri, rfpCid),
-      payload: strongRef(payloadUri, payloadCid),
-      bidConfig: strongRef(bidConfigRef.uri, bidConfigRef.cid),
-      submitAccept: relay.ingressUrl,
-      createdAt: nowIso,
-    };
-    const { uri: bidUri, cid: bidCid, record: signedBid } = await createSignedRepoRecord(
-      BID_NSID, bidRecord, did,
-    );
+      const { uri: payloadUri, cid: payloadCid } = await createRepoRecord(
+        "com.publicdomainrelay.temp.market.bids.free",
+        { $type: "com.publicdomainrelay.temp.market.bids.free", cost: 0, createdAt: nowIso },
+      );
 
-    cbLog("info", "bidder created VM bid", { bidUri, bidCid, payloadUri });
+      const bidRecord: Record<string, unknown> = {
+        $type: BID_NSID,
+        rfp: strongRef(rfpUri, rfpCid),
+        payload: strongRef(payloadUri, payloadCid),
+        bidConfig: strongRef(bidConfigRef.uri, bidConfigRef.cid),
+        submitAccept: relay.ingressUrl,
+        createdAt: nowIso,
+      };
+      const signed = await createSignedRepoRecord(BID_NSID, bidRecord, did);
+      published = { bidUri: signed.uri, bidCid: signed.cid, signedBid: signed.record };
+      cbLog("info", "bidder created VM bid", { bidUri: signed.uri, bidCid: signed.cid, payloadUri });
+    } catch (err) {
+      deps.bids?.failed(rfpUri, `publishing the market.bid record: ${String(err)}`, new Date().toISOString())
+        .catch((e: unknown) => cbLog("warn", "bid_status_failed", { rfpUri, error: String(e) }));
+      throw err;
+    }
+    const { bidUri, bidCid, signedBid } = published;
+    deps.bids?.published(rfpUri, { uri: bidUri, cid: bidCid }, new Date().toISOString())
+      .catch((e: unknown) => cbLog("warn", "bid_status_failed", { rfpUri, error: String(e) }));
 
     const submitBidUrl = rfp.submitBid as string | undefined;
     if (submitBidUrl) {
@@ -468,6 +514,8 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     const nowIso = new Date().toISOString();
     const rfpRef = accept.rfp as { uri: string; cid: string } | undefined;
     const bidRef = accept.bid as { uri: string; cid: string } | undefined;
+    const bidStatusFailed = (e: unknown) => cbLog("warn", "bid_status_failed", { rfpUri: rfpRef?.uri, error: String(e) });
+    if (rfpRef && deps.bids) deps.bids.won(rfpRef.uri, { uri: acceptUri, cid: acceptCid }, nowIso).catch(bidStatusFailed);
 
     let providerIdPromise: Promise<string | number | undefined> = Promise.resolve(undefined);
     let provisionIp: string | undefined;
@@ -623,6 +671,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       if (activeContracts.has(rk)) {
         await saveChange({ type: "provisioned", ...contractEventFields(rk, contract), providerId }, cbLog);
       }
+      if (rfpRef && deps.bids) deps.bids.boundTo(rfpRef.uri, String(providerId)).catch(bidStatusFailed);
 
       // Always emit vm.onNetwork via firehose (record on bidder PDS, firehose distributes).
       // Previously gated on submitEventUrl which is empty with --no-ingress-proxy.
@@ -844,6 +893,8 @@ export function createComputeProviderHooks(opts: {
         getVouchedDids: deps.getVouchedDids,
         resolveOperatorDid: deps.resolveOperatorDid,
         evaluator: deps.evaluator,
+        bids: deps.bids,
+        scopePolicy: deps.scopePolicy,
       });
       return { rfpCallbacks: vm.rfp, onAccept: vm.accept, eventCallbacks: vm.event, restore: vm.restore };
     },

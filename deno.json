@@ -80,6 +80,7 @@
     "./ts/atproto-market/lib/market-bidder",
     "./ts/atproto-market/lib/market-bidder-compute",
     "./ts/atproto-market/lib/market-bidder-contract-store-fs",
+    "./ts/atproto-market/lib/market-bidder-bids-kcp",
     "./ts/atproto-market/lib/market-bidder-contract-store-kcp",
     "./ts/atproto-market/lib/market-bidder-vault-keys",
     "./ts/atproto-market/lib/market-bidder-worker",

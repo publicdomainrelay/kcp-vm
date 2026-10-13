@@ -6,7 +6,7 @@ import { TID } from "@atproto/common";
 import { getPdsEndpoint } from "@atproto/common-web";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
 import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, getRecordAt } from "@publicdomainrelay/market-atproto";
-import type { MarketServerDeps, OfferingRefreshHandle, RfpObservation } from "@publicdomainrelay/market-atproto";
+import type { DispatchRfpInput, MarketServerDeps, OfferingRefreshHandle, RfpGate, RfpObservation } from "@publicdomainrelay/market-atproto";
 import { createMarketFactory } from "@publicdomainrelay/hono-factory-market-atproto";
 import { RFP_NSID, VOUCH_NSID } from "@publicdomainrelay/market-common";
 import type {
@@ -44,6 +44,8 @@ import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay
 import { parseAtUri, type ATProto } from "@publicdomainrelay/atproto-helpers";
 import type {
   ActiveContract,
+  BidEntry,
+  BidLedger,
   CallbackFactoryDeps,
   CallbackSet,
   ContractEvent,
@@ -127,6 +129,7 @@ export interface MarketBidderConfig {
   /** Pre-created acceptToContract map -- shared with providers for guest event routes. */
   acceptToContract?: Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>;
   loop?: MarketLoopRecorder;
+  bids?: BidLedger;
 }
 
 export interface MarketBidder {
@@ -183,11 +186,49 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const terminatedReceipts = new TerminatedReceipts();
   const contractStore = config.contractStore;
   const loop = config.loop;
+  const bids = config.bids;
+  const rfpsInFlight = new Map<string, Promise<unknown>>();
+  const duplicateRfp = (input: DispatchRfpInput, entry: BidEntry | null, why: string): Response => {
+    logger.info("rfp_duplicate_delivery", {
+      rfpUri: input.rfpUri, via: input.req ? "push" : "firehose", why, bid: entry?.name, phase: entry?.phase,
+    });
+    return new Response(
+      JSON.stringify({ ok: true, duplicate: true, ...(entry?.bid ? { bidUri: entry.bid.uri, bidCid: entry.bid.cid } : {}) }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+  const findBid = async (rfpUri: string): Promise<BidEntry | null> => {
+    if (!bids) return null;
+    try {
+      return await bids.find(rfpUri);
+    } catch (err) {
+      logger.warn("bid_read_failed", { rfpUri, error: String(err) });
+      return null;
+    }
+  };
+  const rfpGate: RfpGate = async (input, run) => {
+    const running = rfpsInFlight.get(input.rfpUri);
+    if (running) {
+      await running.catch(() => {});
+      return duplicateRfp(input, await findBid(input.rfpUri), "in flight");
+    }
+    const done = Promise.withResolvers<void>();
+    rfpsInFlight.set(input.rfpUri, done.promise);
+    try {
+      const existing = await findBid(input.rfpUri);
+      if (existing) return duplicateRfp(input, existing, "a Bid answers it");
+      return await run();
+    } finally {
+      rfpsInFlight.delete(input.rfpUri);
+      done.resolve();
+    }
+  };
   const observeRfp = loop
     ? (o: RfpObservation): void => {
       if (o.outcome === "seen") loop.rfpSeen();
       else if (o.outcome === "scoped") loop.rfpScoped();
       else if (o.outcome === "bid") loop.bid();
+      else if (o.outcome === "duplicate") return;
       else loop.declined(declineReasonOf(o.reason ?? "unknown"));
     }
     : undefined;
@@ -454,6 +495,8 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       getVouchedDids,
       resolveOperatorDid,
       evaluator,
+      bids,
+      scopePolicy: canonical,
     };
 
     for (const p of providers ?? []) {
@@ -526,6 +569,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
         rfp: merged.rfpCallbacks,
         rfpScopeFilter: async ({ issuerDid }) => scopeGate(issuerDid),
         rfpObserve: observeRfp,
+        rfpGate,
         accept: merged.onAccept
           ? { serviceIds: [DEFAULT_MARKET_SERVICE_ID], onAccept: merged.onAccept }
           : undefined,
@@ -586,17 +630,17 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       });
 
       const dispatchCallbacks = merged.rfpCallbacks ?? {};
-      const dispatch = createRfpDispatcher({ deps: marketDeps, callbacks: dispatchCallbacks, observe: observeRfp });
-      // Dedup handled by ATProtoEventStreamsClient -- no per-group seen Set needed.
+      const dispatch = createRfpDispatcher({
+        deps: marketDeps,
+        callbacks: dispatchCallbacks,
+        acceptScopeFilter: ({ issuerDid }) => scopeGate(issuerDid),
+        observe: observeRfp,
+        gate: rfpGate,
+      });
       eventStreams.watch({
         wantedCollections: [RFP_NSID],
-        onEvent: async (e) => {
+        onEvent: (e) => {
           if (e.operation !== "create" && e.operation !== "update") return;
-          loop?.rfpSeen();
-          if (!await scopeGate(e.did)) {
-            loop?.declined("outOfScope");
-            return;
-          }
           log("info", "rfp watch discovered", { rfpUri: e.uri });
           dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })
             .catch((err) => log("error", "rfp watch dispatch failed", { rfpUri: e.uri, err: String(err) }));

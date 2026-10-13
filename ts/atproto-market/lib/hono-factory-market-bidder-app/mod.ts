@@ -10,6 +10,8 @@ import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-a
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createFsContractStore } from "@publicdomainrelay/market-bidder-contract-store-fs";
 import { createKcpContractStore } from "@publicdomainrelay/market-bidder-contract-store-kcp";
+import { createKcpBidLedger } from "@publicdomainrelay/market-bidder-bids-kcp";
+import type { BidLedger } from "@publicdomainrelay/market-bidder-abc";
 import type { KcpComputeVMClient } from "@publicdomainrelay/compute-provider-kcp";
 import type { ComputeVMAccepts } from "@publicdomainrelay/compute-provider-kcp-abc";
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
@@ -133,6 +135,7 @@ export interface MarketBidderMarketSpec {
   ingressProxy: boolean;
   firehoseMode?: string;
   offeringRefreshSec?: number;
+  bidWindowSec?: number;
   policy?: string;
   policyArgs?: unknown;
   onlyRemotePolicyExec?: boolean;
@@ -183,6 +186,7 @@ export const GUEST_DENOPOD_KCP = "guest-kcp";
 const BIDDER_ASSOC_SERVICE = "bidder_associate";
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 const AUTO_REFRESH_THRESHOLD_MS = 3_600_000;
+const DEFAULT_BID_WINDOW_SEC = 300;
 
 type GuestContractEntry = { receiptKey: string; receiptUri: string; receiptCid: string; submitEventUrl?: string };
 type Atproto = Awaited<ReturnType<typeof createATProto>>;
@@ -258,6 +262,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   let crawlRelayUrls: string[] = [];
   let localRelayUrls: string[] = [];
   let kcpContracts: { client: KcpComputeVMClient; accepts: ComputeVMAccepts; handle: string } | undefined;
+  let bidLedger: BidLedger | undefined;
   let vaultMount = id.vaultMount;
   let keyVault: IdentityVault | undefined;
   const keysOutOfFiles = id.vault?.kind === "openbao";
@@ -653,6 +658,11 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           contractStoreReleases: true,
         });
         kcpContracts = { client: kcp.client, accepts: kcp.accepts, handle: p.handle };
+        bidLedger = createKcpBidLedger({
+          kcp: createKcpRestClient({ server: p.server, tokenFile: p.tokenFile, caFile: p.caFile }),
+          workspace: p.workspace,
+          windowMs: (spec.market.bidWindowSec ?? DEFAULT_BID_WINDOW_SEC) * 1_000,
+        });
         return createComputeProviderHooks({ provider: kcp.provider });
       }
       case "denoWorker": {
@@ -756,6 +766,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
         }),
       acceptToContract,
       loop,
+      bids: bidLedger,
     });
     await bidder.beginServe();
     return { did: atproto.did, ingressRef: marketRelay?.ingressRef, servePort: bidderServe.tcpPort };

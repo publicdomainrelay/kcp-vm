@@ -375,6 +375,12 @@ export default {
       env: "OFFERING_REFRESH_SEC",
       default: 300,
     },
+    "bid-window-sec": {
+      type: "number" as const,
+      description: "Seconds a published bid waits for an accept; after that its Bid object is Expired",
+      env: "BID_WINDOW_SEC",
+      default: 300,
+    },
     "tls-cert-file": {
       type: "string" as const,
       description: "PEM certificate to serve TLS with; requires tls-key-file",

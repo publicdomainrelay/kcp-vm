@@ -208,18 +208,22 @@ export interface SubmitRfpHandlerConfig {
    */
   acceptScopeFilter?: (input: { rfpUri: string; rfpCid: string; issuerDid: string; rfp: Record<string, unknown> }) => boolean | Promise<boolean>;
   observe?: (observation: RfpObservation) => void;
+  gate?: RfpGate;
 }
+
+export type RfpGate = (input: DispatchRfpInput, run: () => Promise<Response>) => Promise<Response>;
 
 export interface RfpObservation {
   rfpUri: string;
-  outcome: "seen" | "scoped" | "bid" | "declined";
+  outcome: "seen" | "scoped" | "bid" | "declined" | "duplicate";
   reason?: string;
 }
 
 function bidOutcomeOf(result: HandlerResult): Pick<RfpObservation, "outcome" | "reason"> {
   const body = (result && typeof result === "object" && "body" in result ? result.body : undefined) as
-    | { ok?: boolean; bidUri?: string; error?: string }
+    | { ok?: boolean; bidUri?: string; error?: string; duplicate?: boolean }
     | undefined;
+  if (body?.duplicate) return { outcome: "duplicate" };
   if (body?.bidUri) return { outcome: "bid" };
   return { outcome: "declined", reason: body?.error ?? "noBid" };
 }
@@ -260,7 +264,7 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
     }
   };
 
-  return async (input) => {
+  const runOne = async (input: DispatchRfpInput): Promise<Response> => {
     try {
       return await dispatchOne(input);
     } catch (err) {
@@ -269,7 +273,11 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
     }
   };
 
+  return (input) => cfg.gate ? cfg.gate(input, () => runOne(input)) : runOne(input);
+
   async function dispatchOne({ rfpUri, rfpCid, issuerDid, serviceId, req }: DispatchRfpInput): Promise<Response> {
+    const receivedAt = new Date().toISOString();
+    observe(rfpUri, "seen");
     log("info", "dispatch: resolving rfp", { rfpUri });
     const rfp = await deps.resolve.resolve<RFP & { $type?: string }>({ uri: rfpUri, cid: rfpCid });
     log("info", "dispatch: rfp resolved", { rfpUri });
@@ -308,6 +316,7 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
       rfp,
       payloadNsid,
       issuerDid,
+      receivedAt,
       resolve: deps.resolve,
       log,
       req,
@@ -334,11 +343,6 @@ export function createSubmitRfpHandler(cfg: SubmitRfpHandlerConfig): Handler {
     if (auth instanceof Response) return auth;
 
     log("info", "submitRfp received", { rfpUri, rfpCid });
-    try {
-      cfg.observe?.({ rfpUri, outcome: "seen" });
-    } catch (err) {
-      log("warn", "submitRfp: rfp observer failed", { rfpUri, error: String(err) });
-    }
 
     try {
       return await dispatch({ rfpUri, rfpCid, issuerDid: auth.issuerDid, serviceId: auth.serviceId, req });

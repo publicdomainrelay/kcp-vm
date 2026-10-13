@@ -37,6 +37,14 @@ var APIResources = []APIResource{
 		{Name: "Requester", Type: "string", JSONPath: ".spec.requester.did"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
+	{Kind: "Bid", Plural: "bids", Revision: 1, Export: "computevms", Object: Bid{}, PrinterColumns: []PrinterColumn{
+		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
+		{Name: "Requester", Type: "string", JSONPath: ".spec.requester"},
+		{Name: "Verdict", Type: "string", JSONPath: ".spec.policy.verdict"},
+		{Name: "Published", Type: "string", JSONPath: ".status.timings.publishedAt"},
+		{Name: "ComputeVM", Type: "string", JSONPath: ".status.computeVM"},
+		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
+	}},
 	{Kind: "HostProcess", Plural: "hostprocesses", Revision: 3, Export: "hostprocesses", Object: HostProcess{}, PrinterColumns: []PrinterColumn{
 		{Name: "Placement", Type: "string", JSONPath: ".spec.placement"},
 		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},

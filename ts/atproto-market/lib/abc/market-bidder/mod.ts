@@ -143,6 +143,60 @@ export function activeContractOf(stored: StoredContract): ActiveContract {
   };
 }
 
+export interface BidRef {
+  uri: string;
+  cid?: string;
+}
+
+export type BidPhaseName = "Deciding" | "Published" | "Won" | "Lost" | "Expired" | "Failed";
+
+export interface BidDecision {
+  rfp: BidRef;
+  requester: string;
+  payloadNsid?: string;
+  offer: { kind: string; cost?: number };
+  provider: string;
+  policy: { scope?: string; attached?: BidRef[]; verdict: string };
+  rfpSeenAt: string;
+  decidedAt: string;
+}
+
+export interface BidEntry {
+  name: string;
+  rfp: BidRef;
+  requester: string;
+  expiresAt: string;
+  phase: BidPhaseName;
+  bid?: BidRef;
+  accept?: BidRef;
+  computeVM?: string;
+  publishedAt?: string;
+}
+
+export type BidClaim = { claimed: true; entry: BidEntry } | { claimed: false; entry: BidEntry };
+
+export interface BidLedger {
+  find(rfpUri: string): Promise<BidEntry | null>;
+  claim(decision: BidDecision): Promise<BidClaim>;
+  published(rfpUri: string, bid: BidRef, at: string): Promise<void>;
+  failed(rfpUri: string, reason: string, at: string): Promise<void>;
+  won(rfpUri: string, accept: BidRef, at: string): Promise<void>;
+  boundTo(rfpUri: string, computeVM: string): Promise<void>;
+  lost(rfpUri: string, reason: string, at: string): Promise<void>;
+  expired(rfpUri: string, at: string): Promise<void>;
+  list(): Promise<BidEntry[]>;
+}
+
+export const DEFAULT_BID_WINDOW_MS = 300_000;
+
+export function bidExpiresAt(decidedAt: string, windowMs: number = DEFAULT_BID_WINDOW_MS): string {
+  return new Date(Date.parse(decidedAt) + windowMs).toISOString();
+}
+
+export function bidOpen(entry: BidEntry, now: Date): boolean {
+  return (entry.phase === "Published" || entry.phase === "Deciding") && Date.parse(entry.expiresAt) > now.getTime();
+}
+
 export interface CallbackSet {
   rfpCallbacks?: RfpCallbacks;
   onAccept?: SubmitAcceptCallback;
@@ -178,6 +232,8 @@ export interface CallbackFactoryDeps {
   getVouchedDids?: (did: string) => Promise<Set<string>>;
   /** Bidder DID -> operator DID, via bidder_associate records. */
   resolveOperatorDid?: (bidderDid: string) => Promise<string | null>;
+  bids?: BidLedger;
+  scopePolicy?: string;
   /** Policy engine evaluator used to evaluate RFP.policies[] refs in onRfp. */
   evaluator: {
     evaluatePolicies(input: {

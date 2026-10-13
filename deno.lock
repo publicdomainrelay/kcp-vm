@@ -2065,6 +2065,7 @@
           "jsr:@publicdomainrelay/market-abc@0",
           "jsr:@publicdomainrelay/market-atproto@0",
           "jsr:@publicdomainrelay/market-bidder-abc@0",
+          "jsr:@publicdomainrelay/market-bidder-bids-kcp@0",
           "jsr:@publicdomainrelay/market-bidder-compute@0",
           "jsr:@publicdomainrelay/market-bidder-contract-store-fs@0",
           "jsr:@publicdomainrelay/market-bidder-contract-store-kcp@0",
@@ -2148,6 +2149,13 @@
           "jsr:@publicdomainrelay/policy-engine-executor-gha-lite@0",
           "jsr:@publicdomainrelay/policy-engine-executor-typescript@0",
           "jsr:@publicdomainrelay/policy-engine-scope-cache@0"
+        ]
+      },
+      "ts/atproto-market/lib/market-bidder-bids-kcp": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/market-bidder-abc@0"
         ]
       },
       "ts/atproto-market/lib/market-bidder-compute": {

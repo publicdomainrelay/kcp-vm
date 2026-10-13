@@ -44,6 +44,7 @@
     "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
     "@publicdomainrelay/utils-attestation-key": "jsr:@publicdomainrelay/utils-attestation-key@^0",
     "@publicdomainrelay/market-bidder-contract-store-kcp": "jsr:@publicdomainrelay/market-bidder-contract-store-kcp@^0",
+    "@publicdomainrelay/market-bidder-bids-kcp": "jsr:@publicdomainrelay/market-bidder-bids-kcp@^0",
     "@publicdomainrelay/compute-provider-kcp": "jsr:@publicdomainrelay/compute-provider-kcp@^0",
     "@publicdomainrelay/compute-provider-kcp-abc": "jsr:@publicdomainrelay/compute-provider-kcp-abc@^0"
   }

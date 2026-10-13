@@ -17,6 +17,7 @@ export interface SubmitRfpContext {
   /** NSID of the RFP's payload record (its collection). */
   payloadNsid: string;
   issuerDid: string;
+  receivedAt?: string;
   resolve: RecordResolver;
   log: Logger;
   /**

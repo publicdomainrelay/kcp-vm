@@ -107,6 +107,7 @@ const spec: MarketBidderAppSpec = {
     ingressProxy: !o.noIngressProxy,
     firehoseMode: o.firehoseMode,
     offeringRefreshSec: o.offeringRefreshSec,
+    bidWindowSec: o.bidWindowSec,
     policy: o.policy,
     policyArgs: o.policyArgs,
     onlyRemotePolicyExec: o.onlyRemotePolicyExec,

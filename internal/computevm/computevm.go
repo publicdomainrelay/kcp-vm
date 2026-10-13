@@ -80,6 +80,7 @@ type Controller struct {
 	vms     dynamic.ResourceInterface
 	hps     dynamic.ResourceInterface
 	servers dynamic.ResourceInterface
+	bids    dynamic.ResourceInterface
 	kick    chan string
 
 	mu       sync.Mutex
@@ -90,6 +91,7 @@ type Controller struct {
 	logins   map[string]vaultLogin
 	slice    bool
 	imagesAt time.Time
+	bidsAt   time.Time
 }
 
 func (c Config) log() *slog.Logger {
@@ -132,7 +134,7 @@ func New(ctx context.Context, c Config) (*Controller, error) {
 		return nil, err
 	}
 	return &Controller{c: c, vms: dc.Resource(GVR), hps: dc.Resource(hostprocess.GVR),
-		servers: dc.Resource(openbaoctl.GVR), kick: make(chan string, 256),
+		servers: dc.Resource(openbaoctl.GVR), bids: dc.Resource(BidGVR), kick: make(chan string, 256),
 		busy: map[string]bool{}, exits: map[string]hostsvc.UnitStatus{}, orphans: map[string]time.Time{}, foreign: map[string]bool{},
 		logins: map[string]vaultLogin{}, slice: true}, nil
 }
@@ -859,6 +861,7 @@ func (ct *Controller) Pass(ctx context.Context) error {
 	}
 	ct.collect(ctx, have)
 	ct.collectImages(ctx, list.Items)
+	ct.collectBids(ctx, list.Items)
 	return nil
 }
 
