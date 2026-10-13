@@ -6941,6 +6941,40 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   hold, vm.delete 200 at 19:55:18.6, ComputeVM gone by 19:55:26; `dev down` 34 s, no child state, process
   or VM unit left.
 
+- **Defects of the 0006 M5-FRESH-DEPLOY run: a failed or released VM ends its contract at once, a claim
+  never waits twice, short VM timeouts, one closure per DenoPod (2026-10-12).** On prod a ComputeVM went
+  Preparing -> Failed after the accept, and the claim stayed Provisioning until vmReadyTimeoutSec (600 s);
+  after a request had ended with `network_timeout`, the web app waited a second 600 s for the join
+  secrets. A provision failure made the bidder keep the contract ("provisioning-failed") and send nothing.
+  Now every end of a guest the requester did not ask for goes through the one path guest_poweroff used
+  (tombstone, contract store, vm.terminated), with the failure message as the reason: a provision
+  failure, a ComputeVM that turns Failed in any phase, and a ComputeVM released (Releasing) on the bidder
+  without a vm.delete. The requester holds a vm.terminated or vm.hostKeys that arrives before it watches
+  the receipt. The web app waits for the join secrets only after a request that completed with the guest
+  on the network, from one budget counted from the accept, and a vm.terminated in that wait marks the
+  claim Lost; any other outcome marks it Failed at once. Timeouts on the claim path (user: fail fast):
+  web app vmReadyTimeoutSec 600 -> 120 s, requester onNetwork 300 -> 120 s (request-vm-ssh 900 -> 120 s),
+  bidder provisioning bound 10 min -> 120 s, kcp provider wait for Running 300 -> 100 s. Second defect:
+  during `upgrade` the web app DenoPod crashed once with NotCapable on its web dir. Cause: a DenoPod is
+  not restarted when its spec changes, the core's processes die with the core, and the new core's deno
+  runtime restarted the web app from the spec the previous core had applied (the web dir as an absolute
+  path under the previous closure) with its own closure root in `--allow-read`; the crash restart 2 s
+  later took the spec appctl had re-applied by then. A path under the TypeScript root is now written
+  `${SOCIALWEB_TS_ROOT}/<relative path>` and the service template expands it with the root it starts the
+  process from. `upgrade` and `rollback` take `--root` for a staged install (its account home is in the
+  staged passwd). Readings (market network fu2, `dev up --profile market-network --bidders 1
+  --with-gateway`, guests as VM units of test-0001, UTC): guest image source empty for the first claim:
+  accept 20:44:12.71, ComputeVM Failed and bidder_provision_failed 20:44:14.46, vm.terminated submitted
+  14.53, web app vm_terminated_by_bidder 14.49 and claim Lost 14.63, gateway released it 20:44:16.04, the
+  replacement claim (image source filled) 20:44:18, node Ready 20:44:50. ComputeVM of a joined node deleted
+  on the bidder's kcp 20:50:19.07: bidder_guest_gone 19.28, vm.terminated submitted 19.52, claim Lost
+  19.67, gateway released 20.25, replacement node Ready 20:51:14. Web app vm-ready-timeout-sec 8:
+  vm_fqdn_timeout 20:53:38.88, claim Failed 39.09 (no second wait), gateway released 41.01, vm.delete 41.55.
+  Staged gateway (`install gateway --root`, systemd-user of test-0001), `upgrade` between two dev builds
+  with different roots: before the fix 4 of 4 upgrades started the web app once with the previous
+  closure's web dir (NotCapable, exit 1) and Ready 8.5-13.1 s after the upgrade; after it 3 of 3 started it
+  once, Ready 5.2-6.0 s after the upgrade.
+
 ## 16. Vocabulary
 
 | | |
