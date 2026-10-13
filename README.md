@@ -85,6 +85,23 @@ deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.aliceoa_bsky_social_sou
 
 Scale from zero: apply a pod to a tenant cluster at 0 nodes -> NodeClaim -> RFP -> VM -> node Ready -> pod Running (prod: ~60 s). Delete pod -> back to 0 nodes, vm.delete (~2-3 min incl. hold).
 
+## OAuth sign-in (scripted, never by hand, never hand the user a link)
+
+`scripts/oauth-signin.ts` = headless `/usr/bin/google-chrome` (puppeteer-core): page -> PDS authorize -> password -> "Authorize". Reads handle + password from creds file itself (never on cmdline/logs). Screenshots per step: `~/.tmp/oauth-signin/<ts>/` (0700).
+
+```bash
+# creds file (0600): export <ACCOUNT>_ATPROTO_HANDLE=... <ACCOUNT>_ATPROTO_PASSWORD=...
+# web app user (alice) -> gateway; after every fresh gateway deploy
+deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.aliceoa_bsky_social_source --account ALICE --url https://k8s.socialweb.computer/
+# bidder (bobvmbuilder, prod-qr): QR url from MarketIdentity, expires 5 min -> read right before
+deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.bobvmbuilder_bsky_social_source --account BOB --url "$U"   # $U: see Bidder
+# options: --out <dir> screenshots, --done "<text>" wait for text after consent, --chrome <path>
+```
+
+Force bidder re-sign (e.g. new OAuth scope deployed): delete `bidder/metadata/identity/bidder/session` in the bidder's OpenBao (cert login as client `bidder`, certs under `<handle state>/openbaoservers/bidder/openbao/{tls,clients/bidder}`), restart bidder unit (`systemctl --user -M swc-bidder@ restart 'socialweb-computer-bidder@<handle>.service'`) -> MarketIdentity `AwaitingScan` with new url -> run script. Check: `kc $K root get marketidentity bidder -o jsonpath='{.status.phase}'` = `Ready`.
+
+Symptoms: gateway log `no oauth session stored for did:...` = sign alice in. Bidder log `ScopeMissingError` = deploy scope to qr.fedfork.com (below), re-sign bidder.
+
 ## Release -> prod (lead only; prod keeps nothing, deploy fresh OK)
 
 ```bash
