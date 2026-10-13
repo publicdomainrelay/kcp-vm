@@ -93,6 +93,7 @@ func (p *Provider) reconcileEngine(ctx context.Context, ref Ref, engine *v1alpha
 	for _, op := range res.Ops {
 		switch op {
 		case policyengine.OpRemoveFinalizer:
+			p.removeRunDirs(ctx, p.opts.EngineRunner, "PolicyEngine", ref.Name, engine.Status.RunID, runID)
 			if err := p.opts.Runtime.RemoveEngineFinalizer(ctx, ref); err != nil {
 				return 0, false, err
 			}

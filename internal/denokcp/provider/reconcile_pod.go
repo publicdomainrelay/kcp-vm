@@ -114,6 +114,7 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 	for _, op := range res.Ops {
 		switch op {
 		case denopod.OpRemoveFinalizer:
+			p.removeRunDirs(ctx, p.opts.PodRunner, "DenoPod", ref.Name, pod.Status.RunID, runID)
 			if err := p.opts.Runtime.RemovePodFinalizer(ctx, ref); err != nil {
 				return 0, false, err
 			}

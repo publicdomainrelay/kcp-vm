@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -112,12 +113,12 @@ func (s *supervisor) start(entry processSpec) (string, error) {
 			return abandon(fmt.Errorf("execrunner: write %s: %w", name, err))
 		}
 	}
-	stdout, err := os.Create(filepath.Join(dir, "stdout.txt"))
+	stdout, err := openLog(filepath.Join(dir, StdoutFile))
 	if err != nil {
 		return abandon(fmt.Errorf("execrunner: create stdout file: %w", err))
 	}
 	defer stdout.Close()
-	stderr, err := os.Create(filepath.Join(dir, "stderr.txt"))
+	stderr, err := openLog(filepath.Join(dir, StderrFile))
 	if err != nil {
 		return abandon(fmt.Errorf("execrunner: create stderr file: %w", err))
 	}
@@ -198,6 +199,22 @@ func (s *supervisor) retain(id string) {
 		delete(s.runs, oldest)
 		delete(s.envs, oldest)
 	}
+}
+
+func (s *supervisor) remove(id string) error {
+	if id == "" || filepath.Base(id) != id || !strings.HasPrefix(id, s.prefix+"-") {
+		return nil
+	}
+	_ = s.stop(id)
+	s.mu.Lock()
+	delete(s.runs, id)
+	delete(s.envs, id)
+	s.mu.Unlock()
+	return os.RemoveAll(filepath.Join(s.runsDir, id))
+}
+
+func openLog(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 }
 
 func (s *supervisor) retained() int {

@@ -79,6 +79,7 @@ type watchState struct {
 }
 
 func (p *Provider) RunWatch(ctx context.Context) error {
+	started := time.Now()
 	endpoints, err := p.awaitWorkspaces(ctx)
 	if err != nil {
 		return err
@@ -116,6 +117,7 @@ func (p *Provider) RunWatch(ctx context.Context) error {
 		return err
 	}
 	defer round.Close()
+	go p.keepRunsDir(ctx, reader, started)
 
 	<-ctx.Done()
 	queue.ShutDown()

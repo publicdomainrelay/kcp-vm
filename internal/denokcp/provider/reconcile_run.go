@@ -95,6 +95,7 @@ func (p *Provider) reconcileRun(ctx context.Context, ref Ref, run *v1alpha1.Deno
 	for _, op := range res.Ops {
 		switch op {
 		case denorun.OpRemoveFinalizer:
+			p.removeRunDirs(ctx, p.opts.PodRunner, "DenoRun", ref.Name, run.Status.RunID, runID, startedRunID)
 			if err := p.removeRunFinalizer(ctx, ref, run.Finalizers); err != nil {
 				return 0, false, err
 			}
