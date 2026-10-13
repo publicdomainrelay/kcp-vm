@@ -2168,8 +2168,8 @@ items:
     risks:
       - "accept.sh keeps kubectl until 0008:M4-MARKET-NETWORK-PORT; it is a test asset."
       - "M1-CLI's TestEveryEnvVariableTheEntrypointReadsIsAnOptionsEnvName parses container-entrypoint.sh and container.env.example; it is rewritten in this change to read options.json alone."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
 acceptance:
   where: "hat-8 and the market network for every proof (live guests only through runComputeContract); prod readings after the user's fresh deploy"
   checks:
