@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -146,6 +147,12 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir, guestStateDir string
 		return manifests.MarketBidder{}, err
 	}
 	var extra []string
+	if v.RelayUrls != "" {
+		extra = append(extra, "--relay-url", v.RelayUrls)
+	}
+	if v.GuestTLSPort != 0 {
+		extra = append(extra, "--guest-tls-port", strconv.Itoa(v.GuestTLSPort))
+	}
 	if len(n.FirehoseUrls) > 0 {
 		extra = append(extra, "--firehose-url", strings.Join(n.FirehoseUrls, ","))
 	}

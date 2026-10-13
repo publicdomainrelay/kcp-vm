@@ -31,7 +31,7 @@ import (
 const bidderIdentityWait = 30 * time.Minute
 
 var bidderOptions = slices.Concat([]string{backendOpt, "profile", "network", "name", "instance", "state-dir", "fg", "ready-timeout",
-	"network-timeout", "market-network-file", "kcp-path", "kine-path", "deno-path", "bao-path", "asset-cache", "unit-prefix", "kcp-front-address"},
+	"network-timeout", "market-network-file", "bidder-policy", "bidder-policy-args", "kcp-path", "kine-path", "deno-path", "bao-path", "asset-cache", "unit-prefix", "kcp-front-address"},
 	devVMOptions, devOnly(tsbundle.SourceRootOption))
 
 type bidderRun struct {
@@ -150,6 +150,12 @@ func runBidder(ctx context.Context, a *app, vals clicfg.Values, rest []string) i
 	}
 	if err := r.passthrough(pass); err != nil {
 		return a.fail(exitRefused, "run bidder: %v", err)
+	}
+	if r.policy == "" {
+		r.policy = vals.String("bidder-policy")
+	}
+	if args := vals.String("bidder-policy-args"); args != "" && !slices.ContainsFunc(r.options, func(o v1alpha1.ApplicationOption) bool { return o.Name == "policy-args" }) {
+		r.options = append(r.options, v1alpha1.ApplicationOption{Name: "policy-args", Value: args})
 	}
 	switch {
 	case r.network != "" && r.profile != appctl.BidderProfileNetwork:

@@ -589,6 +589,16 @@
       "description": "serve gateway kcp: the TLS front's key (with tls-cert-file)",
       "env": "SOCIALWEB_TLS_KEY_FILE"
     },
+    "bidder-policy": {
+      "type": "string",
+      "description": "run bidder: the policy that gates which RFPs the bidder answers (MarketBidder spec.policy), for an installed bidder whose unit passes no hono-bidder options; a --policy after -- wins. Unset: the profile default (open). Set it in config.json for every prod bidder",
+      "env": "SOCIALWEB_BIDDER_POLICY"
+    },
+    "bidder-policy-args": {
+      "type": "string",
+      "description": "run bidder: JSON arguments of bidder-policy (the hono-bidder policy-args option); a --policy-args after -- wins",
+      "env": "SOCIALWEB_BIDDER_POLICY_ARGS"
+    },
     "gateway-spec-file": {
       "type": "string",
       "description": "serve gateway kcp: a YAML GatewaySpec (network, bidderDids, options of the socialweb-computer-k8s web app, marketNetwork values, webAppFront) the Gateway root object is applied with; its profile is gateway-profile, and the PLC, the web app's gateway-audience and kcp-public-host default to SOCIALWEB_GATEWAY_PLC_URL, SOCIALWEB_GATEWAY_AUDIENCES and SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST; webAppFront, the edge entry point caddy proxies to, defaults to 127.0.0.1:8788 in profile prod and 127.0.0.1:0 otherwise",
