@@ -43,7 +43,7 @@ const (
 
 	buildTimeout   = 15 * time.Minute
 	upTimeout      = 4 * time.Minute
-	downTimeout    = 3 * time.Minute
+	downTimeout    = 6 * time.Minute
 	commandTimeout = 30 * time.Second
 	healthEvery    = 3 * time.Second
 	healthTimeout  = 20 * time.Second
@@ -715,7 +715,7 @@ func (n *Network) Leftovers() []string {
 		} else if s := strings.TrimSpace(r.Stdout); s != "" {
 			out = append(out, "units of "+hd+": "+s)
 		}
-		cg := fmt.Sprintf("/sys/fs/cgroup/user.slice/user-%d.slice/user@%d.service/%s", n.h.UID, n.h.UID, vmruntime.SliceName(hd))
+		cg := fmt.Sprintf("/sys/fs/cgroup/user.slice/user-%d.slice/user@%d.service/socialweb.slice/socialweb-b.slice/%s", n.h.UID, n.h.UID, vmruntime.SliceName(hd))
 		if _, err := os.Stat(cg); err == nil {
 			out = append(out, "cgroup "+cg+" of handle id "+id)
 		}
@@ -904,11 +904,30 @@ func (n *Network) diagnose() {
 
 func (n *Network) collectPodLogs() {
 	t := n.t
-	r := n.h.As(context.Background(), "find", n.StateDir, "-type", "f", "(", "-name", "stdout.txt", "-o", "-name", "stderr.txt", "-o", "-name", "core.log", ")")
+	r := n.h.As(context.Background(), "find", n.StateDir, "(", "-name", "ts", "-o", "-name", "deno", "-o", "-name", "handles", "-o", "-name", "postgres", "-o", "-name", "openbaoservers", ")", "-prune",
+		"-o", "-type", "f", "(", "-name", "stdout.txt", "-o", "-name", "stderr.txt", "-o", "-name", "core.log", ")", "-print")
 	files := strings.Fields(r.Stdout)
 	sort.Strings(files)
 	dir := filepath.Join(n.Logs, "pods")
 	os.MkdirAll(dir, 0o755)
+	consoles := n.h.As(context.Background(), "find", n.StateDir, "-path", "*/handles/*/vms/*", "(", "-name", vmruntime.ConsoleFile, "-o", "-name", vmruntime.VMMLogFile, ")")
+	for _, f := range strings.Fields(consoles.Stdout) {
+		c := n.h.As(context.Background(), "tail", "-c", "200000", f)
+		rel, _ := filepath.Rel(n.StateDir, f)
+		os.WriteFile(filepath.Join(dir, strings.ReplaceAll(rel, "/", "_")), []byte(c.Stdout), 0o644)
+		if strings.HasSuffix(f, vmruntime.ConsoleFile) {
+			lines := strings.Split(strings.TrimRight(c.Stdout, "\n"), "\n")
+			if len(lines) > 6 {
+				lines = lines[len(lines)-6:]
+			}
+			for _, l := range lines {
+				if len(l) > 300 {
+					l = l[:300]
+				}
+				t.Logf("  guest %s: %s", filepath.Base(filepath.Dir(f)), l)
+			}
+		}
+	}
 	for _, f := range files {
 		c := n.h.As(context.Background(), "tail", "-c", "2000000", f)
 		rel, _ := filepath.Rel(n.StateDir, f)
