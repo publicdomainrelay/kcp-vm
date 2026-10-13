@@ -96,7 +96,7 @@ func (cfg StackConfig) WithoutUnleasedExternalSecrets(l materialiser.Leases) Sta
 }
 
 func (cfg StackConfig) WithoutUnleased(l materialiser.Leases) StackConfig {
-	return cfg.WithoutUnleasedLinks(l).WithoutUnleasedExternalSecrets(l)
+	return cfg.WithoutUnleasedExternalSecrets(l)
 }
 
 func externalSecretsSpec(cfg StackConfig, l materialiser.Leases, cluster string) (clusterstack.ExternalSecrets, error) {

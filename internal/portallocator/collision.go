@@ -1,15 +1,12 @@
 package portallocator
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 )
 
 const LoopbackAdvertiseAddress = "127.0.0.1"
@@ -226,41 +223,4 @@ func hostAddresses() []net.IP {
 		}
 	}
 	return out
-}
-
-func AssertRangeDisjoint(carve, ephemeral Range) error {
-	if ephemeral.Empty() || !carve.Overlaps(ephemeral) {
-		return nil
-	}
-	return &RangeConflictError{
-		Range:  carve,
-		Reason: "intersects the OS ephemeral range, so the kernel will hand out ports we believe we hold",
-		Detail: fmt.Sprintf("measured live ephemeral range is %s; move the carve below it rather than narrowing silently", ephemeral),
-	}
-}
-
-func ReadEphemeralRange() (Range, error) {
-	first, last, err := hostos.LocalPortRange()
-	if err != nil {
-		return Range{}, fmt.Errorf("portallocator: %w", err)
-	}
-	return Range{first, last}, nil
-}
-
-func probeBound(port int) bool {
-	conn, err := probeListen.Listen(context.Background(), "tcp", fmt.Sprintf("0.0.0.0:%d", port))
-	if err != nil {
-		return true
-	}
-	conn.Close()
-	return false
-}
-
-func probeBoundUDP(port int) bool {
-	conn, err := net.ListenPacket("udp", fmt.Sprintf("0.0.0.0:%d", port))
-	if err != nil {
-		return true
-	}
-	conn.Close()
-	return false
 }

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,18 +52,13 @@ const (
 	PurposeK3sSlotA Purpose = "k3s-slot-a"
 	PurposeK3sSlotB Purpose = "k3s-slot-b"
 
+	PurposeK3sApiserverA Purpose = "k3s-apiserver-a"
+	PurposeK3sApiserverB Purpose = "k3s-apiserver-b"
+
 	PurposeKineB                      Purpose = "kine-b"
 	PurposeK3sControllerManagerB      Purpose = "k3s-controller-manager-b"
 	PurposeK3sSchedulerB              Purpose = "k3s-scheduler-b"
 	PurposeK3sCloudControllerManagerB Purpose = "k3s-cloud-controller-manager-b"
-
-	PurposeApiserverLink Purpose = "apiserver-link"
-
-	PurposeOpenBaoLink Purpose = "openbao-link"
-
-	PurposeApiserverLinkB Purpose = "apiserver-link-b"
-
-	PurposeOpenBaoLinkB Purpose = "openbao-link-b"
 
 	PurposeExternalSecretsHealth Purpose = "external-secrets-health"
 
@@ -73,52 +67,50 @@ const (
 	PurposeExternalSecretsWebhookHealth Purpose = "external-secrets-webhook-health"
 )
 
-var datagramPurposes = map[Purpose]bool{
-	PurposeApiserverLink:  true,
-	PurposeOpenBaoLink:    true,
-	PurposeApiserverLinkB: true,
-	PurposeOpenBaoLinkB:   true,
-}
-
-func (p Purpose) Datagram() bool { return datagramPurposes[p] }
+func (p Purpose) Datagram() bool { return false }
 
 var retiredPurposes = map[Purpose]bool{
-	"ssh-server": true,
-	"ssh-node":   true,
-	"advertise":  true,
-	"kubelet":    true,
+	"ssh-server":       true,
+	"ssh-node":         true,
+	"advertise":        true,
+	"kubelet":          true,
+	"apiserver-link":   true,
+	"openbao-link":     true,
+	"apiserver-link-b": true,
+	"openbao-link-b":   true,
 }
 
-var purposeWidth = map[Purpose]int{
-	PurposePostgres:                  1,
-	PurposeOpenBao:                   1,
-	PurposeKine:                      1,
-	PurposeK3sSecure:                 2,
-	PurposeK3sControllerManager:      1,
-	PurposeK3sScheduler:              1,
-	PurposeK3sCloudControllerManager: 1,
-	PurposeK3sSlotA:                  2,
-	PurposeK3sSlotB:                  2,
-
-	PurposeKineB:                      1,
-	PurposeK3sControllerManagerB:      1,
-	PurposeK3sSchedulerB:              1,
-	PurposeK3sCloudControllerManagerB: 1,
-
-	PurposeApiserverLink:  1,
-	PurposeOpenBaoLink:    1,
-	PurposeApiserverLinkB: 1,
-	PurposeOpenBaoLinkB:   1,
-
-	PurposeExternalSecretsHealth:        1,
-	PurposeExternalSecretsWebhook:       1,
-	PurposeExternalSecretsWebhookHealth: 1,
+var knownPurposes = map[Purpose]bool{
+	PurposePostgres:                     true,
+	PurposeOpenBao:                      true,
+	PurposeKine:                         true,
+	PurposeK3sSecure:                    true,
+	PurposeK3sControllerManager:         true,
+	PurposeK3sScheduler:                 true,
+	PurposeK3sCloudControllerManager:    true,
+	PurposeK3sSlotA:                     true,
+	PurposeK3sSlotB:                     true,
+	PurposeK3sApiserverA:                true,
+	PurposeK3sApiserverB:                true,
+	PurposeKineB:                        true,
+	PurposeK3sControllerManagerB:        true,
+	PurposeK3sSchedulerB:                true,
+	PurposeK3sCloudControllerManagerB:   true,
+	PurposeExternalSecretsHealth:        true,
+	PurposeExternalSecretsWebhook:       true,
+	PurposeExternalSecretsWebhookHealth: true,
 }
 
-func (p Purpose) Width() int { return purposeWidth[p] }
+func (p Purpose) Width() int {
+	if knownPurposes[p] {
+		return 1
+	}
+	return 0
+}
 
 type SlotPurposes struct {
 	Secure                 Purpose
+	Apiserver              Purpose
 	Kine                   Purpose
 	ControllerManager      Purpose
 	Scheduler              Purpose
@@ -126,12 +118,12 @@ type SlotPurposes struct {
 }
 
 func (s SlotPurposes) All() []Purpose {
-	return []Purpose{s.Secure, s.Kine, s.ControllerManager, s.Scheduler, s.CloudControllerManager}
+	return []Purpose{s.Secure, s.Apiserver, s.Kine, s.ControllerManager, s.Scheduler, s.CloudControllerManager}
 }
 
 var slotPurposes = map[string]SlotPurposes{
-	"a": {PurposeK3sSlotA, PurposeKine, PurposeK3sControllerManager, PurposeK3sScheduler, PurposeK3sCloudControllerManager},
-	"b": {PurposeK3sSlotB, PurposeKineB, PurposeK3sControllerManagerB, PurposeK3sSchedulerB, PurposeK3sCloudControllerManagerB},
+	"a": {PurposeK3sSlotA, PurposeK3sApiserverA, PurposeKine, PurposeK3sControllerManager, PurposeK3sScheduler, PurposeK3sCloudControllerManager},
+	"b": {PurposeK3sSlotB, PurposeK3sApiserverB, PurposeKineB, PurposeK3sControllerManagerB, PurposeK3sSchedulerB, PurposeK3sCloudControllerManagerB},
 }
 
 var ControlPlaneSlots = []string{"a", "b"}
@@ -142,12 +134,6 @@ func PurposesOfSlot(slot string) (SlotPurposes, error) {
 		return SlotPurposes{}, fmt.Errorf("portallocator: %q is no control-plane slot; the slots are %v", slot, ControlPlaneSlots)
 	}
 	return s, nil
-}
-
-var gatewayShared = []Range{
-	{6443, 6443},
-	{2379, 2380},
-	{9100, 9103},
 }
 
 type Lease struct {
@@ -173,16 +159,17 @@ type leaseFile struct {
 	Leases  []Lease `json:"leases"`
 }
 
+type Holder func(cluster string, p Purpose) (int, error)
+
+var ErrNoHolder = errors.New("portallocator: no holder: a port is chosen by the kernel and held by the " +
+	"cluster's apiserver front, and this allocator was opened without a way to reach one")
+
 type Config struct {
 	LeasePath string
 
 	AppInstance string
 
-	Range Range
-
-	Ephemeral *Range
-
-	Probe func(port int) bool
+	Holder Holder
 
 	ReclaimGrace time.Duration
 
@@ -190,12 +177,11 @@ type Config struct {
 }
 
 type Allocator struct {
-	app   string
-	path  string
-	rng   Range
-	probe func(int) bool
-	grace time.Duration
-	now   func() time.Time
+	app    string
+	path   string
+	holder Holder
+	grace  time.Duration
+	now    func() time.Time
 
 	mu     sync.Mutex
 	leases map[leaseKey]Lease
@@ -207,72 +193,17 @@ type leaseKey struct {
 	purpose Purpose
 }
 
-type RangeConflictError struct {
-	Range  Range
-	Reason string
-	Detail string
-}
-
-func (e *RangeConflictError) Error() string {
-	return fmt.Sprintf("portallocator: range %s is unusable: %s (%s)", e.Range, e.Reason, e.Detail)
-}
-
-type ExhaustedError struct {
-	Range Range
-	Width int
-}
-
-func (e *ExhaustedError) Error() string {
-	return fmt.Sprintf("portallocator: no free block of %d consecutive ports in %s", e.Width, e.Range)
-}
-
 func Open(cfg Config) (*Allocator, error) {
 	if cfg.LeasePath == "" {
-		return nil, errors.New("portallocator: LeasePath is required; the host-side lease file is the authority")
+		return nil, errors.New("portallocator: LeasePath is required; the lease file records which port the front holds for which purpose")
 	}
-	rng := cfg.Range
-	if rng.Empty() {
-		rng = Range{DefaultFirst, DefaultLast}
-	}
-	if rng.First < 1024 {
-		return nil, &RangeConflictError{Range: rng,
-			Reason: "starts below 1024, and the carve must sit above the privileged range",
-			Detail: "every port here is bound by a non-root gateway process"}
-	}
-
-	eph := Range{}
-	if cfg.Ephemeral != nil {
-		eph = *cfg.Ephemeral
-	} else {
-		live, err := ReadEphemeralRange()
-		if err != nil {
-			return nil, fmt.Errorf("portallocator: refusing to start: %w", err)
-		}
-		eph = live
-	}
-	if err := AssertRangeDisjoint(rng, eph); err != nil {
-		return nil, err
-	}
-	for _, shared := range gatewayShared {
-		if rng.Overlaps(shared) {
-			return nil, &RangeConflictError{Range: rng,
-				Reason: "swallows a port the GATEWAY owns once for the whole host, outside the allocator",
-				Detail: fmt.Sprintf("%s is outside the per-cluster space; the kcp secure port (6443), kcp's etcd (2379-2380) and 9100-9103 are the gateway's once per host and must never be handed to a cluster", shared),
-			}
-		}
-	}
-
 	a := &Allocator{
 		app:    cfg.AppInstance,
 		path:   cfg.LeasePath,
-		rng:    rng,
-		probe:  cfg.Probe,
+		holder: cfg.Holder,
 		grace:  cfg.ReclaimGrace,
 		now:    cfg.Now,
 		leases: map[leaseKey]Lease{},
-	}
-	if a.probe == nil {
-		a.probe = probeBound
 	}
 	if a.now == nil {
 		a.now = time.Now
@@ -283,7 +214,11 @@ func Open(cfg Config) (*Allocator, error) {
 	return a, nil
 }
 
-func (a *Allocator) Range() Range { return a.rng }
+func (a *Allocator) SetHolder(h Holder) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.holder = h
+}
 
 func (a *Allocator) lockPath() string { return a.path + ".lock" }
 
@@ -348,52 +283,45 @@ func (a *Allocator) Allocate(req Request) (Lease, error) {
 	if req.Cluster == "" {
 		return Lease{}, errors.New("portallocator: Cluster is required; the lease is keyed on CR presence")
 	}
-	width := req.Purpose.Width()
-	if width == 0 {
+	if req.Purpose.Width() == 0 {
 		return Lease{}, fmt.Errorf("portallocator: unknown Purpose %q", req.Purpose)
+	}
+	a.mu.Lock()
+	holder := a.holder
+	a.mu.Unlock()
+	if holder == nil {
+		return Lease{}, ErrNoHolder
+	}
+	port, err := holder(req.Cluster, req.Purpose)
+	if err != nil {
+		return Lease{}, fmt.Errorf("portallocator: holding %s of %s: %w", req.Purpose, req.Cluster, err)
+	}
+	if port <= 0 || port > 65535 {
+		return Lease{}, fmt.Errorf("portallocator: the holder answered port %d for %s of %s", port, req.Purpose, req.Cluster)
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	var granted Lease
-	err := a.withLock(hostos.LockExclusive, func() error {
+	err = a.withLock(hostos.LockExclusive, func() error {
 		if err := a.load(); err != nil {
 			return err
 		}
-
-		if found := FindDuplicatePorts(a.snapshot()); len(found) > 0 {
-			return errors.New(strings.Join(found, "; "))
-		}
-
 		key := leaseKey{a.app, req.Cluster, req.Purpose}
-		if held, ok := a.leases[key]; ok {
-			held.Instance = req.Instance
-			a.leases[key] = held
-			if err := a.save(); err != nil {
-				return err
+		lease, ok := a.leases[key]
+		if !ok || lease.Port != port {
+			lease = Lease{Port: port, Width: 1, Purpose: req.Purpose, Cluster: req.Cluster, Account: req.Account,
+				AppInstance: a.app, AllocatedAt: a.now()}
+		}
+		lease.Instance = req.Instance
+		for k, other := range a.leases {
+			if k != key && k.app == a.app && other.Covers(port) {
+				delete(a.leases, k)
 			}
-			granted = held
-			return nil
-		}
-
-		port, err := a.findFree(width)
-		if err != nil {
-			return err
-		}
-		lease := Lease{
-			Port:        port,
-			Width:       width,
-			Purpose:     req.Purpose,
-			Cluster:     req.Cluster,
-			Account:     req.Account,
-			Instance:    req.Instance,
-			AppInstance: a.app,
-			AllocatedAt: a.now(),
 		}
 		a.leases[key] = lease
 		if err := a.save(); err != nil {
-			delete(a.leases, key)
 			return err
 		}
 		granted = lease
@@ -407,46 +335,8 @@ func (a *Allocator) Allocate(req Request) (Lease, error) {
 
 func (a *Allocator) Relet(req Request) (Lease, bool, error) {
 	held, ok := a.PortFor(req.Cluster, req.Purpose)
-	if ok {
-		busy := false
-		for p := held.Port; p < held.Port+held.Width; p++ {
-			if (req.Purpose.Datagram() && probeBoundUDP(p)) || (!req.Purpose.Datagram() && probeBound(p)) {
-				busy = true
-			}
-		}
-		if !busy {
-			return held, false, nil
-		}
-		if err := a.ReleasePurpose(req.Cluster, req.Purpose); err != nil {
-			return Lease{}, false, err
-		}
-	}
 	l, err := a.Allocate(req)
-	return l, ok, err
-}
-
-func (a *Allocator) findFree(width int) (int, error) {
-	for port := a.rng.First; port+width-1 <= a.rng.Last; port++ {
-		if a.taken(port, width) {
-			continue
-		}
-		if a.probe != nil && a.probe(port) {
-			continue
-		}
-		return port, nil
-	}
-	return 0, &ExhaustedError{Range: a.rng, Width: width}
-}
-
-func (a *Allocator) taken(port, width int) bool {
-	for _, l := range a.leases {
-		for p := port; p < port+width; p++ {
-			if l.Covers(p) {
-				return true
-			}
-		}
-	}
-	return false
+	return l, ok && l.Port != held.Port, err
 }
 
 func (a *Allocator) Release(cluster string) error {

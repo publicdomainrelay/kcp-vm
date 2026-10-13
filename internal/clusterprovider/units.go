@@ -48,6 +48,7 @@ const (
 	DefaultReapTimeout  = time.Minute
 	MemberOutputCap     = 64 << 20
 	memberStopGrace     = 30
+	FrontFDStore        = 32
 	frontStopGrace      = 10
 	memberOutputTail    = 1 << 20
 	unitPoll            = 500 * time.Millisecond
@@ -582,7 +583,7 @@ func (h *UnitsHost) memberSpec(key string, st procgroup.Step, spec procgroup.Spe
 		out.RestartPolicy = v1alpha1.HostProcessRestartAlways
 	case procgroup.ComponentApiserverFront:
 		out.RestartPolicy = v1alpha1.HostProcessRestartAlways
-		out.FdStore = 1
+		out.FdStore = FrontFDStore
 		out.Stop.GraceSeconds = frontStopGrace
 	}
 	for _, kv := range spec.Env {
@@ -769,7 +770,6 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 		return err
 	}
 	for i, st := range steps {
-		member := StepMember(st)
 		if (st.Name == procgroup.ComponentKine || st.Name == procgroup.ComponentOpenBao) && !h.storeReady(ctx, key) {
 			return fmt.Errorf("%w (cluster %s, Postgres %s)", procgroup.ErrPostgresUnavailable, key, store.Object)
 		}
@@ -791,49 +791,67 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 				"unit", o.Spec.Unit, "address", o.Status.Address)
 			continue
 		}
-		cur, err := h.member(ctx, key, member)
+		inv, err := h.runStep(ctx, key, st)
 		if err != nil {
 			return err
 		}
-		if Verified(cur) {
-			h.c.Log.Info("cluster provider: member adopted", "cluster", key, "member", member, "unit", cur.Spec.Unit,
-				"invocation", cur.Status.Runtime.InvocationID)
-			cp.Members[i].InvocationID = cur.Status.Runtime.InvocationID
-			continue
-		}
-		spec := st.Spec
-		if st.Prepare != nil {
-			if spec, err = st.Prepare(ctx, spec); err != nil {
-				return fmt.Errorf("clusterprovider: preparing %s of %s: %w", member, key, err)
-			}
-		}
-		want, err := h.memberSpec(key, st, spec)
-		if err != nil {
-			return err
-		}
-		o, err := h.place(ctx, key, member, cur, want)
-		if err != nil {
-			return err
-		}
-		if st.Ready == nil {
-			return fmt.Errorf("clusterprovider: %s of %s has no readiness gate", member, key)
-		}
-		if err := h.gateAlive(ctx, key, member, o.Status.Runtime.InvocationID, func(ctx context.Context) error {
-			return st.Ready(ctx, unitMember{path: spec.Log})
-		}); err != nil {
-			return fmt.Errorf("clusterprovider: %s of %s never became ready: %w", member, key, err)
-		}
-		inv := o.Status.Runtime.InvocationID
-		if err := h.verify(ctx, key, member, inv); err != nil {
-			return err
-		}
-		h.c.Log.Info("cluster provider: member ready", "cluster", key, "member", member, "unit", o.Spec.Unit, "invocation", inv)
 		cp.Members[i].InvocationID = inv
 	}
 	if f, err := h.frontRecord(ctx, key); err == nil {
 		cp.Front = f
 	}
 	return h.writeControlPlane(key, cp)
+}
+
+func (h *UnitsHost) runStep(ctx context.Context, key string, st procgroup.Step) (string, error) {
+	member := StepMember(st)
+	cur, err := h.member(ctx, key, member)
+	if err != nil {
+		return "", err
+	}
+	if Verified(cur) {
+		h.c.Log.Info("cluster provider: member adopted", "cluster", key, "member", member, "unit", cur.Spec.Unit,
+			"invocation", cur.Status.Runtime.InvocationID)
+		return cur.Status.Runtime.InvocationID, nil
+	}
+	spec := st.Spec
+	if st.Prepare != nil {
+		if spec, err = st.Prepare(ctx, spec); err != nil {
+			return "", fmt.Errorf("clusterprovider: preparing %s of %s: %w", member, key, err)
+		}
+	}
+	want, err := h.memberSpec(key, st, spec)
+	if err != nil {
+		return "", err
+	}
+	o, err := h.place(ctx, key, member, cur, want)
+	if err != nil {
+		return "", err
+	}
+	if st.Ready == nil {
+		return "", fmt.Errorf("clusterprovider: %s of %s has no readiness gate", member, key)
+	}
+	if err := h.gateAlive(ctx, key, member, o.Status.Runtime.InvocationID, func(ctx context.Context) error {
+		return st.Ready(ctx, unitMember{path: spec.Log})
+	}); err != nil {
+		return "", fmt.Errorf("clusterprovider: %s of %s never became ready: %w", member, key, err)
+	}
+	inv := o.Status.Runtime.InvocationID
+	if err := h.verify(ctx, key, member, inv); err != nil {
+		return "", err
+	}
+	h.c.Log.Info("cluster provider: member ready", "cluster", key, "member", member, "unit", o.Spec.Unit, "invocation", inv)
+	return inv, nil
+}
+
+func (h *UnitsHost) EnsureFront(ctx context.Context, key string, st procgroup.Step) error {
+	if st.Name != procgroup.ComponentApiserverFront {
+		return fmt.Errorf("clusterprovider: EnsureFront was handed %s, not the apiserver front", st.Name)
+	}
+	unlock := h.lock(key)
+	defer unlock()
+	_, err := h.runStep(ctx, key, st)
+	return err
 }
 
 func (h *UnitsHost) FrontControl(key string) (string, error) {

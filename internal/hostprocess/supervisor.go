@@ -321,11 +321,7 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 		}
 	}
 	if next.Status.Runtime != nil && next.Status.Runtime.Pid > 0 && next.Status.Phase == v1alpha1.HostProcessPhaseRunning {
-		if port, err := hostsvc.ListenPort(int(next.Status.Runtime.Pid)); err == nil {
-			next.Status.Listeners = []v1alpha1.HostProcessListener{{Name: "tcp", Address: "127.0.0.1:" + strconv.Itoa(port)}}
-		} else {
-			next.Status.Listeners = nil
-		}
+		next.Status.Listeners = listenersOf(int(next.Status.Runtime.Pid))
 	} else {
 		next.Status.Listeners = nil
 	}
@@ -465,4 +461,19 @@ func Supervise(ctx context.Context, c Config) {
 		case <-time.After(RetryAfter):
 		}
 	}
+}
+
+func listenersOf(pid int) []v1alpha1.HostProcessListener {
+	ports, err := hostsvc.ListenPorts(pid)
+	if err != nil || len(ports) == 0 {
+		return nil
+	}
+	if len(ports) == 1 {
+		return []v1alpha1.HostProcessListener{{Name: "tcp", Address: "127.0.0.1:" + strconv.Itoa(ports[0])}}
+	}
+	out := make([]v1alpha1.HostProcessListener, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, v1alpha1.HostProcessListener{Name: "tcp-" + strconv.Itoa(p), Address: "127.0.0.1:" + strconv.Itoa(p)})
+	}
+	return out
 }

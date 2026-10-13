@@ -182,11 +182,11 @@ func TicketIn(output string) (string, bool) {
 	return found, found != ""
 }
 
-func Argv(binary string, targetPort, linkPort int) []string {
+func Argv(binary string, targetPort int) []string {
 	return []string{
 		binary, "listen-tcp",
 		"--host", "127.0.0.1:" + strconv.Itoa(targetPort),
-		"--ipv4-addr", "0.0.0.0:" + strconv.Itoa(linkPort),
+		"--ipv4-addr", "0.0.0.0:0",
 	}
 }
 

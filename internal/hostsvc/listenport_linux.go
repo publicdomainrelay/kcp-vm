@@ -19,35 +19,45 @@ func ListenPort(pid int) (int, error) {
 	return listenPortIn("/proc", pid)
 }
 
-func listenPortIn(root string, pid int) (int, error) {
+func ListenPorts(pid int) ([]int, error) {
+	return listenPortsIn("/proc", pid)
+}
+
+func listenPortsIn(root string, pid int) ([]int, error) {
 	dir := filepath.Join(root, strconv.Itoa(pid))
 	inodes, err := socketInodes(filepath.Join(dir, "fd"))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	ports := map[int]bool{}
 	for _, table := range []string{"tcp", "tcp6"} {
 		found, err := listenRows(filepath.Join(dir, "net", table), inodes)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		for _, p := range found {
 			ports[p] = true
 		}
 	}
-	switch len(ports) {
-	case 0:
-		return 0, fmt.Errorf("%w: pid %d", ErrNoListener, pid)
-	case 1:
-		for p := range ports {
-			return p, nil
-		}
-	}
-	var all []int
+	all := make([]int, 0, len(ports))
 	for p := range ports {
 		all = append(all, p)
 	}
 	sort.Ints(all)
+	return all, nil
+}
+
+func listenPortIn(root string, pid int) (int, error) {
+	all, err := listenPortsIn(root, pid)
+	if err != nil {
+		return 0, err
+	}
+	switch len(all) {
+	case 0:
+		return 0, fmt.Errorf("%w: pid %d", ErrNoListener, pid)
+	case 1:
+		return all[0], nil
+	}
 	return 0, fmt.Errorf("%w: pid %d listens on %v; the single-socket rule refuses to guess", ErrManyListeners, pid, all)
 }
 

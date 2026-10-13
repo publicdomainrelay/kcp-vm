@@ -143,8 +143,6 @@ func buildInputs(cfg Config) (inputs, error) {
 
 	alloc, err := portallocator.Open(portallocator.Config{
 		LeasePath:    cfg.LeasePath,
-		AppInstance:  cfg.LeaseApp,
-		Range:        cfg.PortRange,
 		ReclaimGrace: DefaultReclaimGrace,
 	})
 	if err != nil {
@@ -216,6 +214,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	if err != nil {
 		return Deps{}, err
 	}
+	alloc.SetHolder(units.Hold)
 
 	stack := append(clusterprovider.Stack{}, clusterprovider.DesignedStack...)
 	stack = append(stack, procgroup.ComponentApiserverFront)
@@ -235,9 +234,6 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		return Deps{}, err
 	}
 	links := clusterLinks(cfg, linkClient, registry, log)
-	if links != nil {
-		purposes = append(purposes, clusterprovider.LinkPurposes...)
-	}
 	log.Info("cluster provider: cluster links", "on", links != nil, "dumbpipe", cfg.Dumbpipe,
 		"reason", "each cluster gets a dumbpipe listener in front of its apiserver and one in front of its "+
 			"vault when "+envDumbpipe+" names the binary; unset, no cluster has a link and no node can join without ssh")
@@ -287,10 +283,17 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Links:      links,
 	}
 	decider, err := materialiser.New(materialiser.Options{
-		Host:        units,
-		Ports:       alloc,
-		Networks:    networks,
-		Steps:       clusterprovider.StepsFor(stackCfg),
+		Host:     units,
+		Ports:    alloc,
+		Networks: networks,
+		Steps:    clusterprovider.StepsFor(stackCfg),
+		Front: func(ctx context.Context, cluster string) error {
+			st, err := stackCfg.FrontStep(cluster)
+			if err != nil {
+				return err
+			}
+			return units.EnsureFront(ctx, cluster, st)
+		},
 		Identity:    clusterprovider.GuardFor(guardDeps(cfg, tokens, units, log)),
 		NewInstance: minter,
 		Now:         time.Now,

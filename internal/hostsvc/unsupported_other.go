@@ -19,6 +19,10 @@ func ListenPort(pid int) (int, error) {
 	return 0, fmt.Errorf("%w: reading a bound port from /proc on %s; see plan 0011/0012", ErrUnsupported, runtime.GOOS)
 }
 
+func ListenPorts(pid int) ([]int, error) {
+	return nil, fmt.Errorf("%w: reading bound ports from /proc on %s; see plan 0011/0012", ErrUnsupported, runtime.GOOS)
+}
+
 func OpenProcClient(ctx context.Context, cfg Config) (ProcClient, error) {
 	return nil, fmt.Errorf("%w: the proc backend is unsupported on %s; see plan 0011/0012", ErrUnsupported, runtime.GOOS)
 }

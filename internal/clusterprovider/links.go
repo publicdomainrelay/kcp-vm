@@ -16,14 +16,9 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterlink"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
-
-var LinkPurposes = []portallocator.Purpose{portallocator.PurposeApiserverLink, portallocator.PurposeOpenBaoLink,
-	portallocator.PurposeApiserverLinkB, portallocator.PurposeOpenBaoLinkB}
 
 const linkFailureTail = 600
 
@@ -64,24 +59,10 @@ type Links struct {
 type linkTarget struct {
 	component procgroup.Component
 	service   v1alpha1.ClusterLinkService
-	purpose   portallocator.Purpose
 	port      int
 }
 
-func (cfg StackConfig) WithoutUnleasedLinks(l materialiser.Leases) StackConfig {
-	if cfg.Links == nil {
-		return cfg
-	}
-	for _, p := range LinkPurposes {
-		if _, ok := l[p]; !ok {
-			cfg.Links = nil
-			return cfg
-		}
-	}
-	return cfg
-}
-
-func linksAfterK3s(steps []procgroup.Step, cfg StackConfig, cluster, dataDir string, l materialiser.Leases, apiserverPort, vaultPort int) ([]procgroup.Step, error) {
+func linksAfterK3s(steps []procgroup.Step, cfg StackConfig, cluster, dataDir string, apiserverPort, vaultPort int) ([]procgroup.Step, error) {
 	links := cfg.Links
 	if !cfg.Stack.Has(procgroup.ComponentOpenBao) || !cfg.Stack.Has(procgroup.ComponentK3s) || vaultPort == 0 {
 		return nil, fmt.Errorf("%w (stack %v, cluster %s)", ErrNoLinkSeam, cfg.Stack, cluster)
@@ -101,17 +82,12 @@ func linksAfterK3s(steps []procgroup.Step, cfg StackConfig, cluster, dataDir str
 		random = rand.Reader
 	}
 	targets := []linkTarget{
-		{procgroup.ComponentApiserverLink, v1alpha1.ClusterLinkApiserver, portallocator.PurposeApiserverLink, apiserverPort},
-		{procgroup.ComponentOpenBaoLink, v1alpha1.ClusterLinkOpenBao, portallocator.PurposeOpenBaoLink, vaultPort},
+		{procgroup.ComponentApiserverLink, v1alpha1.ClusterLinkApiserver, apiserverPort},
+		{procgroup.ComponentOpenBaoLink, v1alpha1.ClusterLinkOpenBao, vaultPort},
 	}
 	for _, t := range targets {
 		rec := cfg.linkSlotOf(cluster, t.service)
 		slot := slotOr(rec.Slot)
-		purpose := LinkPurpose(t.service, slot)
-		linkPort, err := leasePort(l, purpose, cluster)
-		if err != nil {
-			return nil, err
-		}
 		output, err := componentLog(dataDir, t.component)
 		if err != nil {
 			return nil, err
@@ -134,7 +110,7 @@ func linksAfterK3s(steps []procgroup.Step, cfg StackConfig, cluster, dataDir str
 		steps = append(steps, procgroup.Step{
 			Name:    t.component,
 			Slot:    linkStepSlot(slot),
-			Spec:    procgroup.Spec{Argv: clusterlink.Argv(dumbpipe, t.port, linkPort), Log: output},
+			Spec:    procgroup.Spec{Argv: clusterlink.Argv(dumbpipe, t.port), Log: output},
 			Prepare: run.prepare,
 			Ready:   run.ready,
 		})
@@ -147,18 +123,6 @@ func linkStepSlot(slot string) string {
 		return ""
 	}
 	return slot
-}
-
-func LinkPurpose(service v1alpha1.ClusterLinkService, slot string) portallocator.Purpose {
-	switch {
-	case service == v1alpha1.ClusterLinkApiserver && slot == "b":
-		return portallocator.PurposeApiserverLinkB
-	case service == v1alpha1.ClusterLinkApiserver:
-		return portallocator.PurposeApiserverLink
-	case slot == "b":
-		return portallocator.PurposeOpenBaoLinkB
-	}
-	return portallocator.PurposeOpenBaoLink
 }
 
 func (cfg StackConfig) linkSlotOf(cluster string, service v1alpha1.ClusterLinkService) LinkRecord {

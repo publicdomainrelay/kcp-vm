@@ -18,6 +18,7 @@ const (
 	OpStatus = "status"
 	OpSet    = "set"
 	OpDrain  = "drain"
+	OpHold   = "hold"
 )
 
 const controlTimeout = 10 * time.Second
@@ -25,12 +26,14 @@ const controlTimeout = 10 * time.Second
 type Request struct {
 	Op      string `json:"op"`
 	Backend string `json:"backend,omitempty"`
+	Name    string `json:"name,omitempty"`
 }
 
 type Response struct {
 	Err     string  `json:"err,omitempty"`
 	Status  *Status `json:"status,omitempty"`
 	Drained int     `json:"drained,omitempty"`
+	Port    int     `json:"port,omitempty"`
 }
 
 func CheckSocketPath(path string) error {
@@ -105,6 +108,14 @@ func serveOne(c net.Conn, f *Front) {
 		}
 		st := f.Status()
 		resp.Status = &st
+	case OpHold:
+		port, err := f.Hold(req.Name)
+		resp.Port = port
+		if err != nil {
+			resp.Err = err.Error()
+		}
+		st := f.Status()
+		resp.Status = &st
 	default:
 		resp.Err = fmt.Sprintf("apiserverfront: unknown op %q", req.Op)
 	}
@@ -167,4 +178,9 @@ func (c Client) Set(ctx context.Context, backend string) (Status, error) {
 func (c Client) Drain(ctx context.Context, backend string) (int, error) {
 	resp, err := c.call(ctx, Request{Op: OpDrain, Backend: backend})
 	return resp.Drained, err
+}
+
+func (c Client) Hold(ctx context.Context, name string) (int, error) {
+	resp, err := c.call(ctx, Request{Op: OpHold, Name: name})
+	return resp.Port, err
 }

@@ -267,11 +267,6 @@
       "description": "Node disk size in MiB",
       "env": "SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB"
     },
-    "clusterprovider-port-range": {
-      "type": "string",
-      "description": "Leased port range (lo-hi)",
-      "env": "SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE"
-    },
     "clusterprovider-qemu": {
       "type": "string",
       "description": "Path of the qemu executable",

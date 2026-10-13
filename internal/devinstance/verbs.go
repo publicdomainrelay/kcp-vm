@@ -33,8 +33,7 @@ func LeasePath(env Env) (string, error) {
 }
 
 func OpenLeases(path, id string) (*portallocator.Allocator, error) {
-	return portallocator.Open(portallocator.Config{LeasePath: path, AppInstance: id,
-		Range: portallocator.Range{First: portallocator.DevFirst, Last: portallocator.DevLast}})
+	return portallocator.Open(portallocator.Config{LeasePath: path, AppInstance: id})
 }
 
 func LinkMarker(worktree, state string) error {

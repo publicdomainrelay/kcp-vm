@@ -29,9 +29,6 @@ const (
 	envGrant = "SOCIALWEB_CLUSTERPROVIDER_GRANT"
 
 	envLeasePath = "SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH"
-	envLeaseApp  = "SOCIALWEB_CLUSTERPROVIDER_LEASE_APP"
-
-	envPortRange = "SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE"
 
 	envJoin = "SOCIALWEB_CLUSTERPROVIDER_JOIN"
 
@@ -112,10 +109,6 @@ type Config struct {
 
 	LeasePath string
 
-	LeaseApp string
-
-	PortRange portallocator.Range
-
 	Join string
 
 	Datastore string
@@ -194,7 +187,6 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 		MountContext:           strings.TrimSpace(get(envMountContext)),
 		MintKubeconfigs:        strings.TrimSpace(get(envMintKubeconfigs)),
 		LeasePath:              strings.TrimSpace(get(envLeasePath)),
-		LeaseApp:               strings.TrimSpace(get(envLeaseApp)),
 		Join:                   strings.TrimSpace(get(envJoin)),
 		Datastore:              strings.TrimSpace(get(envDatastore)),
 		StateDir:               strings.TrimSpace(get(envStateDir)),
@@ -258,13 +250,6 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 				"nobody is looking", envStoreEndpoint, cfg.StoreEndpoint, envDatastore, cfg.Datastore)
 	case cfg.StoreEndpoint == "":
 		cfg.StoreEndpoint = cfg.Datastore
-	}
-	if raw := strings.TrimSpace(get(envPortRange)); raw != "" {
-		rng, err := parsePortRange(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s: %w", envPortRange, err)
-		}
-		cfg.PortRange = rng
 	}
 
 	if raw := strings.TrimSpace(get(envScaleHold)); raw != "" {
@@ -482,27 +467,6 @@ func splitList(raw string) []string {
 		}
 	}
 	return out
-}
-
-func parsePortRange(raw string) (portallocator.Range, error) {
-	first, last, ok := strings.Cut(raw, "-")
-	if !ok {
-		return portallocator.Range{}, fmt.Errorf("%q is not a FIRST-LAST port range", raw)
-	}
-	a, err := strconv.Atoi(strings.TrimSpace(first))
-	if err != nil {
-		return portallocator.Range{}, fmt.Errorf("%q is not a FIRST-LAST port range: %q is not a number", raw, strings.TrimSpace(first))
-	}
-	b, err := strconv.Atoi(strings.TrimSpace(last))
-	if err != nil {
-		return portallocator.Range{}, fmt.Errorf("%q is not a FIRST-LAST port range: %q is not a number", raw, strings.TrimSpace(last))
-	}
-	if b < a {
-		return portallocator.Range{}, fmt.Errorf("%q runs backwards, and a backwards range reads as NO range at all: "+
-			"the allocator would resolve it to its default carve and this process would hand out ports it believed "+
-			"it had been told to avoid", raw)
-	}
-	return portallocator.Range{First: a, Last: b}, nil
 }
 
 func parseBool(raw string) (bool, error) {

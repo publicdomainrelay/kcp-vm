@@ -14,10 +14,12 @@ var componentPorts = map[procgroup.Component][]portallocator.Purpose{
 	procgroup.ComponentKine:           {portallocator.PurposeKine, portallocator.PurposeKineB},
 	procgroup.ComponentK3s: {
 		portallocator.PurposeK3sSlotA,
+		portallocator.PurposeK3sApiserverA,
 		portallocator.PurposeK3sControllerManager,
 		portallocator.PurposeK3sScheduler,
 		portallocator.PurposeK3sCloudControllerManager,
 		portallocator.PurposeK3sSlotB,
+		portallocator.PurposeK3sApiserverB,
 		portallocator.PurposeK3sControllerManagerB,
 		portallocator.PurposeK3sSchedulerB,
 		portallocator.PurposeK3sCloudControllerManagerB,

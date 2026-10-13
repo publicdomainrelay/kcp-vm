@@ -136,6 +136,10 @@ func (cfg StackConfig) SlotSpec(o materialiser.Observed, l materialiser.Leases, 
 	if err != nil {
 		return clusterstack.Spec{}, err
 	}
+	k3sApiserver, err := leasePort(l, sp.Apiserver, cluster)
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
 	k3sControllerManager, err := leasePort(l, sp.ControllerManager, cluster)
 	if err != nil {
 		return clusterstack.Spec{}, err
@@ -191,6 +195,7 @@ func (cfg StackConfig) SlotSpec(o materialiser.Observed, l materialiser.Leases, 
 		TLSSANs:                       sans,
 		AdvertisePort:                 advPort,
 		K3sSecurePort:                 k3sSecure,
+		K3sApiserverPort:              k3sApiserver,
 		K3sControllerManagerPort:      k3sControllerManager,
 		K3sSchedulerPort:              k3sScheduler,
 		K3sCloudControllerManagerPort: k3sCloudControllerManager,
@@ -322,7 +327,7 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 			}
 		}
 		if cfg.Links != nil {
-			steps, err = linksAfterK3s(steps, cfg, cluster, dataDir, l, advPort, spec.OpenBaoPort)
+			steps, err = linksAfterK3s(steps, cfg, cluster, dataDir, advPort, spec.OpenBaoPort)
 			if err != nil {
 				return nil, err
 			}

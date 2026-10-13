@@ -109,6 +109,14 @@ func StepsFrom(spec clusterstack.Spec, leases materialiser.Leases, stack Stack) 
 		if !in[c] {
 			continue
 		}
+		if c == procgroup.ComponentApiserverFront {
+			st, err := frontStep(spec)
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, st)
+			continue
+		}
 		argv, err := spec.Argv(c)
 		if err != nil {
 			return nil, err

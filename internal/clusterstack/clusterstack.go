@@ -53,6 +53,8 @@ type Spec struct {
 
 	K3sSecurePort int
 
+	K3sApiserverPort int
+
 	K3sControllerManagerPort      int
 	K3sSchedulerPort              int
 	K3sCloudControllerManagerPort int
@@ -203,6 +205,8 @@ func (s Spec) Validate() error {
 		return ErrMissingBindAddress
 	case s.K3sSecurePort <= 0 || s.K3sSecurePort > 65535:
 		return fmt.Errorf("%w (got %d)", ErrMissingK3sSecurePort, s.K3sSecurePort)
+	case s.K3sApiserverPort <= 0 || s.K3sApiserverPort > 65535:
+		return fmt.Errorf("%w (apiserver port got %d)", ErrMissingK3sSecurePort, s.K3sApiserverPort)
 	case s.K3sControllerManagerPort <= 0 || s.K3sControllerManagerPort > 65535:
 		return fmt.Errorf("%w (%s got %d)", ErrMissingK3sControlPlanePort,
 			"K3sControllerManagerPort", s.K3sControllerManagerPort)
@@ -250,12 +254,12 @@ func (s Spec) CloudControllerManagerArgv() ([]string, error) {
 func validPort(p int) bool { return p > 0 && p <= 65535 }
 
 func (s Spec) FrontAddress() string {
-	return net.JoinHostPort(s.BindAddress, strconv.Itoa(s.AdvertisePort))
+	return net.JoinHostPort(s.BindAddress, "0")
 }
 
 func (s Spec) FrontArgv() ([]string, error) {
 	if len(s.FrontExec) == 0 || s.FrontExec[0] == "" || s.FrontControl == "" || s.FrontState == "" ||
-		s.BindAddress == "" || !validPort(s.AdvertisePort) {
+		s.BindAddress == "" {
 		return nil, ErrMissingFront
 	}
 	return append(append([]string(nil), s.FrontExec...),
@@ -365,6 +369,7 @@ func (s Spec) ServerArgv() ([]string, error) {
 		"--advertise-port", strconv.Itoa(s.AdvertisePort),
 		"--bind-address", s.BindAddress,
 		"--https-listen-port", strconv.Itoa(s.K3sSecurePort),
+		"--apiserver-port", strconv.Itoa(s.K3sApiserverPort),
 		"--token-file", s.TokenFile,
 		"--write-kubeconfig", s.ServerAdminKubeconfig(),
 	}

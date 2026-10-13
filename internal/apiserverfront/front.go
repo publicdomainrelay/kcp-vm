@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -30,20 +31,51 @@ type Status struct {
 	Inherited    bool           `json:"inherited"`
 	PID          int            `json:"pid"`
 	SwitchedAt   time.Time      `json:"switchedAt,omitzero"`
+	Holds        map[string]int `json:"holds,omitempty"`
 }
 
 type State struct {
-	Address    string    `json:"address,omitempty"`
-	Backend    string    `json:"backend"`
-	Generation int64     `json:"generation"`
-	SwitchedAt time.Time `json:"switchedAt"`
+	Address    string         `json:"address,omitempty"`
+	Backend    string         `json:"backend"`
+	Generation int64          `json:"generation"`
+	SwitchedAt time.Time      `json:"switchedAt"`
+	Holds      map[string]int `json:"holds,omitempty"`
 }
 
 type Options struct {
 	StatePath   string
 	DialTimeout time.Duration
 	Inherited   bool
+	Holds       map[string]*Held
+	FDStore     string
 	Log         *slog.Logger
+}
+
+type Held struct {
+	Name string
+	Port int
+	f    *os.File
+}
+
+func (h *Held) Close() error {
+	if h == nil || h.f == nil {
+		return nil
+	}
+	return h.f.Close()
+}
+
+var ErrHoldName = errors.New("apiserverfront: a hold name is 1 to 64 bytes of [a-z0-9.@-]")
+
+func ValidHoldName(name string) error {
+	if name == "" || len(name) > 64 {
+		return ErrHoldName
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '.' || r == '@') {
+			return ErrHoldName
+		}
+	}
+	return nil
 }
 
 type pair struct {
@@ -59,6 +91,7 @@ type Front struct {
 	mu       sync.Mutex
 	state    State
 	conns    map[*pair]struct{}
+	holds    map[string]*Held
 	accepted atomic.Int64
 	failures atomic.Int64
 	wg       sync.WaitGroup
@@ -87,7 +120,10 @@ func New(ln net.Listener, o Options) (*Front, error) {
 	if log == nil {
 		log = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
-	f := &Front{ln: ln, o: o, log: log, conns: map[*pair]struct{}{}}
+	f := &Front{ln: ln, o: o, log: log, conns: map[*pair]struct{}{}, holds: map[string]*Held{}}
+	for name, h := range o.Holds {
+		f.holds[name] = h
+	}
 	if o.StatePath != "" {
 		b, err := os.ReadFile(o.StatePath)
 		switch {
@@ -112,7 +148,80 @@ func New(ln net.Listener, o Options) (*Front, error) {
 			}
 		}
 	}
+	if err := f.restoreHolds(); err != nil {
+		return nil, err
+	}
 	return f, nil
+}
+
+func (f *Front) restoreHolds() error {
+	want := map[string]int{}
+	for name, port := range f.state.Holds {
+		want[name] = port
+	}
+	for name, h := range f.holds {
+		want[name] = h.Port
+	}
+	for name, port := range f.state.Holds {
+		if _, ok := f.holds[name]; ok {
+			continue
+		}
+		h, err := f.newHold(name, port)
+		if err != nil {
+			f.log.Warn("a recorded hold is taken; it is dropped and the next hold of it binds a new port",
+				"hold", name, "port", port, "err", err.Error())
+			delete(want, name)
+			continue
+		}
+		f.log.Info("hold restored on its recorded port", "hold", name, "port", h.Port)
+	}
+	if maps.Equal(want, f.state.Holds) {
+		return nil
+	}
+	f.state.Holds = want
+	return f.persist(f.state)
+}
+
+func (f *Front) newHold(name string, port int) (*Held, error) {
+	h, err := bindHold(name, port)
+	if err != nil {
+		return nil, err
+	}
+	if f.o.FDStore != "" {
+		if err := storeHold(f.o.FDStore, h); err != nil {
+			h.Close()
+			return nil, err
+		}
+	}
+	f.holds[name] = h
+	return h, nil
+}
+
+func (f *Front) Hold(name string) (int, error) {
+	if err := ValidHoldName(name); err != nil {
+		return 0, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if h, ok := f.holds[name]; ok {
+		return h.Port, nil
+	}
+	h, err := f.newHold(name, 0)
+	if err != nil {
+		return 0, err
+	}
+	next := f.state
+	next.Holds = maps.Clone(f.state.Holds)
+	if next.Holds == nil {
+		next.Holds = map[string]int{}
+	}
+	next.Holds[name] = h.Port
+	if err := f.persist(next); err != nil {
+		return 0, fmt.Errorf("apiserverfront: recording hold %q: %w", name, err)
+	}
+	f.state = next
+	f.log.Info("port held", "hold", name, "port", h.Port, "fdStore", f.o.FDStore != "")
+	return h.Port, nil
 }
 
 func (f *Front) Serve(ctx context.Context) error {
@@ -220,7 +329,8 @@ func (f *Front) SetBackend(addr string) (Status, error) {
 	f.mu.Lock()
 	next := f.state
 	if next.Backend != addr {
-		next = State{Address: f.state.Address, Backend: addr, Generation: f.state.Generation + 1, SwitchedAt: time.Now().UTC()}
+		next = State{Address: f.state.Address, Backend: addr, Generation: f.state.Generation + 1, SwitchedAt: time.Now().UTC(),
+			Holds: f.state.Holds}
 		if err := f.persist(next); err != nil {
 			f.mu.Unlock()
 			return f.Status(), fmt.Errorf("apiserverfront: persisting the backend before the switch: %w", err)
@@ -259,7 +369,14 @@ func (f *Front) Status() Status {
 	for p := range f.conns {
 		open[p.backend]++
 	}
+	var holds map[string]int
+	if len(f.holds) > 0 {
+		holds = make(map[string]int, len(f.holds))
+		for name, h := range f.holds {
+			holds[name] = h.Port
+		}
+	}
 	return Status{Address: f.ln.Addr().String(), Backend: f.state.Backend, Generation: f.state.Generation, Open: open,
 		Accepted: f.accepted.Load(), DialFailures: f.failures.Load(), Inherited: f.o.Inherited, PID: os.Getpid(),
-		SwitchedAt: f.state.SwitchedAt}
+		SwitchedAt: f.state.SwitchedAt, Holds: holds}
 }

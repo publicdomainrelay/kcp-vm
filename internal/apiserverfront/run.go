@@ -62,17 +62,25 @@ func Run(ctx context.Context, c Config) error {
 	}
 	log = log.With("component", "apiserver-front", "owner", c.Owner)
 	address := StickyAddress(c.State, c.Address)
-	ln, inherited, err := Acquire(address, c.FDStore, os.Getenv)
+	getenv := os.Getenv
+	a, err := AcquireAll(address, c.FDStore, getenv)
 	if err != nil && address != c.Address {
 		log.Warn("the front's previous address is taken; it binds a new one", "previous", address, "err", err.Error())
-		ln, inherited, err = Acquire(c.Address, c.FDStore, os.Getenv)
+		a, err = AcquireAll(c.Address, c.FDStore, getenv)
 	}
 	if err != nil {
 		return err
 	}
-	f, err := New(ln, Options{StatePath: c.State, Inherited: inherited, Log: log})
+	store := ""
+	if c.FDStore {
+		store = a.Notify
+	}
+	f, err := New(a.Listener, Options{StatePath: c.State, Inherited: a.Inherited, Holds: a.Holds, FDStore: store, Log: log})
 	if err != nil {
-		ln.Close()
+		a.Listener.Close()
+		for _, h := range a.Holds {
+			h.Close()
+		}
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)

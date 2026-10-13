@@ -22,8 +22,6 @@ const (
 	DefaultDeviceKeyTTL     = "24h"
 	DefaultDeviceKeyExec    = "socialweb-credential"
 	DefaultDeviceKeyExecEnv = "SOCIALWEB_DEVICE_KEY"
-	DefaultPortRange        = "20000-29999"
-	NetworkPortRange        = "30000-32767"
 	DefaultJoin             = "*"
 	DeployDir               = "deploy"
 	tenantGrantFile         = "tenant-grant.yaml"
@@ -45,11 +43,6 @@ func newEnv(environ []string) *env {
 }
 
 func (e *env) get(k string) string { return e.m[k] }
-
-func (e *env) LookupEnv(k string) (string, bool) {
-	v, ok := e.m[k]
-	return v, ok
-}
 
 func (e *env) set(k, v string) { e.m[k] = v }
 
@@ -120,15 +113,7 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) err
 	e.set("SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE", hostprocess.DefaultWorkspace)
 	e.set("SOCIALWEB_CLUSTERPROVIDER_MOUNT_CONTEXT", kcpclient.ShardAdminContext)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_STATE_DIR", filepath.Join(state, "clusterprovider"))
-	if g.c.Spec.Profile == appctl.ProfileGatewayNetwork {
-		if path, err := devinstance.LeasePath(e); err == nil {
-			e.dflt("SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH", path)
-			e.dflt("SOCIALWEB_CLUSTERPROVIDER_LEASE_APP", g.l.ID)
-		}
-		e.dflt("SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE", NetworkPortRange)
-	}
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH", filepath.Join(state, "leases.json"))
-	e.dflt("SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE", DefaultPortRange)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_JOIN", DefaultJoin)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW", "false")
 	for k, v := range ClusterProviderEnv(g.c.Spec.ClusterProvider) {

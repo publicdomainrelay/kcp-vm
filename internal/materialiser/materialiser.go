@@ -112,6 +112,8 @@ type Options struct {
 
 	Steps StepBuilder
 
+	Front func(ctx context.Context, cluster string) error
+
 	Identity IdentityGuard
 
 	Alert func(cluster, message string)
@@ -447,6 +449,11 @@ func (r *Reconciler) bringUp(ctx context.Context, o Observed, bump bool) (Result
 		}
 	}
 
+	if r.opts.Front != nil {
+		if err := r.opts.Front(ctx, o.Cluster.Name); err != nil {
+			return res, fmt.Errorf("materialiser: the apiserver front of %s holds the cluster's ports and did not come up: %w", o.Cluster.Name, err)
+		}
+	}
 	leases := Leases{}
 	for _, p := range r.opts.Purposes {
 		l, err := r.opts.Ports.Allocate(portallocator.Request{

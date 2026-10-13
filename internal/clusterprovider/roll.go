@@ -768,21 +768,11 @@ func (r *Roller) RollLink(ctx context.Context, key string, req RollRequest) (rep
 	if err != nil {
 		return fail(err)
 	}
-	if r.Relet != nil {
-		lease, changed, err := r.Relet(key, LinkPurpose(service, to))
-		if err != nil {
-			return fail(err)
-		}
-		if changed {
-			rep.Relet = append(rep.Relet, fmt.Sprintf("%s %d -> %d", LinkPurpose(service, to), l[LinkPurpose(service, to)].Port, lease.Port))
-		}
-		l[LinkPurpose(service, to)] = lease
-	}
 	dumbpipe := req.Dumbpipe
 	if dumbpipe == "" {
 		dumbpipe = cur.Dumbpipe
 	}
-	next := LinkRecord{Slot: to, Dumbpipe: dumbpipe, Port: l[LinkPurpose(service, to)].Port}
+	next := LinkRecord{Slot: to, Dumbpipe: dumbpipe}
 	cfg := r.Stack
 	prev := cfg.LinkSlot
 	cfg.LinkSlot = func(cluster string, s v1alpha1.ClusterLinkService) LinkRecord {
