@@ -552,6 +552,10 @@
       "type": "string",
       "description": "upgrade: the published sha256 of --binary; a mismatch is refused"
     },
+    "allow-dev-binary": {
+      "type": "boolean",
+      "description": "install/upgrade: accept a dev build (version says \"dev build, not reproducible\"); for dev and test runs only, never prod"
+    },
     "planned-outage": {
       "type": "boolean",
       "description": "units roll kcp: stop the old slot before the new one starts (the only path for a kcp pair without a storage-compatible kcpCompat record)"

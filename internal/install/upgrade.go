@@ -2,16 +2,19 @@ package install
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/buildstamp"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 )
@@ -20,6 +23,7 @@ var (
 	ErrManifestMismatch = errors.New("upgrade: the binary does not match the sha256 it was published with")
 	ErrSelfCheck        = errors.New("upgrade: the new binary's self-check failed")
 	ErrNoPrevious       = errors.New("rollback: bin/previous names no binary")
+	ErrDevBinary        = errors.New("the binary is a dev build (version says \"dev build, not reproducible\"); install and upgrade take a release build unless --allow-dev-binary is given (dev and test runs only)")
 	digestName          = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
@@ -30,7 +34,9 @@ type UpgradeOptions struct {
 	Proc       string
 	Binary     string
 	SHA256     string
+	AllowDev   bool
 	Out        io.Writer
+	DevStamp   func(ctx context.Context, exe string) (*buildstamp.Info, error)
 	SelfCheck  func(ctx context.Context, exe string, role hostcontract.Role, stateDir string) error
 	Restart    func(ctx context.Context, units []string) error
 }
@@ -92,6 +98,15 @@ func Upgrade(ctx context.Context, o UpgradeOptions) error {
 	}
 	if sum != o.SHA256 {
 		return fmt.Errorf("%w: %s is %s, published %s", ErrManifestMismatch, o.Binary, sum, o.SHA256)
+	}
+	if !o.AllowDev && o.DevStamp != nil {
+		stamp, err := o.DevStamp(ctx, o.Binary)
+		if err != nil {
+			return fmt.Errorf("%w: %s version --json: %v", ErrSelfCheck, o.Binary, err)
+		}
+		if stamp != nil {
+			return fmt.Errorf("upgrade: %w: %s (commit %s, built %s)", ErrDevBinary, o.Binary, stamp.Commit, stamp.BuiltUTC)
+		}
 	}
 	current := readTarget(filepath.Join(o.bin(), "current"))
 	if current == sum {
@@ -163,4 +178,18 @@ func Rollback(ctx context.Context, o UpgradeOptions) error {
 	}
 	o.collect()
 	return nil
+}
+
+func DevStamp(ctx context.Context, exe string) (*buildstamp.Info, error) {
+	b, err := exec.CommandContext(ctx, exe, "version", "--json").Output()
+	if err != nil {
+		return nil, err
+	}
+	var v struct {
+		Dev *buildstamp.Info `json:"dev"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return nil, err
+	}
+	return v.Dev, nil
 }

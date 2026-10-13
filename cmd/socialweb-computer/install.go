@@ -9,13 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/buildstamp"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/install"
 )
 
-var installOptions = []string{backendOpt, "handle", "account", "state-dir", "vm-slots", "dry-run", "adopt-account", "json", "root", "unit-prefix",
+var installOptions = []string{backendOpt, "handle", "account", "state-dir", "vm-slots", "dry-run", "adopt-account", "json", "root", "unit-prefix", "allow-dev-binary",
 	install.OptKcpFront, install.OptTLSFront, install.OptSpecFile}
 
 var uninstallOptions = []string{"account", "purge", "force", "json", "root"}
@@ -40,7 +41,7 @@ func installExit(a *app, verb string, rep install.Report, err error, asJSON bool
 	fmt.Fprintf(a.stderr, "%s: %v\n", verb, err)
 	switch {
 	case errors.Is(err, install.ErrProcBackend), errors.Is(err, install.ErrForeignAccount), errors.Is(err, install.ErrVMsRunning),
-		errors.Is(err, install.ErrManagerWithoutKVM), errors.Is(err, install.ErrNoRecord), errors.Is(err, install.ErrUnsupported):
+		errors.Is(err, install.ErrManagerWithoutKVM), errors.Is(err, install.ErrNoRecord), errors.Is(err, install.ErrUnsupported), errors.Is(err, install.ErrDevBinary):
 		return exitRefused
 	}
 	return exitFailed
@@ -63,6 +64,9 @@ func runInstall(role hostcontract.Role) verbFunc {
 		}
 		if staged && os.Geteuid() == 0 {
 			return a.fail(exitRefused, "%s: --root stages a host for the invoking user's own manager; run it as that user, never as root", verb)
+		}
+		if stamp := buildstamp.Read(); stamp != nil && !vals.Bool("allow-dev-binary") {
+			return installExit(a, verb, install.Report{}, fmt.Errorf("%w: this binary (commit %s, built %s)", install.ErrDevBinary, stamp.Commit, stamp.BuiltUTC), false)
 		}
 		exe, err := foldmain.ResolveExe()
 		if err != nil {
@@ -119,7 +123,7 @@ func runUninstall(role hostcontract.Role) verbFunc {
 	}
 }
 
-var upgradeOptions = []string{"binary", "sha256", "state-dir"}
+var upgradeOptions = []string{"binary", "sha256", "state-dir", "allow-dev-binary"}
 
 func installedBinaries(state string) []string {
 	return []string{filepath.Join(state, "bin", "current", install.CoreName), filepath.Join(state, "bin", "previous", install.CoreName)}
@@ -145,13 +149,13 @@ func runUpgrade(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 	if err != nil {
 		return a.fail(exitRefused, "%v", err)
 	}
-	o.Binary, o.SHA256 = vals.String("binary"), vals.String("sha256")
+	o.Binary, o.SHA256, o.AllowDev, o.DevStamp = vals.String("binary"), vals.String("sha256"), vals.Bool("allow-dev-binary"), install.DevStamp
 	if o.Binary == "" {
 		return a.fail(exitRefused, "upgrade: --binary names the new socialweb-computer executable")
 	}
 	if err := install.Upgrade(ctx, o); err != nil {
 		code := exitFailed
-		if errors.Is(err, install.ErrManifestMismatch) || errors.Is(err, install.ErrSelfCheck) {
+		if errors.Is(err, install.ErrManifestMismatch) || errors.Is(err, install.ErrSelfCheck) || errors.Is(err, install.ErrDevBinary) {
 			code = exitRefused
 		}
 		return a.fail(code, "%v", err)
