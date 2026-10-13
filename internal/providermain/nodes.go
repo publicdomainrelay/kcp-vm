@@ -851,11 +851,35 @@ type nodeHosts struct {
 	opts nodeHostsOptions
 	log  *slog.Logger
 
-	mu       sync.Mutex
-	hosts    map[string]*tenantNodes
-	adopted  map[string]bool
-	released map[string]map[string]bool
-	synced   map[string]time.Time
+	mu        sync.Mutex
+	hosts     map[string]*tenantNodes
+	adopted   map[string]bool
+	released  map[string]map[string]bool
+	synced    map[string]time.Time
+	seenReady map[string]map[string]time.Time
+}
+
+func (h *nodeHosts) observedReadySince(cluster, node string, ready bool, now time.Time) time.Time {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.seenReady == nil {
+		h.seenReady = map[string]map[string]time.Time{}
+	}
+	nodes := h.seenReady[cluster]
+	if nodes == nil {
+		nodes = map[string]time.Time{}
+		h.seenReady[cluster] = nodes
+	}
+	if !ready {
+		delete(nodes, node)
+		return time.Time{}
+	}
+	first, ok := nodes[node]
+	if !ok {
+		nodes[node] = now
+		return now
+	}
+	return first
 }
 
 func releasedClaimKey(claim v1alpha1.NodeClaim) string {

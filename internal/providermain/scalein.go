@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -34,8 +35,13 @@ func (h *nodeHosts) observeHeld(observe observeCluster) observeCluster {
 			return o, nodes, err
 		}
 		held := h.heldNames(cluster)
+		now := time.Now()
 		for i := range o.Placement.Nodes {
-			o.Placement.Nodes[i].Held = held[o.Placement.Nodes[i].Name]
+			nd := &o.Placement.Nodes[i]
+			nd.Held = held[nd.Name]
+			if seen := h.observedReadySince(cluster, nd.Name, nd.Ready, now); nd.Ready && seen.After(nd.ReadySince) {
+				nd.ReadySince = seen
+			}
 		}
 		o.InFlight = h.inFlight(ctx, cluster)
 		return o, nodes + o.InFlight, nil

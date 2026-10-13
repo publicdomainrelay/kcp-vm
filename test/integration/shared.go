@@ -102,8 +102,14 @@ func SharedNetwork(t testing.TB, opts NetworkOptions) *Network {
 		t.Fatalf("the shared market network %s did not come up: %v", key, e.err)
 	}
 	b := e.net
-	return &Network{h: b.h, t: t, Instance: b.Instance, Dir: b.Dir, StateRoot: b.StateRoot, StateDir: b.StateDir,
+	view := &Network{h: b.h, t: t, Instance: b.Instance, Dir: b.Dir, StateRoot: b.StateRoot, StateDir: b.StateDir,
 		Handles: b.Handles, Logs: b.Logs, Started: b.Started, Up: b.Up, seenDevsup: true}
+	t.Cleanup(func() {
+		if t.Failed() {
+			view.diagnose()
+		}
+	})
+	return view
 }
 
 func stopSharedNetworks() bool {
