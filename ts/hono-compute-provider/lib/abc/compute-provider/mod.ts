@@ -41,6 +41,7 @@ export interface GuestGone {
   id: string | number;
   reason: string;
   exitCode?: number;
+  message?: string;
 }
 
 export interface GuestHostKey {

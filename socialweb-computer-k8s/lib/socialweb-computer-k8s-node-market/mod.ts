@@ -248,6 +248,9 @@ export function explainEnd(state: ContractState | null, facts: EndFacts = {}): s
   if (facts.grantFailed) {
     return "the node's workload grant could not be written to its claim, so the guest could never log in to the cluster OpenBao";
   }
+  if (state.outcome === "network_timeout") {
+    return "a VM was accepted but it never reported that it was on the network before the VM ready timeout";
+  }
   if (state.receiptOk) return "a VM was provisioned but it never fetched its join secrets";
   return `provisioning did not complete (${state.outcome ?? state.phase})${state.error ? `: ${state.error}` : ""}`;
 }
@@ -274,6 +277,10 @@ export function grantingCapability(
     onRevoke: inner.onRevoke ? () => inner.onRevoke!() : undefined,
     dispose: inner.dispose ? () => inner.dispose!() : undefined,
   };
+}
+
+export function joining(state: ContractState): boolean {
+  return state.outcome === "complete" && state.receiptOk === true && state.vmAddress !== undefined && !isTerminated(state);
 }
 
 function untilFetched(fetched: Promise<void>, signals: AbortSignal[], timeoutMs: number): Promise<void> {
@@ -611,8 +618,16 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
         state = handle.state;
         await record(state);
 
-        if (!fetched && state.accept && state.receiptOk && !grantFailed && !ended()) {
-          await untilFetched(secretsFetched.promise, [deleted.signal, stopping.signal], vmReadyTimeoutSec * 1000);
+        if (!fetched && joining(state) && !grantFailed && !ended()) {
+          const guestEnded = handle.terminated?.then((ended) => {
+            state = ended;
+            log("node_claim_terminated_while_joining", { claim: key, reason: ended.termination?.reason ?? null });
+          });
+          await untilFetched(
+            guestEnded ? Promise.race([secretsFetched.promise, guestEnded]) : secretsFetched.promise,
+            [deleted.signal, stopping.signal],
+            vmReadyTimeoutSec * 1000,
+          );
         }
       } catch (err) {
         log("node_claim_contract_failed", { claim: key, error: String(err) });

@@ -269,6 +269,40 @@ export async function createRequesterPDS(
   const onNetworkResolvers = new Map<string, (address: string) => void>();
   const onTerminatedHandlers = new Map<string, (envelope: SubmittedComputeEvent) => void>();
   const onHostKeysHandlers = new Map<string, (envelope: SubmittedComputeEvent) => void>();
+  const heldComputeEvents = new Map<Map<string, (envelope: SubmittedComputeEvent) => void>, Map<string, SubmittedComputeEvent>>([
+    [onTerminatedHandlers, new Map()],
+    [onHostKeysHandlers, new Map()],
+  ]);
+  const HELD_COMPUTE_EVENTS_MAX = 64;
+
+  const holdComputeEvent = (
+    handlers: Map<string, (envelope: SubmittedComputeEvent) => void>,
+    receiptUri: string,
+    envelope: SubmittedComputeEvent,
+  ) => {
+    const held = heldComputeEvents.get(handlers)!;
+    held.delete(receiptUri);
+    held.set(receiptUri, envelope);
+    while (held.size > HELD_COMPUTE_EVENTS_MAX) {
+      const oldest = held.keys().next().value;
+      if (oldest === undefined) break;
+      held.delete(oldest);
+    }
+  };
+
+  const watchComputeEvent = (
+    handlers: Map<string, (envelope: SubmittedComputeEvent) => void>,
+    receiptUri: string,
+    fn: (envelope: SubmittedComputeEvent) => void,
+  ) => {
+    handlers.set(receiptUri, fn);
+    const held = heldComputeEvents.get(handlers)!;
+    const early = held.get(receiptUri);
+    if (!early) return;
+    held.delete(receiptUri);
+    logger.info("compute event delivered after its receipt was watched", { receiptUri, eventUri: early.uri });
+    fn(early);
+  };
 
   const forwardComputeEvent = (
     label: string,
@@ -277,9 +311,8 @@ export async function createRequesterPDS(
   async (ctx: { event: unknown; uri: string; cid: string; resolve: { resolve(ref: { uri: string; cid: string }): Promise<unknown> } }) => {
     const { _uri: _u, _cid: _c, ...record } = ctx.event as Record<string, unknown>;
     const receiptUri = (record.receipt as { uri?: string } | undefined)?.uri ?? "";
-    const handler = handlers.get(receiptUri);
-    logger.info(`${label} received`, { receiptUri, eventUri: ctx.uri, watched: !!handler });
-    if (!handler) return;
+    logger.info(`${label} received`, { receiptUri, eventUri: ctx.uri, watched: handlers.has(receiptUri) });
+    if (!receiptUri) return;
     const payloadRef = record.payload as { uri?: string; cid?: string } | undefined;
     if (!payloadRef?.uri) return;
     try {
@@ -288,7 +321,10 @@ export async function createRequesterPDS(
         | null;
       if (!resolved) return;
       const { _uri: _pu, _cid: _pc, ...payload } = resolved;
-      handler({ uri: ctx.uri, cid: ctx.cid, record, payload });
+      const envelope = { uri: ctx.uri, cid: ctx.cid, record, payload };
+      const handler = handlers.get(receiptUri);
+      if (handler) handler(envelope);
+      else holdComputeEvent(handlers, receiptUri, envelope);
     } catch (err) {
       logger.warn(`${label} payload unresolvable`, { receiptUri, payloadUri: payloadRef.uri, error: String(err) });
     }
@@ -504,11 +540,11 @@ export async function createRequesterPDS(
     setOnNetworkResolved: (key: string, fn: (address: string) => void) => { onNetworkResolvers.set(key, fn); },
     clearOnNetworkResolved: (key: string) => { onNetworkResolvers.delete(key); },
     setOnTerminated: (receiptUri: string, fn: (envelope: SubmittedComputeEvent) => void) => {
-      onTerminatedHandlers.set(receiptUri, fn);
+      watchComputeEvent(onTerminatedHandlers, receiptUri, fn);
     },
     clearOnTerminated: (receiptUri: string) => { onTerminatedHandlers.delete(receiptUri); },
     setOnHostKeys: (receiptUri: string, fn: (envelope: SubmittedComputeEvent) => void) => {
-      onHostKeysHandlers.set(receiptUri, fn);
+      watchComputeEvent(onHostKeysHandlers, receiptUri, fn);
     },
     clearOnHostKeys: (receiptUri: string) => { onHostKeysHandlers.delete(receiptUri); },
     dispose: async () => { store.close(); },

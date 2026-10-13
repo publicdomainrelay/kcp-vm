@@ -61,14 +61,15 @@ import {
 } from "@publicdomainrelay/market-common";
 
 export interface VmTermination {
-  reason: VmTerminatedReason;
+  reason: VmTerminatedReason | string;
   exitCode?: number;
 }
 
 export function terminatedReasonOf(gone: GuestGone): VmTermination {
   const exitCode = Number.isInteger(gone.exitCode) ? gone.exitCode : undefined;
-  const withCode = (reason: VmTerminatedReason): VmTermination =>
+  const withCode = (reason: VmTerminatedReason | string): VmTermination =>
     exitCode === undefined ? { reason } : { reason, exitCode };
+  if (gone.message) return withCode(gone.message);
   const known = VM_TERMINATED_REASONS.find((r) => r === gone.reason);
   if (known) return withCode(known);
   if (/\boom\b|out of memory/i.test(gone.reason)) return withCode("oom");
@@ -86,7 +87,7 @@ interface TerminationTarget {
 }
 
 interface TerminationFields {
-  reason: VmTerminatedReason;
+  reason: VmTerminatedReason | string;
   exitCode?: number;
   observedAt: string;
   request?: StrongRef;
@@ -277,7 +278,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
   const recordTermination = async (
     key: string,
     contract: ActiveContract,
-    reason: VmTerminatedReason,
+    reason: VmTerminatedReason | string,
     observedAt: string,
     providerId: string | number | undefined,
     cbLog: Logger,
@@ -301,26 +302,38 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     }, cbLog);
   };
 
-  const releaseGoneGuest = async (gone: GuestGone): Promise<void> => {
+  const endContract = async (
+    key: string,
+    contract: ActiveContract,
+    gone: GuestGone,
+    providerId: string | number | undefined,
+    event: string,
+    cbLog: Logger,
+  ): Promise<{ published: Promise<void> }> => {
     const observedAt = new Date().toISOString();
+    const termination = terminatedReasonOf(gone);
+    await recordTermination(key, contract, termination.reason, observedAt, providerId, cbLog);
+    cbLog("warn", event, {
+      receiptKey: key, providerId, reason: gone.reason, exitCode: gone.exitCode,
+      terminatedReason: termination.reason, remaining: activeContracts.size,
+    });
+    if (!contract.receiptUri || !contract.receiptCid) return { published: Promise.resolve() };
+    return {
+      published: publishTerminated(
+        { key, receiptUri: contract.receiptUri, receiptCid: contract.receiptCid, submitEventUrl: contract.submitEventUrl },
+        { ...termination, observedAt },
+        cbLog,
+      ),
+    };
+  };
+
+  const releaseGoneGuest = async (gone: GuestGone): Promise<void> => {
     for (const [key, contract] of activeContracts) {
       const providerId = await contract.providerIdPromise?.catch(() => undefined);
       if (providerId === undefined || String(providerId) !== String(gone.id)) continue;
       if (!activeContracts.has(key)) return;
       if (contract.receiptUri && terminating.has(contract.receiptUri)) return;
-      const termination = terminatedReasonOf(gone);
-      await recordTermination(key, contract, termination.reason, observedAt, providerId, log);
-      log("warn", "bidder_guest_gone", {
-        receiptKey: key, providerId, reason: gone.reason, exitCode: gone.exitCode,
-        terminatedReason: termination.reason, remaining: activeContracts.size,
-      });
-      if (contract.receiptUri && contract.receiptCid) {
-        await publishTerminated(
-          { key, receiptUri: contract.receiptUri, receiptCid: contract.receiptCid, submitEventUrl: contract.submitEventUrl },
-          { ...termination, observedAt },
-          log,
-        );
-      }
+      await (await endContract(key, contract, gone, providerId, "bidder_guest_gone", log)).published;
       return;
     }
     log("info", "bidder_guest_gone_no_contract", { providerId: gone.id, reason: gone.reason });
@@ -345,20 +358,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         else if (adopted) log("info", "bidder_guest_adopted", { receiptKey: key, providerId });
       }
       if (!gone) continue;
-      const observedAt = new Date().toISOString();
-      const termination = terminatedReasonOf(gone);
-      await recordTermination(key, contract, termination.reason, observedAt, providerId, log);
-      log("warn", "bidder_guest_gone_at_restore", {
-        receiptKey: key, providerId, reason: gone.reason, exitCode: gone.exitCode,
-        terminatedReason: termination.reason, remaining: activeContracts.size,
-      });
-      if (contract.receiptUri && contract.receiptCid) {
-        void publishTerminated(
-          { key, receiptUri: contract.receiptUri, receiptCid: contract.receiptCid, submitEventUrl: contract.submitEventUrl },
-          { ...termination, observedAt },
-          log,
-        );
-      }
+      await endContract(key, contract, gone, providerId, "bidder_guest_gone_at_restore", log);
     }
   };
 
@@ -469,6 +469,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
 
     let providerIdPromise: Promise<string | number | undefined> = Promise.resolve(undefined);
     let provisionIp: string | undefined;
+    let provisionFailure: string | undefined;
 
     if (rfpRef) {
       providerIdPromise = Promise.race([
@@ -541,6 +542,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
           setTimeout(() => reject(new Error("provisioning timed out after 10 minutes")), 600_000)
         ),
       ]).catch((err) => {
+        provisionFailure = err instanceof Error ? err.message : String(err);
         cbLog("error", "bidder failed to provision VM", { error: String(err) });
         return undefined;
       });
@@ -602,11 +604,18 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       });
     }
     providerIdPromise.then(async (providerId) => {
+      if (providerId === undefined) {
+        if (!activeContracts.has(rk) || terminating.has(receiptUri)) return;
+        const gone: GuestGone = {
+          id: "",
+          reason: "vmm_exited",
+          message: provisionFailure ?? "the bidder started no guest for this contract",
+        };
+        await (await endContract(rk, contract, gone, providerId, "bidder_provision_failed", cbLog)).published;
+        return;
+      }
       if (activeContracts.has(rk)) {
-        await saveChange({
-          type: providerId ? "provisioned" : "provisioning-failed",
-          ...contractEventFields(rk, contract), providerId,
-        }, cbLog);
+        await saveChange({ type: "provisioned", ...contractEventFields(rk, contract), providerId }, cbLog);
       }
 
       // Always emit vm.onNetwork via firehose (record on bidder PDS, firehose distributes).

@@ -43,13 +43,20 @@ export function isReleasing(vm: ComputeVM | undefined): boolean {
 }
 
 export function goneOf(name: string, vm: ComputeVM | undefined): GuestGone {
-  return { id: name, reason: goneReasonOf(vm?.status?.lostReason) };
+  const gone: GuestGone = { id: name, reason: goneReasonOf(vm?.status?.lostReason) };
+  if (vm && phaseOf(vm) === "Failed") gone.message = endedMessage(name, vm);
+  else if (vm && !hasEnded(vm) && isReleasing(vm)) gone.message = releasedMessage(name);
+  return gone;
 }
 
 export function endedMessage(name: string, vm: ComputeVM): string {
   const status = vm.status ?? {};
   const why = [status.lostReason, status.message].filter((part) => part).join(": ");
   return `ComputeVM ${name} ended ${status.phase ?? "without a phase"}${why ? ` (${why})` : ""}`;
+}
+
+export function releasedMessage(name: string): string {
+  return `ComputeVM ${name} was released on the bidder without a vm.delete from the requester`;
 }
 
 export function guestVaultPath(name: string, entry: string): string {

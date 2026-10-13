@@ -401,8 +401,8 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       return;
     }
     if (provisioning.has(name) || releasing.has(name) || reportedGone.has(name)) return;
-    if (hasEnded(before) || !hasEnded(after)) return;
-    reportGone(name, after);
+    if (hasEnded(before)) return;
+    if (hasEnded(after) || (isReleasing(after) && !isReleasing(before))) reportGone(name, after);
   }
 
   function applyEvent(event: ComputeVMWatchEvent): string | undefined {
