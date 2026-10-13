@@ -90,6 +90,9 @@ export const MESHD_ENV_PATH = `${NODE_SECRETS_DIR}/meshd.env`;
 export const MESHD_ARCHES = ["x86_64", "aarch64"] as const;
 export type MeshdArch = typeof MESHD_ARCHES[number];
 
+export const HOSTNAME_PATH = "/etc/hostname";
+export const HOSTNAME_MAX_BYTES = 64;
+
 export const SYSCTL_PATH = "/etc/sysctl.d/90-socialweb-node.conf";
 
 export const NODE_NET_UNITS = {
@@ -102,6 +105,7 @@ export const NODE_NET_UNITS = {
 } as const;
 
 export const NODE_NET_SCRIPTS = {
+  hostname: "/usr/local/bin/socialweb-node-hostname",
   dnsLink: "/usr/local/bin/socialweb-node-dns-link",
   masquerade: "/usr/local/bin/socialweb-pod-masquerade",
   cni: "/usr/local/bin/socialweb-pod-cni",
@@ -468,6 +472,20 @@ step masquerade done
 `;
 }
 
+export function renderNodeHostnameScript(): string {
+  return `#!/bin/bash
+set -euo pipefail
+say() { echo "socialweb-node-hostname: $*" >&2; }
+: "\${NODE_NAME:?}"
+printf '%s' "\${NODE_NAME}" | grep -Eqx '[a-z0-9]([a-z0-9.-]*[a-z0-9])?' || { say "NODE_NAME is not a node name"; exit 1; }
+[ "\${#NODE_NAME}" -le ${HOSTNAME_MAX_BYTES} ] || { say "node name \${NODE_NAME} is longer than the ${HOSTNAME_MAX_BYTES} bytes a hostname holds"; exit 1; }
+[ "$(cat /proc/sys/kernel/hostname)" = "\${NODE_NAME}" ] && exit 0
+printf '%s\\n' "\${NODE_NAME}" > ${HOSTNAME_PATH}
+printf '%s' "\${NODE_NAME}" > /proc/sys/kernel/hostname
+say "hostname set to the node name \${NODE_NAME}, which the apiserver dials this kubelet by"
+`;
+}
+
 export function renderDnsLinkScript(): string {
   return `#!/bin/bash
 set -euo pipefail
@@ -582,6 +600,7 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
         "ExecStartPre=-/sbin/modprobe overlay",
         `ExecStartPre=/usr/bin/test -x ${p.k3s}`,
         `ExecStartPre=/usr/bin/test -s ${p.token}`,
+        `ExecStartPre=${NODE_NET_SCRIPTS.hostname}`,
         `ExecStart=${p.k3s} agent --server https://\${ADVERTISE_ADDRESS}:\${APISERVER_PORT} --token-file ${p.token} --node-name \${NODE_NAME} --data-dir ${p.dataDir} --kubelet-arg=cluster-dns=${NODE_LOCAL_DNS_ADDRESS} --node-label=${NODE_LOCAL_DNS_LABEL}=true`,
         ...always,
       ],
@@ -688,6 +707,7 @@ export function createK3sJoinModule(opts: K3sJoinModuleOptions = {}): UserDataMo
       script(NODE_SCRIPTS.openbaoLink, renderOpenBaoLinkScript(opts)),
       script(NODE_SCRIPTS.nodeSecrets, renderNodeSecretsScript(opts)),
       script(NODE_SCRIPTS.apiserverLink, renderApiserverLinkScript(opts)),
+      script(NODE_NET_SCRIPTS.hostname, renderNodeHostnameScript()),
       script(NODE_NET_SCRIPTS.dnsLink, renderDnsLinkScript()),
       script(NODE_NET_SCRIPTS.masquerade, renderPodMasqueradeScript()),
       script(NODE_NET_SCRIPTS.cni, renderPodCniScript(opts)),

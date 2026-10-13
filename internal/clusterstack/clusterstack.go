@@ -337,6 +337,8 @@ const MarketClusterCIDR = "10.42.0.0/16"
 
 const MarketFlannelBackend = "none"
 
+const MarketKubeletAddressTypes = "Hostname"
+
 func (s Spec) podNetworkArgv() []string {
 	if !s.MarketDialled {
 		return nil
@@ -344,6 +346,7 @@ func (s Spec) podNetworkArgv() []string {
 	return []string{
 		"--flannel-backend=" + MarketFlannelBackend,
 		"--cluster-cidr=" + MarketClusterCIDR,
+		"--kube-apiserver-arg=kubelet-preferred-address-types=" + MarketKubeletAddressTypes,
 	}
 }
 

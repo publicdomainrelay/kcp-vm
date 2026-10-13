@@ -9,6 +9,8 @@ import (
 
 var dns1123 = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
 
+const HostnameMaxBytes = 64
+
 var ErrBadName = errors.New("nodeprovider: derived node name is not DNS-1123")
 
 func NodeName(clusterLabel, nodeID string) (string, error) {
@@ -18,6 +20,10 @@ func NodeName(clusterLabel, nodeID string) (string, error) {
 	name := strings.ToLower(clusterLabel + "-" + nodeID)
 	if !dns1123.MatchString(name) {
 		return "", fmt.Errorf("%w: %q", ErrBadName, name)
+	}
+	if len(name) > HostnameMaxBytes {
+		return "", fmt.Errorf("%w: %q is %d bytes, and a market node takes its node name as its hostname, "+
+			"which holds at most %d", ErrBadName, name, len(name), HostnameMaxBytes)
 	}
 	return name, nil
 }
