@@ -131,6 +131,9 @@ func refs(dir string, t *v1alpha1.OpenBaoServerTLS) *v1alpha1.OpenBaoServerRefs 
 		CertAuthMount: CertAuthMount, CertAuthRole: CertAuthRole, KVMount: KVMount}
 }
 
+var replaceable = map[v1alpha1.HostProcessLostReason]bool{v1alpha1.HostProcessLostUnitGone: true, v1alpha1.HostProcessLostHostRebooted: true,
+	v1alpha1.HostProcessLostManagerRestarted: true, v1alpha1.HostProcessLostIdentityMismatch: true}
+
 func restartKey(config []byte, files ...string) string {
 	h := sha256.New()
 	h.Write(config)
@@ -445,8 +448,7 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		st.Runtime = &v1alpha1.OpenBaoServerRuntime{Backend: rt.Backend, Ref: rt.Unit, Instance: rt.InvocationID, Pid: rt.Pid,
 			StartTime: rt.ActiveSince, HostBootID: rt.HostBootID}
 	}
-	if child.Status.Phase == v1alpha1.HostProcessPhaseLost && (child.Status.LostReason == v1alpha1.HostProcessLostUnitGone ||
-		child.Status.LostReason == v1alpha1.HostProcessLostHostRebooted) && child.DeletionTimestamp == nil {
+	if child.Status.Phase == v1alpha1.HostProcessPhaseLost && replaceable[child.Status.LostReason] && child.DeletionTimestamp == nil {
 		if err := c.children.Delete(ctx, child.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return fail("HostProcess %s is Lost (%s) and deleting it failed: %v", child.Name, child.Status.LostReason, err)
 		}
