@@ -626,6 +626,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
             if (!bidRef?.uri) return;
             try {
               const { repo, collection, rkey } = parseAtUri(bidRef.uri);
+              if (repo !== atproto.did) return;
               const existing = await atproto.getRecord(repo, collection, rkey);
               if (!existing) return;
             } catch { return; }
