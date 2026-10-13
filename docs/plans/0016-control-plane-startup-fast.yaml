@@ -71,6 +71,29 @@ items:
       - "7. Failure check: break one member on purpose (e.g. a bad kine path via the Step spec in a scratch commit you do not push) and confirm Spawn ends within a few seconds naming kine, and no other member is left placed (Reap / unit list empty for that cluster after dev down)."
     done_when: "Members start as a graph; the bootstrap tenant on a quiet market network (load under 30) is Ready in about 1:30 or less; a broken member fails the Spawn fast with its name; TestTenantClusterScalesFromZeroOnMarketVMsAndBack passes on the branch."
     status: todo
+  - id: M2b-CLUSTERS-AND-PHASES
+    title: "Clusters start in parallel, Initializing is reported at once, NodeClaims reach Running"
+    depends_on: [M1-DEPENDENCY-GRAPH]
+    decision: >
+      Found by the subscribeClusters agent 2026-10-13 (live, market network cs1): (1) the gateway brings up ONE
+      cluster at a time - a new cluster waits behind the bootstrap tenant; each cluster's Spawn must run in its
+      own goroutine (per-cluster lock h.lock(key) already exists; the provider pass must not block on one
+      cluster's Spawn). (2) The cluster phase stays Unavailable while members start, because Initializing is
+      written only after every member is placed; write Initializing when the first member is placed (subscribers
+      see progress; `#member` events already exist). (3) A NodeClaim stays Joining and never reaches Running even
+      with its node Ready and pods running (market network; check prod too); the web app node market / cluster
+      provider must set Running when the node is Ready (find who owns that transition:
+      socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market and internal/providermain/nodes.go confirmHeld).
+      (4) subscribeClusters answers ClusterNotFound for an account with no clusters; it should send an empty
+      snapshot + #info SnapshotComplete instead (a new user subscribes before createCluster).
+    steps:
+      - "1. Find where the provider pass calls Spawn per cluster; run each cluster's Spawn without blocking the others (bounded concurrency, e.g. 4); keep h.lock(key)."
+      - "2. Write status Initializing at the first member placed; keep Ready semantics unchanged."
+      - "3. Make NodeClaim go Joining -> Running when its Node is Ready; the existing integration tests that accept Joining must then require Running (scale_to_zero_test.go, subscribe_clusters_test.go)."
+      - "4. subscribeClusters: no clusters -> empty snapshot, not ClusterNotFound (keep ClusterNotFound for an unknown ?name=)."
+      - "5. Live check: create two clusters at once on a market network; both reach Ready about together; subscribe shows Initializing early and the claim reaching Running."
+    done_when: "two clusters created together are Ready at about the same time; Initializing appears with the first member; NodeClaims reach Running; integration tests updated to require Running pass."
+    status: todo
   - id: M2-EVENT-DRIVEN-PLACEMENT
     title: "B - the HostProcess supervisor wakes on a kcp change; placement and readiness stop waiting on tickers"
     depends_on: [M1-DEPENDENCY-GRAPH]
@@ -95,7 +118,7 @@ items:
     status: todo
   - id: M3-PROD-READING
     title: Release, deploy, and read the new timing on prod
-    depends_on: [M1-DEPENDENCY-GRAPH, M2-EVENT-DRIVEN-PLACEMENT]
+    depends_on: [M1-DEPENDENCY-GRAPH, M2b-CLUSTERS-AND-PHASES, M2-EVENT-DRIVEN-PLACEMENT]
     decision: >
       After merge, release and deploy with README.md "Release -> prod" (gateway deploy.sh, bidder
       upgrade), then time a fresh cluster with the README "Cluster XRPC with goat" flow (createCluster
