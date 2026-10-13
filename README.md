@@ -101,6 +101,18 @@ PATH=$PWD:$PATH KUBECONFIG=demo.kubeconfig kubectl get ns
 call procedure controlPlaneDown name=demo; call procedure deleteCluster name=demo
 ```
 
+Status: `call query listClusters | jq '.clusters[] | {name,phase,running}'`. Phases: `Unavailable` -> `Initializing` -> `Ready` (`Draining` on stop).
+
+Expected timing (prod, 2026-10-13, members start one after another):
+
+| Step | Typical |
+|---|---|
+| createCluster -> Ready (postgres 19 s, openbao 14, front 13, kine 11, k3s 19, ccm 10, eso webhook 13, eso 19, 2 iroh links 29, gaps) | ~2 min 45 s |
+| pod at 0 nodes -> NodeClaim -> RFP -> bid -> VM Running -> node Ready -> pod Running | ~60 s |
+| pod deleted -> 0 nodes, vm.delete (includes 2 min idle hold) | ~2-3 min |
+
+Slower = check gateway log: `journalctl _UID=$(id -u socialweb) -o cat | grep -E 'member (placed|ready)|status|node scale'`.
+
 `getKubeconfig` alone also creates the cluster but leaves it stopped (`running=false`; credential mint answers 429 until `controlPlaneUp`). Kubeconfig carries a device key: keep 0600, never commit.
 
 Scale from zero: apply a pod to a tenant cluster at 0 nodes -> NodeClaim -> RFP -> VM -> node Ready -> pod Running (prod: ~60 s). Delete pod -> back to 0 nodes, vm.delete (~2-3 min incl. hold).
