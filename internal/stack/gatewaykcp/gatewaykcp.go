@@ -237,7 +237,7 @@ func Run(ctx context.Context, c Config, m hostsvc.Manager) error {
 			return err
 		}
 		if ok {
-			addr, err := runEgress(ctx, m, c.log())
+			addr, err := runEgress(ctx, m, filepath.Join(l.KcpDir(), egressRecord), c.log())
 			if err != nil {
 				return err
 			}

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -16,6 +17,7 @@ import (
 const (
 	ListenerEgress = "egress"
 	egressDialTime = 10 * time.Second
+	egressRecord   = "egress.addr"
 )
 
 type egressMap struct {
@@ -98,8 +100,25 @@ func (m egressMap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	<-done
 }
 
-func runEgress(ctx context.Context, m egressMap, log *slog.Logger) (net.Addr, error) {
+func listenEgress(record string) (net.Listener, error) {
+	if b, err := os.ReadFile(record); err == nil {
+		if ln, err := net.Listen("tcp", strings.TrimSpace(string(b))); err == nil {
+			return ln, nil
+		}
+	}
 	ln, err := net.Listen("tcp", DefaultAddress)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(record, []byte(ln.Addr().String()+"\n"), 0o600); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
+}
+
+func runEgress(ctx context.Context, m egressMap, record string, log *slog.Logger) (net.Addr, error) {
+	ln, err := listenEgress(record)
 	if err != nil {
 		return nil, err
 	}
