@@ -1,0 +1,48 @@
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^task\//
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+default:
+  tags: [socialweb-computer-kcp]
+  interruptible: true
+
+variables:
+  GIT_STRATEGY: fetch
+  GIT_DEPTH: "20"
+  GIT_CLEAN_FLAGS: -ffdx
+
+gate:
+  timeout: 30m
+  before_script:
+    - test -n "$HOME" && test "$(id -u)" != 0
+    - export CI_STATE="$HOME/.tmp/ci"
+    - export TMPDIR="$CI_STATE/tmp/$CI_JOB_ID" GOCACHE="$CI_STATE/go-build" GOMODCACHE="$CI_STATE/go-mod" DENO_DIR="$CI_STATE/deno-dir"
+    - rm -rf "$CI_STATE/tmp" && mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE" "$DENO_DIR"
+    - platform="$(go env GOOS)/$(go env GOARCH)"
+    - deno_url="$(jq -er --arg p "$platform" '.assets.deno.fetch[$p].url' internal/versions/versions.json)"
+    - deno_sha="$(jq -er --arg p "$platform" '.assets.deno.fetch[$p].sha256' internal/versions/versions.json)"
+    - export DENO_BIN="$CI_STATE/deno/$deno_sha/deno"
+    - |
+      if [ ! -x "$DENO_BIN" ]; then
+        curl -fsSL --max-time 120 -o "$TMPDIR/deno.zip" "$deno_url"
+        echo "$deno_sha  $TMPDIR/deno.zip" | sha256sum -c --quiet -
+        mkdir -p "$(dirname "$DENO_BIN")"
+        unzip -q -o "$TMPDIR/deno.zip" deno -d "$(dirname "$DENO_BIN")"
+      fi
+    - export PATH="$(dirname "$DENO_BIN"):$PATH"
+    - go version && deno --version | head -1
+  script:
+    - timeout -k 10 300 go mod download
+    - timeout -k 10 300 deno install --frozen --node-modules-dir=none --quiet
+    - timeout -k 10 300 go build ./...
+    - timeout -k 10 300 go vet ./...
+    - timeout -k 10 300 deno task --quiet check
+    - timeout -k 10 600 deploy/check.sh --fast
+    - test -z "$(git status --porcelain)"
+    - timeout -k 10 600 go run ./cmd/socialweb-tsbundle -release -deno "$DENO_BIN" -out "$TMPDIR/tsb-out"
+  after_script:
+    - rm -rf "$HOME/.tmp/ci/tmp/$CI_JOB_ID"
