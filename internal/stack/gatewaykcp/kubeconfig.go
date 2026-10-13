@@ -24,7 +24,7 @@ func memberRestConfig(path string) (*rest.Config, error) {
 		return nil, err
 	}
 	cfg.Host, _, _ = strings.Cut(strings.TrimSuffix(cfg.Host, "/"), "/clusters/")
-	return cfg, nil
+	return kcpserver.FollowTokenFile(cfg), nil
 }
 
 const (

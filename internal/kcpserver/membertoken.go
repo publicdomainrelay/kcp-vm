@@ -4,10 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -68,4 +72,54 @@ func writeTokenAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+type tokenFileTransport struct {
+	path  string
+	base  http.RoundTripper
+	mu    sync.Mutex
+	stamp time.Time
+	size  int64
+	token string
+}
+
+func (t *tokenFileTransport) current() string {
+	st, err := os.Stat(t.path)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if err != nil {
+		return t.token
+	}
+	if t.token != "" && st.ModTime().Equal(t.stamp) && st.Size() == t.size {
+		return t.token
+	}
+	b, err := os.ReadFile(t.path)
+	if err != nil {
+		return t.token
+	}
+	t.token, t.stamp, t.size = strings.TrimSpace(string(b)), st.ModTime(), st.Size()
+	return t.token
+}
+
+func (t *tokenFileTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("Authorization") != "" {
+		return t.base.RoundTrip(req)
+	}
+	token := t.current()
+	if token == "" {
+		return t.base.RoundTrip(req)
+	}
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+token)
+	return t.base.RoundTrip(req)
+}
+
+func FollowTokenFile(cfg *rest.Config) *rest.Config {
+	if cfg == nil || cfg.BearerTokenFile == "" {
+		return cfg
+	}
+	path := cfg.BearerTokenFile
+	cfg.BearerToken, cfg.BearerTokenFile = "", ""
+	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper { return &tokenFileTransport{path: path, base: rt} })
+	return cfg
 }

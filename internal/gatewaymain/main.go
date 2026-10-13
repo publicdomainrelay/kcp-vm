@@ -22,6 +22,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devicekey"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/plcresolver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/plcsweep"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/sweepkcp"
@@ -77,6 +78,7 @@ func buildDeps(cfg Config) (Deps, error) {
 	if err != nil {
 		return Deps{}, fmt.Errorf("reading %s: %w", envKCPKubeconfig, err)
 	}
+	kcpserver.FollowTokenFile(kcpRestConfig)
 	if fi, err := os.Stat(cfg.MintKubeconfigs); err != nil {
 		return Deps{}, fmt.Errorf("%s: %w", envMintKubeconfigs, err)
 	} else if !fi.IsDir() {

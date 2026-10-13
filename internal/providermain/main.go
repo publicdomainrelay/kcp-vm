@@ -21,6 +21,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodemarket"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
@@ -131,6 +132,7 @@ func buildInputs(cfg Config) (inputs, error) {
 	if err != nil {
 		return inputs{}, fmt.Errorf("reading %s: %w", cfg.KCPKubeconfig, err)
 	}
+	kcpserver.FollowTokenFile(restCfg)
 	registry, err := clusterprovider.NewRegistry(clusterprovider.RegistryOptions{
 		Host:       cfg.KCPHost,
 		RestConfig: restCfg,
