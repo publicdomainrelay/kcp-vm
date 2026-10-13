@@ -23,6 +23,7 @@ var (
 	ErrManifestMismatch = errors.New("upgrade: the binary does not match the sha256 it was published with")
 	ErrSelfCheck        = errors.New("upgrade: the new binary's self-check failed")
 	ErrNoPrevious       = errors.New("rollback: bin/previous names no binary")
+	ErrNoCoreUnit       = errors.New("no enabled core unit")
 	ErrDevBinary        = errors.New("the binary is a dev build (version says \"dev build, not reproducible\"); install and upgrade take a release build unless --allow-dev-binary is given (dev and test runs only)")
 	digestName          = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
@@ -149,7 +150,8 @@ func Upgrade(ctx context.Context, o UpgradeOptions) error {
 func (o UpgradeOptions) restart(ctx context.Context) error {
 	units := EnabledCoreUnits(o.Home)
 	if len(units) == 0 {
-		return nil
+		return fmt.Errorf("%w under %s: bin/current is switched but nothing was restarted; restart the core unit by hand",
+			ErrNoCoreUnit, filepath.Join(o.Home, UserUnitDir, WantsDir))
 	}
 	fmt.Fprintf(o.out(), "restarting %s\n", strings.Join(units, " "))
 	return o.Restart(ctx, units)

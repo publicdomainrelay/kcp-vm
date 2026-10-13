@@ -140,7 +140,11 @@ func (a *app) upgradeOptions(verb string, vals clicfg.Values) (install.UpgradeOp
 	if !filepath.IsAbs(state) {
 		return install.UpgradeOptions{}, fmt.Errorf("%s: state-dir %q is not absolute", verb, state)
 	}
-	return install.UpgradeOptions{StateDir: state, Home: state, RuntimeDir: install.OwnRuntimeDir(), Out: a.stdout,
+	u, err := user.Current()
+	if err != nil {
+		return install.UpgradeOptions{}, fmt.Errorf("%s: the invoking account: %w", verb, err)
+	}
+	return install.UpgradeOptions{StateDir: state, Home: u.HomeDir, RuntimeDir: install.OwnRuntimeDir(), Out: a.stdout,
 		SelfCheck: install.SelfCheck, Restart: install.RestartOwnUnits}, nil
 }
 
