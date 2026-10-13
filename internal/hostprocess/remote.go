@@ -99,7 +99,7 @@ func signalName(s syscall.Signal) string {
 
 func SpecOf(u hostsvc.UnitSpec) v1alpha1.HostProcessSpec {
 	s := v1alpha1.HostProcessSpec{Unit: u.Name, WorkDir: u.WorkDir, RestartPolicy: restartPolicy(u.Restart), After: u.After,
-		Wants: u.Wants, Slice: u.Slice, PrivateHostname: u.PrivateHostname, FdStore: int32(u.FDStore),
+		Wants: u.Wants, Slice: u.Slice, PrivateHostname: u.PrivateHostname, FdStore: int32(u.FDStore), EnvFiles: u.EnvFiles,
 		Placement: v1alpha1.HostProcessPlacementSupervisor}
 	if len(u.Exec) > 0 {
 		s.Exec, s.Argv = u.Exec[0], u.Exec[1:]
