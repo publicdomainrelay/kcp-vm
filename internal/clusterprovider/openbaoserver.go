@@ -28,7 +28,7 @@ import (
 const (
 	VaultClient      = "clusterprovider"
 	VaultAccessFile  = "access.json"
-	VaultSyncTimeout = 2 * time.Minute
+	VaultSyncTimeout = time.Minute
 	vaultTokenReuse  = 10 * time.Minute
 	vaultAccessMode  = 0o600
 )
@@ -316,6 +316,9 @@ func (h *UnitsHost) waitVault(ctx context.Context, key string, timeout time.Dura
 		}
 		if vaultSynced(o) {
 			return o, nil
+		}
+		if o.Status.Phase == v1alpha1.OpenBaoServerPhaseFailed && o.Status.ObservedGeneration == o.Generation {
+			return nil, fmt.Errorf("clusterprovider: the OpenBaoServer %s of %s failed: %s", o.Name, key, vaultState(o))
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("clusterprovider: the OpenBaoServer %s of %s is not Ready and synced to generation %d after %s: %s",

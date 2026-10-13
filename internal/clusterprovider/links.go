@@ -235,7 +235,7 @@ func (r *linkRun) ready(ctx context.Context, p procgroup.Member) error {
 			}
 			link := clusterlink.Object(r.cluster, r.target.service, r.target.port, status)
 			go func() {
-				wctx, done := context.WithTimeout(context.Background(), 5*time.Minute)
+				wctx, done := context.WithTimeout(context.Background(), time.Minute)
 				defer done()
 				r.retry(wctx, "Listening", func() error { return r.links.Recorder.WriteLink(wctx, link) })
 			}()

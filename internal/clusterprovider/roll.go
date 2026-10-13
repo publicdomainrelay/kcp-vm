@@ -453,7 +453,9 @@ func (h *UnitsHost) placeGated(ctx context.Context, key string, st procgroup.Ste
 	}
 	gctx, cancel := context.WithTimeout(ctx, GateTimeout)
 	defer cancel()
-	if err := gate(gctx, unitMember{path: st.Spec.Log}); err != nil {
+	if err := h.gateAlive(gctx, key, member, o.Status.Runtime.InvocationID, func(ctx context.Context) error {
+		return gate(ctx, unitMember{path: st.Spec.Log})
+	}); err != nil {
 		return nil, fmt.Errorf("clusterprovider: %s of %s never became ready: %w", member, key, err)
 	}
 	inv := o.Status.Runtime.InvocationID
@@ -619,7 +621,7 @@ func (r *Roller) RollCluster(ctx context.Context, key string, req RollRequest) (
 		return fail(err)
 	}
 	abort := func(err error) RollReport {
-		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		sctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		h.remove(sctx, ObjectName(key, StepMember(k3sStep)))
 		h.remove(sctx, ObjectName(key, StepMember(kineStep)))

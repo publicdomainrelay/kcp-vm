@@ -43,9 +43,9 @@ const (
 	ControlPlaneFile   = "controlplane.json"
 	ActiveSlot         = "a"
 
-	DefaultPlaceTimeout = 3 * time.Minute
-	DefaultStoreTimeout = 3 * time.Minute
-	DefaultReapTimeout  = 2 * time.Minute
+	DefaultPlaceTimeout = time.Minute
+	DefaultStoreTimeout = time.Minute
+	DefaultReapTimeout  = time.Minute
 	MemberOutputCap     = 64 << 20
 	memberStopGrace     = 30
 	frontStopGrace      = 10
@@ -354,7 +354,7 @@ func (h *UnitsHost) EnsureStore(ctx context.Context, key string) (Store, error) 
 				h.mu.Unlock()
 				return s, nil
 			}
-			if time.Now().After(deadline) {
+			if (o.Status.Phase == v1alpha1.PostgresPhaseFailed && o.Status.ObservedGeneration == o.Generation) || time.Now().After(deadline) {
 				return Store{}, fmt.Errorf("%w: the Postgres object %s of %s is %s: %s", procgroup.ErrPostgresUnavailable,
 					name, key, o.Status.Phase, o.Status.Message)
 			}
@@ -410,6 +410,47 @@ func (h *UnitsHost) Members(ctx context.Context, key string) ([]v1alpha1.HostPro
 		out = append(out, o)
 	}
 	return out, nil
+}
+
+func (h *UnitsHost) gateAlive(ctx context.Context, key, member, inv string, gate func(context.Context) error) error {
+	gctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	go func() {
+		for {
+			select {
+			case <-gctx.Done():
+				return
+			case <-time.After(unitPoll):
+			}
+			o, err := h.member(gctx, key, member)
+			if err != nil {
+				continue
+			}
+			if dead := memberDead(o, inv); dead != "" {
+				cancel(fmt.Errorf("clusterprovider: %s of %s %s", member, key, dead))
+				return
+			}
+		}
+	}()
+	err := gate(gctx)
+	if cause := context.Cause(gctx); err != nil && cause != nil && !errors.Is(cause, context.Canceled) && !errors.Is(cause, context.DeadlineExceeded) {
+		return fmt.Errorf("%w; the gate saw: %v", cause, err)
+	}
+	return err
+}
+
+func memberDead(o *v1alpha1.HostProcess, inv string) string {
+	if o == nil {
+		return "is gone"
+	}
+	switch o.Status.Phase {
+	case v1alpha1.HostProcessPhaseFailed, v1alpha1.HostProcessPhaseLost, v1alpha1.HostProcessPhaseStopped:
+		return fmt.Sprintf("is %s %s during its readiness gate: %s", o.Status.Phase, o.Status.LostReason, o.Status.Message)
+	}
+	if rt := o.Status.Runtime; rt != nil && inv != "" && rt.InvocationID != "" && rt.InvocationID != inv {
+		return fmt.Sprintf("restarted during its readiness gate (invocation %s, now %s): %s", inv, rt.InvocationID, o.Status.Message)
+	}
+	return ""
 }
 
 func (h *UnitsHost) member(ctx context.Context, key, member string) (*v1alpha1.HostProcess, error) {
@@ -653,6 +694,8 @@ func (h *UnitsHost) place(ctx context.Context, key, member string, cur *v1alpha1
 				}
 			case v1alpha1.HostProcessPhaseLost:
 				return nil, fmt.Errorf("%w: %s of %s is Lost %s: %s", ErrMemberLost, member, key, o.Status.LostReason, o.Status.Message)
+			case v1alpha1.HostProcessPhaseFailed:
+				return nil, fmt.Errorf("clusterprovider: %s of %s is Failed: %s", member, key, o.Status.Message)
 			}
 			if time.Now().After(deadline) {
 				return nil, fmt.Errorf("clusterprovider: %s of %s is %s after %s: %s", member, key, o.Status.Phase, h.c.PlaceTimeout, o.Status.Message)
@@ -775,7 +818,9 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 		if st.Ready == nil {
 			return fmt.Errorf("clusterprovider: %s of %s has no readiness gate", member, key)
 		}
-		if err := st.Ready(ctx, unitMember{path: spec.Log}); err != nil {
+		if err := h.gateAlive(ctx, key, member, o.Status.Runtime.InvocationID, func(ctx context.Context) error {
+			return st.Ready(ctx, unitMember{path: spec.Log})
+		}); err != nil {
 			return fmt.Errorf("clusterprovider: %s of %s never became ready: %w", member, key, err)
 		}
 		inv := o.Status.Runtime.InvocationID

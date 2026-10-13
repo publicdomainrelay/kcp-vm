@@ -25,7 +25,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
-const GateTimeout = 90 * time.Second
+const GateTimeout = 60 * time.Second
 
 const PollInterval = 250 * time.Millisecond
 
