@@ -7132,6 +7132,27 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   in this run: the gateway child's kcp never became ready under that load (kcp-start-informers), so its
   vaults were not listed live; no code path but the bidder's vault.yaml declares a plugin.
 
+- **Tenant cluster ports are kernel-picked and held by the front; no lease range, no probe (task
+  port0-cp, 2026-10-12).** Defect: each gateway leased tenant ports from its own lease file over
+  20000-29999 and only probed that a port was free when it handed it out, so two gateways on one host
+  (two market networks) handed out the same port before either member bound it (seen: 20036 for a k3s
+  cloud-controller-manager, 20024 for an OpenBao, 20000 for an apiserver front); the failfast stopgap
+  (one per-account lease file in 30000-32767) is removed with it. Now the front binds its listener on
+  port 0 (fd store, sticky in front.json) and holds every other member port as a non-listening
+  `[::]:0` socket in its fd store (section 8); k3s takes `--apiserver-port` from its own hold; dumbpipe
+  binds UDP port 0. The node's join secret carries the front port, which stays the same for the life of
+  the cluster because the front holds its socket across restarts (SIGKILL of a tenant front: back in 1 s,
+  inherited, same address and all 16 holds) and a k3s restart binds its held ports again. Readings (two
+  market networks p0a and p0b, `dev up --profile market-network --bidders 1 --with-gateway` at once, VMs
+  of test-0001, UTC): round 1 23:32:26-23:39:16, round 2 23:39:16-23:45:38, round 3 23:45:38-23:51:47;
+  in each round both tenant clusters came up (all members ready 120-131 s after dev up returned), a pod
+  applied at zero nodes ran 38-76 s later on a market node, `kubectl exec` through the front and the
+  apiserver link answered, and both clusters went back to zero nodes 32-44 s after the delete; no member
+  log and no core log named a bind failure. Front ports per round: 33003/46341, 42883/45575,
+  37749/37799. What still keeps a known address: only the edge (caddy 443, the kcp front, the web app
+  front), and `leases.json` records which port each front holds; after a host reboot the front binds its
+  recorded ports again and fails loudly (warning, new port) if one is taken.
+
 ## 16. Vocabulary
 
 | | |
