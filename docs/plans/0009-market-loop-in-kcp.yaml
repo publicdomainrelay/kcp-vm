@@ -90,7 +90,7 @@ items:
     files: ["internal/denokcp/api/v1alpha1/types_denopod.go", "internal/denokcp/provider", "deploy/apps/*/ (service templates)"]
     done_when: "the bidder, requester and web app DenoPods start with no token or CA file arguments; `kubectl get denopod -o yaml` shows each pod's projected set; a token rotation is picked up with no restart."
     risks: []
-    status: doing
+    status: done
     evidence:
   - id: M1-EXECUTION-STATUS
     milestone: M1
@@ -236,7 +236,7 @@ items:
     files: ["cmd/openbao-plugin-auth-sshsig/", "internal/openbao", "internal/openbaoctl", "internal/versions/versions.json", "api (OpenBaoServer spec.plugins)", "scripts/build-socialweb-computer.sh"]
     done_when: "on a market network bidder, a guest binds its host key once through the RFP cloud-init and logs in by signature; a second bind and a login with another key are refused; the market network's and the gateway's vaults list no sshsig mount; the plugin's sha256 in the catalog matches versions.json."
     risks: ["Plugin and bao versions must move together; the release build pins both and an upgrade re-registers the plugin before the server restarts.", "The plugin is a separate process of bao (go-plugin); bao's own mlock and plugin directory permissions apply."]
-    status: doing
+    status: done
     evidence:
   - id: M3-GUEST-IDENTITY-OPENBAO
     milestone: M3
