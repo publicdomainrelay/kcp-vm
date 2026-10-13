@@ -61,6 +61,10 @@ type Options struct {
 
 	CACert []byte
 
+	ClientCert []byte
+
+	ClientKey []byte
+
 	Timeout time.Duration
 }
 
@@ -107,6 +111,14 @@ func New(opts Options) (*Client, error) {
 			return nil, ErrNoCA
 		}
 		tlsConfig.RootCAs = pool
+	}
+	tlsConfig.Certificates = nil
+	if len(opts.ClientCert) > 0 || len(opts.ClientKey) > 0 {
+		cert, err := tls.X509KeyPair(opts.ClientCert, opts.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("openbao: the client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 	client, err := openbao.NewClient(config)
 	if err != nil {

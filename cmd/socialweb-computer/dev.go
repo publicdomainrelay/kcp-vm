@@ -867,7 +867,7 @@ func runDevCore(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 		return a.fail(exitFailed, "internal dev-core: %v", err)
 	}
 	if rec.Profile == bootstrap.ProfileMarketNetwork && rec.OpenBao == nil {
-		deno.OpenBaoFrom = appctl.NetworkOpenBao(rec.Layout.StateDir)
+		deno.OpenBaoFrom = appctl.NetworkOpenBao(rec.AdminKubeconfig, rec.BaseWorkspace)
 	}
 	m, err := a.instanceManager(ctx, rec)
 	if err != nil {

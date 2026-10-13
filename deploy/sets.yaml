@@ -354,9 +354,17 @@ sets:
             template: denopods/service.yaml
 
   - name: market-network
-    summary: the shared services of a MarketNetwork application - PLC, relay, dispatcher and its TLS front, two PDSes and the verifier - applied by its reconciler (internal/appctl); the bidders are child applications with their own kcp; needs denoruntime and a running deno provider
+    summary: the shared services of a MarketNetwork application - its OpenBaoServer network (the PKI the deno runtime issues the services' certificates from, through a client that holds only that policy), PLC, relay, dispatcher and its TLS front, two PDSes and the verifier - applied by its reconciler (internal/appctl); the bidders are child applications with their own kcp; needs denoruntime and a running deno provider
     values: MarketNetwork
     phases:
+      - name: vault
+        workspace: root
+        files:
+          - path: market-network/05-vault.yaml
+        after:
+          - kind: OpenBaoServer
+            name: network
+            for: Ready
       - name: workspaces
         workspace: root
         files:

@@ -134,6 +134,10 @@ type Options struct {
 
 	OpenBaoCACert []byte
 
+	OpenBaoClientCert []byte
+
+	OpenBaoClientKey []byte
+
 	OpenBaoMount string
 
 	OpenBaoRole string
@@ -286,9 +290,11 @@ func New(opts Options) (*Provider, error) {
 	// for a certificate is the first thing that needs it.
 	if opts.OpenBaoAddress != "" {
 		client, err := openbaoclient.New(openbaoclient.Options{
-			Address: opts.OpenBaoAddress,
-			Token:   opts.OpenBaoToken,
-			CACert:  opts.OpenBaoCACert,
+			Address:    opts.OpenBaoAddress,
+			Token:      opts.OpenBaoToken,
+			CACert:     opts.OpenBaoCACert,
+			ClientCert: opts.OpenBaoClientCert,
+			ClientKey:  opts.OpenBaoClientKey,
 		})
 		if err != nil {
 			opts.Log.Warn("openbao: no client, workloads will not serve TLS", "err", err)

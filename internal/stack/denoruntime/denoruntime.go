@@ -41,8 +41,11 @@ type Config struct {
 }
 
 type OpenBao struct {
-	Address string
-	Token   string
+	Address    string
+	Token      string
+	CACert     []byte
+	ClientCert []byte
+	ClientKey  []byte
 }
 
 func RunsDir(stateDir string) string { return filepath.Join(stateDir, "denokcp", "runs") }
@@ -168,8 +171,11 @@ func Run(ctx context.Context, c Config) error {
 		WriteStatus:    true,
 		RunsDir:        RunsDir(c.StateDir),
 		OpenBaoAddress: c.OpenBao.Address,
-		OpenBaoToken:   c.OpenBao.Token,
-		Log:            log,
+		OpenBaoToken:      c.OpenBao.Token,
+		OpenBaoCACert:     c.OpenBao.CACert,
+		OpenBaoClientCert: c.OpenBao.ClientCert,
+		OpenBaoClientKey:  c.OpenBao.ClientKey,
+		Log:               log,
 	})
 	if err != nil {
 		return err
