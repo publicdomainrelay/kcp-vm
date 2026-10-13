@@ -33,6 +33,7 @@ type Status struct {
 }
 
 type State struct {
+	Address    string    `json:"address,omitempty"`
 	Backend    string    `json:"backend"`
 	Generation int64     `json:"generation"`
 	SwitchedAt time.Time `json:"switchedAt"`
@@ -103,6 +104,12 @@ func New(ln net.Listener, o Options) (*Front, error) {
 			f.state = st
 		case !errors.Is(err, os.ErrNotExist):
 			return nil, err
+		}
+		if a := ln.Addr().String(); f.state.Address != a {
+			f.state.Address = a
+			if err := f.persist(f.state); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return f, nil
@@ -213,7 +220,7 @@ func (f *Front) SetBackend(addr string) (Status, error) {
 	f.mu.Lock()
 	next := f.state
 	if next.Backend != addr {
-		next = State{Backend: addr, Generation: f.state.Generation + 1, SwitchedAt: time.Now().UTC()}
+		next = State{Address: f.state.Address, Backend: addr, Generation: f.state.Generation + 1, SwitchedAt: time.Now().UTC()}
 		if err := f.persist(next); err != nil {
 			f.mu.Unlock()
 			return f.Status(), fmt.Errorf("apiserverfront: persisting the backend before the switch: %w", err)

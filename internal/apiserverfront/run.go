@@ -2,9 +2,11 @@ package apiserverfront
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 )
 
@@ -30,6 +32,26 @@ func (c Config) Validate() error {
 	return CheckSocketPath(c.Control)
 }
 
+func StickyAddress(statePath, address string) string {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || port != "0" {
+		return address
+	}
+	b, err := os.ReadFile(statePath)
+	if err != nil {
+		return address
+	}
+	var st State
+	if json.Unmarshal(b, &st) != nil || st.Address == "" {
+		return address
+	}
+	h, p, err := net.SplitHostPort(st.Address)
+	if err != nil || h != host || p == "" || p == "0" {
+		return address
+	}
+	return st.Address
+}
+
 func Run(ctx context.Context, c Config) error {
 	if err := c.Validate(); err != nil {
 		return err
@@ -39,7 +61,12 @@ func Run(ctx context.Context, c Config) error {
 		log = slog.Default()
 	}
 	log = log.With("component", "apiserver-front", "owner", c.Owner)
-	ln, inherited, err := Acquire(c.Address, c.FDStore, os.Getenv)
+	address := StickyAddress(c.State, c.Address)
+	ln, inherited, err := Acquire(address, c.FDStore, os.Getenv)
+	if err != nil && address != c.Address {
+		log.Warn("the front's previous address is taken; it binds a new one", "previous", address, "err", err.Error())
+		ln, inherited, err = Acquire(c.Address, c.FDStore, os.Getenv)
+	}
 	if err != nil {
 		return err
 	}
