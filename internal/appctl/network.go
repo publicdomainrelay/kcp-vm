@@ -106,6 +106,7 @@ type serviceReport struct {
 	notReady   []string
 	checks     []string
 	verifier   string
+	long       int
 }
 
 func (r serviceReport) ready() bool { return len(r.notReady) == 0 }
@@ -124,6 +125,9 @@ func (n *networks) services(ctx context.Context) (serviceReport, error) {
 		for _, l := range v.Listeners {
 			l.Component = key
 			r.listeners = append(r.listeners, l)
+		}
+		if s.Long {
+			r.long++
 		}
 		if !s.Long {
 			r.verifier = v.Phase
@@ -431,7 +435,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, false, "Checks", strings.Join(rep.checks, "; "))
 	} else {
 		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, true, "Ready",
-			fmt.Sprintf("%d service(s) Running and ready, each listening and carrying %s", len(rep.listeners), denov1alpha1.FinalizerDenoPod))
+			fmt.Sprintf("%d service(s) Running and ready, each listening and carrying %s", rep.long, denov1alpha1.FinalizerDenoPod))
 	}
 	switch rep.verifier {
 	case "Succeeded":
