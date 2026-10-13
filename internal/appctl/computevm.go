@@ -10,6 +10,8 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/computevm"
@@ -132,6 +134,29 @@ func providerValues(v *manifests.MarketBidder, spec v1alpha1.MarketBidderSpec, k
 	v.ProviderArgs, v.ProviderRead, v.ProviderRun, v.ProviderWrite = args, read, run, string(write)
 	v.Firecracker = manifests.Firecracker{WorkRoot: fc.WorkRoot}
 	return nil
+}
+
+func (ctl *Controller) guestComponents(ctx context.Context) []v1alpha1.ApplicationComponent {
+	var out []v1alpha1.ApplicationComponent
+	for _, k := range []struct {
+		kind     string
+		gvr      schema.GroupVersionResource
+		selector string
+	}{{"ComputeVM", computevm.GVR, ""}, {"HostProcess", HostProcessGVR, computevm.LabelComputeVM}} {
+		ri, err := ctl.client(ctl.c.workspace(), k.gvr)
+		if err != nil {
+			continue
+		}
+		list, err := ri.List(ctx, metav1.ListOptions{LabelSelector: k.selector})
+		if err != nil {
+			continue
+		}
+		for _, o := range list.Items {
+			phase, _, _ := unstructured.NestedString(o.Object, "status", "phase")
+			out = append(out, v1alpha1.ApplicationComponent{Kind: k.kind, Name: o.GetName(), Workspace: ctl.c.workspace(), Phase: phase})
+		}
+	}
+	return out
 }
 
 func (ctl *Controller) deleteComputeVMs(ctx context.Context) (int, error) {

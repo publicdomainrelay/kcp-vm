@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
@@ -112,17 +113,22 @@ func (ctl *Controller) deletePods(ctx context.Context, ws, owner string, keep []
 }
 
 type podView struct {
-	Name      string
-	Workspace string
-	Phase     string
-	Ready     bool
-	RunID     string
-	Address   string
-	Listeners []v1alpha1.ApplicationListener
+	Name       string
+	Workspace  string
+	Phase      string
+	Ready      bool
+	RunID      string
+	Address    string
+	Finalizers []string
+	Listeners  []v1alpha1.ApplicationListener
+}
+
+func (v podView) stopsItsProcess() bool {
+	return slices.Contains(v.Finalizers, denov1alpha1.FinalizerDenoPod)
 }
 
 func podViewOf(ws string, u *unstructured.Unstructured) podView {
-	v := podView{Name: u.GetName(), Workspace: ws}
+	v := podView{Name: u.GetName(), Workspace: ws, Finalizers: u.GetFinalizers()}
 	v.Phase, _, _ = unstructured.NestedString(u.Object, "status", "phase")
 	v.Ready, _, _ = unstructured.NestedBool(u.Object, "status", "ready")
 	v.RunID, _, _ = unstructured.NestedString(u.Object, "status", "runID")

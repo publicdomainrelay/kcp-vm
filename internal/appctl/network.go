@@ -11,10 +11,12 @@ import (
 	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
@@ -96,28 +98,90 @@ func (n *networks) applyServices(ctx context.Context, owner string, values *mani
 	return err
 }
 
-func (n *networks) services(ctx context.Context) (map[string]podView, []v1alpha1.ApplicationComponent, []v1alpha1.ApplicationListener, bool, error) {
-	views := map[string]podView{}
-	var comps []v1alpha1.ApplicationComponent
-	var ls []v1alpha1.ApplicationListener
-	ready := true
+type serviceReport struct {
+	views      map[string]podView
+	components []v1alpha1.ApplicationComponent
+	listeners  []v1alpha1.ApplicationListener
+	notReady   []string
+	checks     []string
+	verifier   string
+}
+
+func (r serviceReport) ready() bool { return len(r.notReady) == 0 }
+
+func (n *networks) services(ctx context.Context) (serviceReport, error) {
+	r := serviceReport{views: map[string]podView{}}
 	for _, s := range networkServices {
 		ws := n.ctl.c.workspace() + ":" + s.Workspace
 		v, found, err := n.ctl.pod(ctx, ws, s.Name)
 		if err != nil {
-			return nil, nil, nil, false, err
+			return r, err
 		}
-		views[s.Workspace+"/"+s.Name] = v
-		comps = append(comps, v.component())
+		key := s.Workspace + "/" + s.Name
+		r.views[key] = v
+		r.components = append(r.components, v.component())
 		for _, l := range v.Listeners {
-			l.Component = s.Workspace + "/" + s.Name
-			ls = append(ls, l)
+			l.Component = key
+			r.listeners = append(r.listeners, l)
 		}
-		if s.Long && (!found || !v.Ready) {
-			ready = false
+		if !s.Long {
+			r.verifier = v.Phase
+			continue
+		}
+		switch {
+		case !found:
+			r.notReady = append(r.notReady, key+" is not there")
+		case v.Phase != "Running" || !v.Ready:
+			r.notReady = append(r.notReady, fmt.Sprintf("%s is %s ready=%t", key, v.Phase, v.Ready))
+		case len(v.Listeners) == 0:
+			r.checks = append(r.checks, key+" reports no listener")
+		case !v.stopsItsProcess():
+			r.checks = append(r.checks, key+" carries no "+denov1alpha1.FinalizerDenoPod+" finalizer")
 		}
 	}
-	return views, comps, ls, ready, nil
+	return r, nil
+}
+
+const (
+	ConditionServicesReady  = "ServicesReady"
+	ConditionVerifierPassed = "VerifierPassed"
+	ConditionOwnKcp         = "OwnKcp"
+)
+
+func setCondition(conds *[]metav1.Condition, gen int64, t string, ok bool, reason, msg string) {
+	s := metav1.ConditionFalse
+	if ok {
+		s = metav1.ConditionTrue
+	}
+	meta.SetStatusCondition(conds, metav1.Condition{Type: t, Status: s, Reason: reason, Message: msg, ObservedGeneration: gen})
+}
+
+func (n *networks) ownKcp(apps []v1alpha1.NetworkAppStatus) []string {
+	front, _, _ := strings.Cut(strings.TrimSuffix(n.ctl.restCfg.Host, "/"), "/clusters/")
+	fronts := map[string]string{front: "the network"}
+	roots := map[string]string{n.ctl.c.Layout.KcpDir(): "the network"}
+	var shared []string
+	for _, a := range apps {
+		if a.KcpUrl == "" {
+			continue
+		}
+		if a.KcpRoot == "" {
+			shared = append(shared, a.Name+" reports no kcp root")
+			continue
+		}
+		f, _, _ := strings.Cut(strings.TrimSuffix(a.KcpUrl, "/"), "/clusters/")
+		if other, ok := fronts[f]; ok {
+			shared = append(shared, fmt.Sprintf("%s shares the kcp front %s with %s", a.Name, f, other))
+		}
+		if other, ok := roots[a.KcpRoot]; ok || strings.HasPrefix(a.KcpRoot, n.ctl.c.Layout.KcpDir()+string(filepath.Separator)) {
+			if other == "" {
+				other = "the network"
+			}
+			shared = append(shared, fmt.Sprintf("%s shares the kcp root %s with %s", a.Name, a.KcpRoot, other))
+		}
+		fronts[f], roots[a.KcpRoot] = a.Name, a.Name
+	}
+	return shared
 }
 
 func portFrom(address string) (string, error) {
@@ -253,7 +317,8 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	}
 	owner := ownerOf(u)
 	log := n.ctl.c.log().With("marketnetwork", o.Name)
-	st := v1alpha1.MarketNetworkStatus{ObservedGeneration: o.Generation, Network: o.Status.Network, Apps: o.Status.Apps}
+	st := v1alpha1.MarketNetworkStatus{ObservedGeneration: o.Generation, Network: o.Status.Network, Apps: o.Status.Apps,
+		Conditions: o.Status.Conditions}
 	write := func(phase v1alpha1.ApplicationPhase, msg string) error {
 		st.Phase, st.Message = phase, msg
 		return n.ctl.writeStatus(ctx, MarketNetworkGVR, o.Name, st)
@@ -301,12 +366,14 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 		n.applied[string(o.UID)] = o.Generation
 		log.Info("applied the network's services", "set", NetworkSet)
 	}
-	views, comps, ls, servicesReady, err := n.services(ctx)
+	rep, err := n.services(ctx)
 	if err != nil {
 		return err
 	}
-	st.Components, st.Listeners = comps, ls
-	if !servicesReady {
+	views := rep.views
+	st.Components, st.Listeners = rep.components, rep.listeners
+	if !rep.ready() {
+		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, false, "Waiting", strings.Join(rep.notReady, "; "))
 		return write(v1alpha1.ApplicationPhaseProvisioning, "waiting for the network's services to report ready")
 	}
 	bundle, err := n.caBundle(ctx)
@@ -357,10 +424,32 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 		}
 		allReady = allReady && a.Phase == v1alpha1.ApplicationPhaseReady
 	}
+	if len(rep.checks) > 0 {
+		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, false, "Checks", strings.Join(rep.checks, "; "))
+	} else {
+		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, true, "Ready",
+			fmt.Sprintf("%d service(s) Running and ready, each listening and carrying %s", len(rep.listeners), denov1alpha1.FinalizerDenoPod))
+	}
+	switch rep.verifier {
+	case "Succeeded":
+		setCondition(&st.Conditions, o.Generation, ConditionVerifierPassed, true, "Succeeded", "alice/verifier created an account on alice's PDS and saw its commit on the relay")
+	default:
+		setCondition(&st.Conditions, o.Generation, ConditionVerifierPassed, false, "Phase"+rep.verifier, "alice/verifier is "+rep.verifier)
+	}
+	if shared := n.ownKcp(apps); len(shared) > 0 {
+		setCondition(&st.Conditions, o.Generation, ConditionOwnKcp, false, "Shared", strings.Join(shared, "; "))
+	} else {
+		setCondition(&st.Conditions, o.Generation, ConditionOwnKcp, true, "Distinct", "the network and every child report their own kcp front and kcp root")
+	}
 	if !allReady {
 		return write(v1alpha1.ApplicationPhaseProvisioning, "the network's services are ready; waiting for its child applications")
 	}
-	return write(v1alpha1.ApplicationPhaseReady, fmt.Sprintf("%d service(s) and %d child application(s), each with its own kcp, are ready", len(comps), len(apps)))
+	for _, t := range []string{ConditionServicesReady, ConditionVerifierPassed, ConditionOwnKcp} {
+		if c := meta.FindStatusCondition(st.Conditions, t); c == nil || c.Status != metav1.ConditionTrue {
+			return write(v1alpha1.ApplicationPhaseProvisioning, "the child applications are ready; waiting for condition "+t)
+		}
+	}
+	return write(v1alpha1.ApplicationPhaseReady, fmt.Sprintf("%d service(s) and %d child application(s), each with its own kcp, are ready", len(rep.components), len(apps)))
 }
 
 func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value v1alpha1.MarketNetworkValue, pdsURL string, bidderDids []string) v1alpha1.NetworkAppStatus {
@@ -434,7 +523,7 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 	if !found {
 		return fail(fmt.Errorf("the root object of %s is not readable yet", c.id))
 	}
-	out.Phase, out.Message, out.Did, out.Listeners = rs.Phase, rs.Message, rs.Did, rs.Listeners
+	out.Phase, out.Message, out.Did, out.Components, out.Listeners = rs.Phase, rs.Message, rs.Did, rs.Components, rs.Listeners
 	if out.Phase == "" {
 		out.Phase = v1alpha1.ApplicationPhasePending
 	}

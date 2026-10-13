@@ -30,6 +30,7 @@
   "v1alpha1-3.openbaoservers.socialweb.computer": "sha256:ee130e06fc1c4c86b69261918f1ac6a33c4635577e3318f8f40d3396b369451d",
   "v1alpha1-4.gateways.socialweb.computer": "sha256:8ab626fc73c94488dfd3eed4976f0fc197c3316514e87f632158e860f4e8bbc1",
   "v1alpha1-4.marketbidders.socialweb.computer": "sha256:7c33b4ed858d0393eca82c0a7e72805fa70dc7697380f934587db2d59b0dada8",
+  "v1alpha1-4.marketnetworks.socialweb.computer": "sha256:66627217565334783eba6bb33917df717af34b4894aaedcac6ae046eda480286",
   "v1alpha1-4.nodeclaims.socialweb.computer": "sha256:818c9804cb818436355ff6767af2f6078b5fee4f67d476884a0874e89c35bd9f",
   "v1alpha1-4.openbaoservers.socialweb.computer": "sha256:5f33545f2bc1185b1eea32b6c05ce9122155a79cc3b68bbce2c80335d9a608f2",
   "v1alpha1-5.nodeclaims.socialweb.computer": "sha256:d0273de8c1e37889aff6eba9fd9292c048a56cdc2a3ffd70b0a5b42e1abad0fe"
