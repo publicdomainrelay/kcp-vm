@@ -649,6 +649,11 @@
       "type": "string",
       "description": "run request and run bidder: the market network instance (dev up --profile market-network) whose MarketNetwork hosts this invocation or bidder as a child application; unset, a requester invocation is a standalone instance under <state-dir>/requests"
     },
+    "market-network-file": {
+      "type": "string",
+      "description": "run bidder --profile market-network without --network (an installed bidder account joining a market network over the atproto market protocol only): a JSON file holding the MarketNetwork status (`dev status --instance <n> | jq .network.status`): its network value and bidderPdsUrl. The CA bundle it names must be readable by the bidder account",
+      "env": "SOCIALWEB_MARKET_NETWORK_FILE"
+    },
     "name": {
       "type": "string",
       "description": "run request: the invocation's name, a DNS label (default req-<UTC time>); release and resume take it as their argument. run bidder --network: the bidder's application name in the market network, a DNS label (default from the handle)"

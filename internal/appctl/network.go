@@ -324,8 +324,8 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	}
 	owner := ownerOf(u)
 	log := n.ctl.c.log().With("marketnetwork", o.Name)
-	st := v1alpha1.MarketNetworkStatus{ObservedGeneration: o.Generation, Network: o.Status.Network, Apps: o.Status.Apps,
-		Conditions: o.Status.Conditions}
+	st := v1alpha1.MarketNetworkStatus{ObservedGeneration: o.Generation, Network: o.Status.Network, BidderPdsUrl: o.Status.BidderPdsUrl,
+		Apps: o.Status.Apps, Conditions: o.Status.Conditions}
 	write := func(phase v1alpha1.ApplicationPhase, msg string) error {
 		st.Phase, st.Message = phase, msg
 		return n.ctl.writeStatus(ctx, MarketNetworkGVR, o.Name, st)
@@ -398,6 +398,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 		return write(v1alpha1.ApplicationPhaseProvisioning, "bob/pds: "+err.Error())
 	}
 	pdsURL := "https://127.0.0.1:" + pdsPort
+	st.BidderPdsUrl = pdsURL
 	var keep []string
 	for _, app := range o.Spec.Apps {
 		if c, err := n.child(app); err == nil {

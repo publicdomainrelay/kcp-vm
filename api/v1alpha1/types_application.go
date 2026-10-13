@@ -293,6 +293,8 @@ type MarketNetworkStatus struct {
 
 	Network *MarketNetworkValue `json:"network,omitempty"`
 
+	BidderPdsUrl string `json:"bidderPdsUrl,omitempty"`
+
 	Components []ApplicationComponent `json:"components,omitempty"`
 
 	Listeners []ApplicationListener `json:"listeners,omitempty"`

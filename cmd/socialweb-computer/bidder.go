@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,7 @@ import (
 const bidderIdentityWait = 30 * time.Minute
 
 var bidderOptions = slices.Concat([]string{backendOpt, "profile", "network", "name", "instance", "state-dir", "fg", "ready-timeout",
-	"network-timeout", "kcp-path", "kine-path", "deno-path", "bao-path", "asset-cache", "unit-prefix", "kcp-front-address"},
+	"network-timeout", "market-network-file", "kcp-path", "kine-path", "deno-path", "bao-path", "asset-cache", "unit-prefix", "kcp-front-address"},
 	devVMOptions, devOnly(tsbundle.SourceRootOption))
 
 type bidderRun struct {
@@ -43,6 +44,7 @@ type bidderRun struct {
 	policy         string
 	options        []v1alpha1.ApplicationOption
 	value          *v1alpha1.MarketNetworkValue
+	pdsURL         string
 	readyTimeout   time.Duration
 	networkTimeout time.Duration
 }
@@ -152,8 +154,10 @@ func runBidder(ctx context.Context, a *app, vals clicfg.Values, rest []string) i
 	switch {
 	case r.network != "" && r.profile != appctl.BidderProfileNetwork:
 		return a.fail(exitRefused, "run bidder: --network places the bidder in a market network, whose profile is %s, not %s", appctl.BidderProfileNetwork, r.profile)
-	case r.network == "" && r.profile == appctl.BidderProfileNetwork:
-		return a.fail(exitRefused, "run bidder: --profile %s needs --network <market network instance> (dev up --profile market-network)", r.profile)
+	case r.network == "" && r.profile == appctl.BidderProfileNetwork && r.vals.String("market-network-file") == "":
+		return a.fail(exitRefused, "run bidder: --profile %s needs --network <market network instance> (dev up --profile market-network), or --market-network-file for an installed bidder account", r.profile)
+	case r.network != "" && r.vals.String("market-network-file") != "":
+		return a.fail(exitRefused, "run bidder: --network places the bidder in the market network, which hands it the network value; --market-network-file is for a bidder outside it")
 	case r.network != "" && backend != hostsvc.BackendProc:
 		return a.fail(exitRefused, "run bidder: --network: the market network places its children under its own devsup; pass --host-backend=proc")
 	case r.network != "":
@@ -164,10 +168,40 @@ func runBidder(ctx context.Context, a *app, vals clicfg.Values, rest []string) i
 	if err := bidder.CheckHandle(r.handle); err != nil {
 		return a.fail(exitRefused, "run bidder: %v", err)
 	}
+	if p := r.vals.String("market-network-file"); p != "" {
+		if err := r.readMarketNetwork(p); err != nil {
+			return a.fail(exitRefused, "run bidder: --market-network-file: %v", err)
+		}
+	}
 	if backend == hostsvc.BackendSystemdUser {
 		return r.installedCore(ctx)
 	}
 	return r.standalone(ctx)
+}
+
+func (r *bidderRun) readMarketNetwork(path string) error {
+	if r.profile != appctl.BidderProfileNetwork {
+		return fmt.Errorf("it names a market network, whose profile is %s, not %s", appctl.BidderProfileNetwork, r.profile)
+	}
+	if r.value != nil {
+		return errors.New("it and the --network-* options both name the network value")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var st v1alpha1.MarketNetworkStatus
+	if err := json.Unmarshal(b, &st); err != nil {
+		return fmt.Errorf("%s is not a MarketNetwork status: %w", path, err)
+	}
+	if st.Network == nil || st.BidderPdsUrl == "" {
+		return fmt.Errorf("%s names no network value or bidderPdsUrl (dev status --instance <n> | jq .network.status, once the network is Ready)", path)
+	}
+	if _, err := os.Stat(st.Network.CaBundleRef); err != nil {
+		return fmt.Errorf("the network CA bundle: %w", err)
+	}
+	r.value, r.pdsURL = st.Network, st.BidderPdsUrl
+	return nil
 }
 
 func (r *bidderRun) kcpProvider() *v1alpha1.KcpProvider {
@@ -176,7 +210,7 @@ func (r *bidderRun) kcpProvider() *v1alpha1.KcpProvider {
 }
 
 func (r *bidderRun) spec() (v1alpha1.MarketBidderSpec, error) {
-	return bidder.Spec(bidder.SpecInput{Profile: r.profile, Handle: r.handle, Policy: r.policy, Network: r.value, Kcp: r.kcpProvider(),
+	return bidder.Spec(bidder.SpecInput{Profile: r.profile, Handle: r.handle, Policy: r.policy, Network: r.value, PdsUrl: r.pdsURL, Kcp: r.kcpProvider(),
 		Options: r.options})
 }
 

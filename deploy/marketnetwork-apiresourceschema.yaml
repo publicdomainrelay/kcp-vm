@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-4.marketnetworks.socialweb.computer
+  name: v1alpha1-5.marketnetworks.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -149,6 +149,8 @@ spec:
                   - relayUrls
                   - firehoseUrls
                   - qrOrigin
+              bidderPdsUrl:
+                type: string
               components:
                 type: array
                 items:
