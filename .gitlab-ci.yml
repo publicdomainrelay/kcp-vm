@@ -106,6 +106,7 @@ binaries:
     - timeout -k 10 1680 scripts/build-socialweb-computer.sh --platform linux/amd64 --platform linux/arm64 --commit "$CI_COMMIT_SHA" --build-root "$CI_STATE/release-build"
     - rel="$CI_STATE/release-build/release/$CI_COMMIT_SHA"
     - ls -la "$rel"
+    - find "$CI_STATE/out" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf {} +
     - rm -rf "$OUT/binaries" && mkdir -p "$OUT/binaries" && cp -a "$rel"/. "$OUT/binaries/"
     - (cd "$OUT/binaries" && sha256sum -c --quiet SHA256SUMS)
 
@@ -134,6 +135,7 @@ integration:
   extends: [.containers, .main-or-tag]
   timeout: 75m
   needs: [gate, guest-image]
+  interruptible: false
   variables:
     SOCIALWEB_IT_ACCOUNT: socialweb-ci
     SOCIALWEB_IT_LIVE_SLOT: none
@@ -144,6 +146,15 @@ integration:
     - timeout -k 30 4380 go test -tags integration -count=1 -v -timeout 72m ./test/integration/ 2>&1 | tee "$TMPDIR/it.log"
     - grep -E '^(--- |ok|FAIL)' "$TMPDIR/it.log"
   after_script:
+    - |
+      bin="/var/tmp/swcci/bin-$CI_JOB_ID/bin/socialweb-computer"
+      for d in /var/tmp/swcci/*/dev/*/; do
+        [ -x "$bin" ] && [ -d "$d" ] || continue
+        echo "dev down $(basename "$d") (left by a stopped run)"
+        XDG_RUNTIME_DIR="/run/user/$(id -u)" timeout -k 10 200 "$bin" dev down --instance "$(basename "$d")" --state-dir "$(dirname "$d")" >/dev/null 2>&1 &
+      done
+      wait
+      for r in /var/tmp/swcci/*/; do case "$r" in */bin-*/) ;; *) rm -rf "$r" ;; esac; done
     - rm -rf "/var/tmp/swcci/bin-$CI_JOB_ID" "$HOME/.tmp/ci/tmp/$CI_JOB_ID"
   artifacts:
     when: on_failure
