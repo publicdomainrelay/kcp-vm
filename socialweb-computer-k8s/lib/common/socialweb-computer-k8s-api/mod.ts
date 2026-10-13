@@ -495,6 +495,7 @@ export interface MarketLoopStatus {
   wins?: number;
   contractsActive?: number;
   streams?: MarketStreamStatus[];
+  recentDeclines?: MarketDecline[];
   updatedAt?: string;
 }
 
@@ -508,6 +509,12 @@ export interface MarketStreamStatus {
   cursor?: number;
   lagMs?: number;
   lastEventAt?: string;
+}
+
+export interface MarketDecline {
+  rfpUri: string;
+  reason: string;
+  at: string;
 }
 
 export interface MarketRequester {
@@ -701,7 +708,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-6.marketbidders.socialweb.computer",
+  schema: "v1alpha1-7.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -712,7 +719,7 @@ export const MARKET_REQUESTER_RESOURCE: ApiResource = {
   listKind: "MarketRequesterList",
   plural: "marketrequesters",
   singular: "marketrequester",
-  schema: "v1alpha1-4.marketrequesters.socialweb.computer",
+  schema: "v1alpha1-5.marketrequesters.socialweb.computer",
   export: "applications",
 };
 
@@ -734,7 +741,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-7.gateways.socialweb.computer",
+  schema: "v1alpha1-8.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -745,7 +752,7 @@ export const SSH_GATEWAY_RESOURCE: ApiResource = {
   listKind: "SshGatewayList",
   plural: "sshgateways",
   singular: "sshgateway",
-  schema: "v1alpha1-2.sshgateways.socialweb.computer",
+  schema: "v1alpha1-3.sshgateways.socialweb.computer",
   export: "applications",
 };
 
@@ -797,6 +804,7 @@ export type ApiTypeName =
   | "KcpProvider"
   | "MarketBidder"
   | "MarketBidderSpec"
+  | "MarketDecline"
   | "MarketDeclineCount"
   | "MarketIdentity"
   | "MarketIdentityMode"
@@ -1809,6 +1817,25 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "MarketDecline": {
+    "properties": {
+      "at": {
+        "type": "string"
+      },
+      "reason": {
+        "type": "string"
+      },
+      "rfpUri": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "rfpUri",
+      "reason",
+      "at"
+    ],
+    "type": "object"
+  },
   "MarketDeclineCount": {
     "properties": {
       "count": {
@@ -1987,6 +2014,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "declinedByReason": {
         "items": {
           "ref": "MarketDeclineCount"
+        },
+        "type": "array"
+      },
+      "recentDeclines": {
+        "items": {
+          "ref": "MarketDecline"
         },
         "type": "array"
       },
@@ -3937,6 +3970,24 @@ export function assertMarketStreamStatus(value: unknown): asserts value is Marke
 
 export function parseMarketStreamStatus(value: unknown): MarketStreamStatus {
   assertMarketStreamStatus(value);
+  return value;
+}
+
+export function validateMarketDecline(value: unknown): ApiIssue[] {
+  return validate("MarketDecline", value);
+}
+
+export function isMarketDecline(value: unknown): value is MarketDecline {
+  return validate("MarketDecline", value).length === 0;
+}
+
+export function assertMarketDecline(value: unknown): asserts value is MarketDecline {
+  const issues = validate("MarketDecline", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketDecline", issues);
+}
+
+export function parseMarketDecline(value: unknown): MarketDecline {
+  assertMarketDecline(value);
   return value;
 }
 

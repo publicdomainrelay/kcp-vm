@@ -184,6 +184,7 @@ export interface BidLedger {
   boundTo(rfpUri: string, computeVM: string): Promise<void>;
   lost(rfpUri: string, reason: string, at: string): Promise<void>;
   expired(rfpUri: string, at: string): Promise<void>;
+  release(rfpUri: string): Promise<boolean>;
   list(): Promise<BidEntry[]>;
 }
 

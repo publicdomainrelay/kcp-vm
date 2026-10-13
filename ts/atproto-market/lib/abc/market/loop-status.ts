@@ -10,6 +10,14 @@ export interface MarketStreamTally {
   lastEventAt?: string;
 }
 
+export interface MarketRecentDecline {
+  rfpUri: string;
+  reason: string;
+  at: string;
+}
+
+export const RECENT_DECLINES = 50;
+
 export interface MarketLoopView {
   rfpsSeen: number;
   rfpsScoped: number;
@@ -18,13 +26,15 @@ export interface MarketLoopView {
   wins: number;
   contractsActive: number;
   streams: MarketStreamTally[];
+  recentDeclines?: MarketRecentDecline[];
   updatedAt: string;
 }
 
 export interface MarketLoopRecorder {
   rfpSeen(): void;
   rfpScoped(): void;
-  declined(reason: string): void;
+  declined(reason: string, rfpUri?: string, at?: Date): void;
+  recentlyDeclined?(rfpUri: string): MarketRecentDecline | undefined;
   bid(): void;
   win(): void;
   contractsActive(count: number): void;
@@ -45,6 +55,7 @@ export class MarketLoopTally implements MarketLoopRecorder {
   #wins = 0;
   #contractsActive = 0;
   #streams = new Map<string, MarketStreamTally>();
+  #recent: MarketRecentDecline[] = [];
   #onChange: () => void;
 
   constructor(onChange: () => void = () => {}, initial?: Partial<MarketLoopView>) {
@@ -56,6 +67,11 @@ export class MarketLoopTally implements MarketLoopRecorder {
     this.#wins = initial?.wins ?? 0;
     this.#contractsActive = initial?.contractsActive ?? 0;
     for (const st of initial?.streams ?? []) this.#streams.set(st.source, { ...st });
+    this.#recent = (initial?.recentDeclines ?? []).slice(-RECENT_DECLINES).map((d) => ({ ...d }));
+  }
+
+  recentlyDeclined(rfpUri: string): MarketRecentDecline | undefined {
+    return this.#recent.find((d) => d.rfpUri === rfpUri);
   }
 
   cursorOf(source: string): number | undefined {
@@ -77,8 +93,12 @@ export class MarketLoopTally implements MarketLoopRecorder {
     this.#changed();
   }
 
-  declined(reason: string): void {
+  declined(reason: string, rfpUri?: string, at?: Date): void {
     this.#declined.set(reason, (this.#declined.get(reason) ?? 0) + 1);
+    if (rfpUri && at) {
+      this.#recent = [...this.#recent.filter((d) => d.rfpUri !== rfpUri), { rfpUri, reason, at: at.toISOString() }]
+        .slice(-RECENT_DECLINES);
+    }
     this.#changed();
   }
 
@@ -117,6 +137,7 @@ export class MarketLoopTally implements MarketLoopRecorder {
       wins: this.#wins,
       contractsActive: this.#contractsActive,
       streams: [...this.#streams.values()].sort((a, b) => a.source.localeCompare(b.source)),
+      ...(this.#recent.length ? { recentDeclines: this.#recent.map((d) => ({ ...d })) } : {}),
       updatedAt: at.toISOString(),
     };
   }

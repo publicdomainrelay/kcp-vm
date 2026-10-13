@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-4.marketrequesters.socialweb.computer
+  name: v1alpha1-5.marketrequesters.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -238,6 +238,21 @@ spec:
                           type: string
                       required:
                         - source
+                  recentDeclines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        rfpUri:
+                          type: string
+                        reason:
+                          type: string
+                        at:
+                          type: string
+                      required:
+                        - rfpUri
+                        - reason
+                        - at
                   updatedAt:
                     type: string
       additionalPrinterColumns:

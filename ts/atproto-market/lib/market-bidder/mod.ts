@@ -6,9 +6,10 @@ import { TID } from "@atproto/common";
 import { getPdsEndpoint } from "@atproto/common-web";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
 import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, getRecordAt } from "@publicdomainrelay/market-atproto";
-import type { DispatchRfpInput, MarketServerDeps, OfferingRefreshHandle, RfpGate, RfpObservation } from "@publicdomainrelay/market-atproto";
+import type { MarketServerDeps, OfferingRefreshHandle, RfpObservation } from "@publicdomainrelay/market-atproto";
 import { createMarketFactory } from "@publicdomainrelay/hono-factory-market-atproto";
-import { RFP_NSID, VOUCH_NSID } from "@publicdomainrelay/market-common";
+import { BID_NSID, RFP_NSID, VOUCH_NSID } from "@publicdomainrelay/market-common";
+import { createBidLoop } from "./bid-loop.ts";
 import type {
   ATProtoEventStreamsClient,
 } from "@publicdomainrelay/atproto-event-streams-client";
@@ -44,7 +45,6 @@ import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay
 import { parseAtUri, type ATProto } from "@publicdomainrelay/atproto-helpers";
 import type {
   ActiveContract,
-  BidEntry,
   BidLedger,
   CallbackFactoryDeps,
   CallbackSet,
@@ -186,50 +186,28 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const terminatedReceipts = new TerminatedReceipts();
   const contractStore = config.contractStore;
   const loop = config.loop;
-  const bids = config.bids;
-  const rfpsInFlight = new Map<string, Promise<unknown>>();
-  const duplicateRfp = (input: DispatchRfpInput, entry: BidEntry | null, why: string): Response => {
-    logger.info("rfp_duplicate_delivery", {
-      rfpUri: input.rfpUri, via: input.req ? "push" : "firehose", why, bid: entry?.name, phase: entry?.phase,
-    });
-    return new Response(
-      JSON.stringify({ ok: true, duplicate: true, ...(entry?.bid ? { bidUri: entry.bid.uri, bidCid: entry.bid.cid } : {}) }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    );
-  };
-  const findBid = async (rfpUri: string): Promise<BidEntry | null> => {
-    if (!bids) return null;
-    try {
-      return await bids.find(rfpUri);
-    } catch (err) {
-      logger.warn("bid_read_failed", { rfpUri, error: String(err) });
-      return null;
-    }
-  };
-  const rfpGate: RfpGate = async (input, run) => {
-    const running = rfpsInFlight.get(input.rfpUri);
-    if (running) {
-      await running.catch(() => {});
-      return duplicateRfp(input, await findBid(input.rfpUri), "in flight");
-    }
-    const done = Promise.withResolvers<void>();
-    rfpsInFlight.set(input.rfpUri, done.promise);
-    try {
-      const existing = await findBid(input.rfpUri);
-      if (existing) return duplicateRfp(input, existing, "a Bid answers it");
-      return await run();
-    } finally {
-      rfpsInFlight.delete(input.rfpUri);
-      done.resolve();
-    }
-  };
+  const bidLoop = createBidLoop({
+    selfDid: atproto.did,
+    bids: config.bids,
+    loop,
+    logger,
+    listOwnBids: async () => {
+      const out = await atproto.listRecords(atproto.did, BID_NSID, { limit: 100 });
+      return (out?.records ?? []).map((r) => ({
+        uri: r.uri,
+        cid: r.cid ?? "",
+        rfpUri: ((r.value as Record<string, unknown>).rfp as { uri?: string } | undefined)?.uri,
+      }));
+    },
+  });
+  const rfpGate = bidLoop.rfpGate;
   const observeRfp = loop
     ? (o: RfpObservation): void => {
       if (o.outcome === "seen") loop.rfpSeen();
       else if (o.outcome === "scoped") loop.rfpScoped();
       else if (o.outcome === "bid") loop.bid();
       else if (o.outcome === "duplicate") return;
-      else loop.declined(declineReasonOf(o.reason ?? "unknown"));
+      else loop.declined(declineReasonOf(o.reason ?? "unknown"), o.rfpUri, new Date());
     }
     : undefined;
   const saveContractChange = contractStore || onContractChange || loop
@@ -495,7 +473,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       getVouchedDids,
       resolveOperatorDid,
       evaluator,
-      bids,
+      bids: bidLoop.ledger,
       scopePolicy: canonical,
     };
 
@@ -506,10 +484,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
     const merged: CallbackSet = {};
     const restores: Array<() => Promise<void>> = [];
-    // Dedup accept dispatch: push XRPC and firehose watcher both deliver the
-    // same accept record. Once either path processes it, the other must skip.
-    const acceptedUris = new Map<string, number>();
-    let acceptSweepCounter = 0;
+    const acceptsInFlight = new Map<string, Promise<unknown>>();
     for (const p of providers ?? []) {
       const cb = p.buildCallbacks(deps);
       if (cb.restore) restores.push(() => cb.restore!());
@@ -536,24 +511,31 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     }
 
     for (const restore of restores) await restore();
+    await bidLoop.restore().catch((err: unknown) => logger.warn("bids_restore_failed", { error: String(err) }));
 
-    // Wrap merged.onAccept so the same acceptUri is never processed twice --
-    // push XRPC and firehose watcher converge on this single callback.
     if (merged.onAccept) {
-      const _raw = merged.onAccept;
+      const raw = merged.onAccept;
       merged.onAccept = async (opts) => {
-        if (acceptedUris.has(opts.acceptUri)) {
-          log("info", "accept already processed, skipping duplicate dispatch", { acceptUri: opts.acceptUri });
-          return { status: 200 };
+        const running = acceptsInFlight.get(opts.acceptUri);
+        if (running) {
+          logger.info("accept_duplicate_delivery", { acceptUri: opts.acceptUri, via: "in flight" });
+          await running.catch(() => {});
         }
-        acceptedUris.set(opts.acceptUri, Date.now());
-        acceptSweepCounter++;
-        if (acceptSweepCounter > 100) {
-          const cutoff = Date.now() - 3_600_000; // 1 hour TTL
-          for (const [k, ts] of acceptedUris) if (ts < cutoff) acceptedUris.delete(k);
-          acceptSweepCounter = 0;
+        const refused = await bidLoop.checkAccept({
+          acceptUri: opts.acceptUri,
+          acceptCid: opts.acceptCid,
+          issuerDid: opts.issuerDid,
+          rfp: opts.accept.rfp as { uri: string } | undefined,
+          bid: opts.accept.bid as { uri: string } | undefined,
+        });
+        if (refused) return refused;
+        const work = Promise.resolve(raw(opts));
+        if (!running) acceptsInFlight.set(opts.acceptUri, work);
+        try {
+          return await work;
+        } finally {
+          if (acceptsInFlight.get(opts.acceptUri) === work) acceptsInFlight.delete(opts.acceptUri);
         }
-        return _raw(opts);
       };
     }
 
@@ -668,12 +650,24 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
             const value = acceptRec.value as Record<string, unknown>;
             const bidRef = value.bid as { uri?: string } | undefined;
             if (!bidRef?.uri) return;
-            try {
-              const { repo, collection, rkey } = parseAtUri(bidRef.uri);
-              if (repo !== atproto.did) return;
-              const existing = await atproto.getRecord(repo, collection, rkey);
-              if (!existing) return;
-            } catch { return; }
+            const ownBid = parseAtUri(bidRef.uri).repo === atproto.did;
+            if (bidLoop.ledger) {
+              const seen = await bidLoop.acceptSeen({
+                acceptUri: e.uri,
+                acceptCid: e.cid,
+                issuerDid: e.did,
+                rfp: value.rfp as { uri: string } | undefined,
+                bid: { uri: bidRef.uri },
+              });
+              if (seen !== "ours" || !ownBid) return;
+            } else {
+              try {
+                const { repo, collection, rkey } = parseAtUri(bidRef.uri);
+                if (!ownBid) return;
+                const existing = await atproto.getRecord(repo, collection, rkey);
+                if (!existing) return;
+              } catch { return; }
+            }
             log("info", "accept watch matched own bid", { acceptUri: e.uri, bidUri: bidRef.uri });
             await merged.onAccept!({
               acceptUri: e.uri,
@@ -786,6 +780,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
   function shutdown(): void {
     eventStreams?.close();
+    bidLoop.close();
     offeringRefresher?.stop();
     activeContracts.clear();
     for (const p of providers ?? []) {

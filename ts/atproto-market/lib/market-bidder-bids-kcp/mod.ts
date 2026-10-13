@@ -149,6 +149,13 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
         timings: { ...s.timings, finishedAt: at },
       }));
     },
+    async release(rfpUri) {
+      const name = await bidNameOf(rfpUri);
+      const bid = await bids.get(name);
+      if (!bid || (bid.status?.phase ?? "Deciding") !== "Deciding") return false;
+      pending.delete(name);
+      return await bids.delete(name, bid.metadata?.uid ? { uid: bid.metadata.uid, resourceVersion: bid.metadata.resourceVersion } : undefined);
+    },
     async list() {
       const out = await bids.list();
       return out.items.map(bidEntryOf);

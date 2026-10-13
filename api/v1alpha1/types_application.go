@@ -145,7 +145,17 @@ type MarketLoopStatus struct {
 
 	Streams []MarketStreamStatus `json:"streams,omitempty"`
 
+	RecentDeclines []MarketDecline `json:"recentDeclines,omitempty"`
+
 	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+type MarketDecline struct {
+	RfpUri string `json:"rfpUri"`
+
+	Reason string `json:"reason"`
+
+	At string `json:"at"`
 }
 
 type MarketDeclineCount struct {
