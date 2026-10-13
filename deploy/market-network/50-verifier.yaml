@@ -60,7 +60,7 @@ spec:
           resolve(v);
         };
         const ws = new WebSocket(RELAY);
-        const timer = setTimeout(() => done("timeout"), 90_000);
+        const timer = setTimeout(() => done("timeout"), 30_000);
         ws.onmessage = async (ev) => {
           frames++;
           let text = "";

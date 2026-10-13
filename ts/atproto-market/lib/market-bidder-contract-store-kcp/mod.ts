@@ -8,7 +8,7 @@ import type { KcpComputeVMClient } from "@publicdomainrelay/compute-provider-kcp
 import { acceptKeyOf, type ComputeVMAccepts } from "@publicdomainrelay/compute-provider-kcp-abc";
 import type { ComputeVM, ComputeVMContract } from "@publicdomainrelay/compute-provider-kcp-common";
 
-export const DEFAULT_ACCEPT_APPLY_WAIT_MS = 60_000;
+export const DEFAULT_ACCEPT_APPLY_WAIT_MS = 30_000;
 export const KCP_PROVIDER = "kcp";
 
 export interface KcpContractStoreLogger {

@@ -30,7 +30,7 @@ export interface ResolvedOpenBaoServer {
   kvMount: string;
 }
 
-const DEFAULT_READY_TIMEOUT_MS = 180_000;
+const DEFAULT_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_POLL_MS = 1_000;
 
 async function readRef(ref: string | undefined, what: string): Promise<string> {
@@ -69,6 +69,11 @@ export function createOpenBaoServerResolver(opts: OpenBaoServerKcpOptions): () =
         reason = err instanceof Error ? err.message : String(err);
       }
       if (!reason) break;
+      const current: OpenBaoServer | null = o;
+      const st = current?.status;
+      if (st?.phase === "Failed" && st.observedGeneration === current?.metadata?.generation) {
+        throw new Error(`openbaoserver ${opts.name} failed: ${st.message ?? ""}`);
+      }
       if (Date.now() > deadline) throw new Error(`openbaoserver ${opts.name} is not ready: ${reason}`);
       opts.onWaiting?.(reason);
       await new Promise((r) => setTimeout(r, opts.pollMs ?? DEFAULT_POLL_MS));

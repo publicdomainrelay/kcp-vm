@@ -474,6 +474,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     let provisionFailure: string | undefined;
 
     if (rfpRef) {
+      let provisionTimer: ReturnType<typeof setTimeout> | undefined;
       providerIdPromise = Promise.race([
         (async (): Promise<string | number | undefined> => {
           const rfpResolved = await acceptResolve.resolve({ uri: rfpRef.uri, cid: rfpRef.cid });
@@ -540,14 +541,17 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
           cbLog("info", "bidder provisioned VM", { providerId: result.providerId, metadata: result.metadata });
           return result.providerId;
         })(),
-        new Promise<undefined>((_, reject) =>
-          setTimeout(() => reject(new Error(`provisioning timed out after ${PROVISION_TIMEOUT_MS / 1000} s`)), PROVISION_TIMEOUT_MS)
-        ),
+        new Promise<undefined>((_, reject) => {
+          provisionTimer = setTimeout(
+            () => reject(new Error(`provisioning timed out after ${PROVISION_TIMEOUT_MS / 1000} s`)),
+            PROVISION_TIMEOUT_MS,
+          );
+        }),
       ]).catch((err) => {
         provisionFailure = err instanceof Error ? err.message : String(err);
         cbLog("error", "bidder failed to provision VM", { error: String(err) });
         return undefined;
-      });
+      }).finally(() => clearTimeout(provisionTimer));
     }
 
     const acceptBare: Record<string, unknown> = {};

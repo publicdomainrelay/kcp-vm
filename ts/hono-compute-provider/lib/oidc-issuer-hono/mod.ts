@@ -100,7 +100,7 @@ export function createMemoryNonceStore(): NonceStore {
 const DEFAULT_TOKEN_TTL_SECONDS = 60 * 60 * 24;
 const DEFAULT_NONCE_LEN = 64;
 const DEFAULT_PROVISIONING_TTL_SECONDS = 60 * 15;
-const DEFAULT_REPORTED_HOST_KEY_WAIT_MS = 300_000;
+const DEFAULT_REPORTED_HOST_KEY_WAIT_MS = 30_000;
 const DEFAULT_KEY_REFRESH_MS = 30_000;
 
 export const PROVISIONING_TOKEN_PATH = "/root/secrets/publicdomainrelay.com/provisioning/token";
@@ -592,18 +592,19 @@ ACCEPT_CID=\$(jq -r '.accept.cid // empty' "\${ACCEPT_JSON}" 2>/dev/null)
 # Wait for the iroh listener to write the address
 # a requester dials. Without it there is nothing reachable to report.
 FQDN=""
-for i in \$(seq 1 300); do
+for i in \$(seq 1 45); do
   FQDN=\$(cat /run/guest-fqdn 2>/dev/null) && [ -n "\${FQDN}" ] && break
+  systemctl is-failed --quiet iroh.service && { echo "guest-onnetwork: iroh.service failed"; break; }
   sleep 2
 done
 if [ -z "\${FQDN}" ]; then
-  echo "guest-onnetwork: no /run/guest-fqdn after 600s, not reporting"
+  echo "guest-onnetwork: no /run/guest-fqdn, not reporting"
   systemctl list-jobs --no-pager 2>&1 | tail -20
   systemctl status iroh.service ssh.service --no-pager 2>&1 | tail -40
   exit 1
 fi
 echo "guest-onnetwork: reporting \${FQDN}"
-curl -sf --retry 10 --retry-delay 5 --retry-max-time 120 \\
+curl -sf -m 15 --retry 10 --retry-delay 3 --retry-max-time 60 \\
   -X POST "\${BASE_URL}/v1/on-network" \\
   -H "Authorization: Bearer \${TOKEN}" \\
   -H "Content-Type: application/json" \\
@@ -621,7 +622,7 @@ ConditionPathExists=/root/secrets/publicdomainrelay.com/market/accept.json
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-TimeoutStartSec=900
+TimeoutStartSec=180
 ExecStart=/usr/local/bin/send-onnetwork.sh
 StandardOutput=journal+console
 StandardError=journal+console

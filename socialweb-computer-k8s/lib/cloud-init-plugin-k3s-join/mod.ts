@@ -71,9 +71,9 @@ export const POD_MTU = 1160;
 export const POD_BRIDGE = "cni0";
 export const POD_EGRESS_COMMENT = "socialweb-pod-egress";
 export const CNI_CONFLIST_NAME = "10-socialweb-bridge.conflist";
-export const CNI_WAIT_ATTEMPTS = 90;
+export const CNI_WAIT_ATTEMPTS = 30;
 
-export const DIAGNOSE_ATTEMPTS = 30;
+export const DIAGNOSE_ATTEMPTS = 6;
 
 export const NODE_SECRETS_LINK_ATTEMPTS = 120;
 

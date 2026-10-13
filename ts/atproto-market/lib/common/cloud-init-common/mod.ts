@@ -389,7 +389,7 @@ if [ -z "\${SECRETS_URL}" ] || [ -z "\${SECRETS_AUD}" ]; then
   exit 1
 fi
 
-for _ in \$(seq 1 60); do
+for _ in \$(seq 1 30); do
   [ -f "\${ACCEPT_JSON}" ] && break
   sleep 2
 done
@@ -404,7 +404,7 @@ URL_ROUTE="\$(printf '%s' "\${WIF}" | jq -r '.url_route // "/v1/oidc/issue"')"
 [ -n "\${TOKEN_PATH}" ] || { echo "accept.json has no bid_config token_path" >&2; exit 1; }
 [ -n "\${URL_PATH}" ] || { echo "accept.json has no bid_config url_path" >&2; exit 1; }
 
-for _ in \$(seq 1 60); do
+for _ in \$(seq 1 30); do
   [ -s "\${TOKEN_PATH}" ] && [ -s "\${URL_PATH}" ] && break
   sleep 2
 done
@@ -661,7 +661,7 @@ rm -f "\${TICKET_FILE}" "\${LOG}"
 DUMBPIPE_PID=$!
 
 TICKET=""
-for _ in $(seq 1 300); do
+for _ in $(seq 1 150); do
   if [ -s "\${LOG}" ]; then
     TICKET="$(grep -a 'connect-tcp' "\${LOG}" | tail -n 1 | awk '{print $NF}')"
   fi
@@ -743,7 +743,7 @@ export interface HostKeysReporterOptions {
 
 export function hostKeysReporterScript(opts: HostKeysReporterOptions): string {
   const sshDir = opts.sshDir ?? "/etc/ssh";
-  const attempts = opts.attempts ?? 60;
+  const attempts = opts.attempts ?? 12;
   const delay = opts.retryDelaySec ?? 5;
   return [
     "#!/usr/bin/env bash",
@@ -754,7 +754,7 @@ export function hostKeysReporterScript(opts: HostKeysReporterOptions): string {
     'OUT="${TMPDIR:-/tmp}/guest-hostkeys.out"',
     'ERR="${TMPDIR:-/tmp}/guest-hostkeys.err"',
     'ED25519="${SSH_DIR}/ssh_host_ed25519_key"',
-    "for _ in $(seq 1 150); do",
+    "for _ in $(seq 1 45); do",
     '  [ -f "${ED25519}" ] && [ -f "${ED25519}.pub" ] && [ -s "${TOKEN_PATH}" ] && break',
     "  sleep 2",
     "done",
@@ -773,7 +773,7 @@ export function hostKeysReporterScript(opts: HostKeysReporterOptions): string {
     'PAYLOAD="$(jq -nc --argjson keys "${KEYS}" --arg token "${TOKEN}" --arg sig "${SIG}" \'{keys: $keys, token: $token, signature: $sig}\')"',
     'echo "guest-hostkeys: reporting $(jq -r \'[.[] | .type + " " + .fingerprint] | join(", ")\' <<<"${KEYS}")"',
     `for _ in $(seq 1 ${attempts}); do`,
-    '  CODE="$(curl -sS -m 20 -o "${OUT}" -w \'%{http_code}\' -X POST "${URL}" -H \'Content-Type: application/json\' -d "${PAYLOAD}" 2>>"${ERR}" || echo 000)"',
+    '  CODE="$(curl -sS -m 10 -o "${OUT}" -w \'%{http_code}\' -X POST "${URL}" -H \'Content-Type: application/json\' -d "${PAYLOAD}" 2>>"${ERR}" || echo 000)"',
     '  echo "guest-hostkeys: http ${CODE} ${URL}"',
     '  if [ "${CODE}" = "200" ]; then echo "guest-hostkeys: reported"; exit 0; fi',
     '  case "${CODE}" in 400|403|409) echo "guest-hostkeys: refused: $(cat "${OUT}" 2>/dev/null)"; exit 1 ;; esac',
@@ -795,7 +795,7 @@ export function hostKeysReporterModule(opts: HostKeysReporterOptions): UserDataM
     "[Service]",
     "Type=oneshot",
     "RemainAfterExit=yes",
-    "TimeoutStartSec=900",
+    "TimeoutStartSec=180",
     `ExecStart=${HOST_KEYS_REPORTER_SCRIPT}`,
     "StandardOutput=journal+console",
     "StandardError=journal+console",
