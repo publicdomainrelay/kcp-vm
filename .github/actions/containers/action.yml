@@ -22,6 +22,14 @@ runs:
         fi
         (cd rust && timeout -k 10 300 rustup toolchain install && rustc --version)
 
+    - name: user namespaces
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+        unshare --user --map-root-user true
+        df -h / | tail -1
+
     - name: container runtime
       shell: bash
       run: |
