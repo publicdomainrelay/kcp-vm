@@ -57,6 +57,8 @@ To pin a version instead of taking the newest, set `V` yourself: `V=v0.0.0-rc3`.
 
 On a bidder host, `--guest-image-source` takes the guest image you name. It accepts a `file://` or `https://` base, fetches `image.json`, `vmlinux` and `rootfs.ext4` from `<base>/<file>`, and verifies each against the sha256 pinned in the bidder's build, so a guest image that does not match those pins is refused:
 
+`BUCKET` and `V` are the variables set in the block above; set them again in a new shell.
+
 ```bash
 HANDLE=bobvmbuilder.bsky.social
 sudo ~/.local/bin/socialweb-computer install bidder --handle "$HANDLE" \
@@ -230,10 +232,11 @@ The install writes and enables one unit, `socialweb-computer-bidder@<handle>.ser
 ```bash
 sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) \
   systemctl --user status 'socialweb-computer-bidder@<handle>.service'
-sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) \
-  journalctl --user -u 'socialweb-computer-bidder@<handle>.service' --since -10min
-journalctl -t kcp --since -10min
+sudo journalctl _SYSTEMD_USER_UNIT='socialweb-computer-bidder@<handle>.service' --since -10min
+sudo journalctl -t kcp --since -10min
 ```
+
+`swc-bidder` is a system account (uid below 1000), so systemd writes its user units' log lines to the system journal, not to a per-user journal. `journalctl --user` as that account finds nothing and reports "insufficient permissions"; read the system journal as root with the `_SYSTEMD_USER_UNIT` filter above.
 
 - The unit is `Type=notify` with a watchdog. Its start timeout is `--ready-timeout` plus six minutes; a core that never becomes ready is killed and restarted.
 - Every run writes `ready-timeout` and `network-timeout` to the account's `config.json`, passed or not; the installed core reads its budgets there. The file changes only when a value changes.
@@ -441,7 +444,7 @@ U=$(kubectl --kubeconfig $K get marketidentity bidder -o jsonpath='{.status.pend
 deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.bobvmbuilder_bsky_social_source --account BOB --url "$U"
 ```
 
-For the bidder, read the current QR url from the `MarketIdentity` object's `status.pendingAction.url` in the bidder's kcp (see [Inspect the kcp of an application](#inspect-the-kcp-of-an-application)).
+For the bidder, read the current QR url from the `MarketIdentity` object's `status.pendingAction.url` in the bidder's kcp (see [Inspect the kcp of an application](#inspect-the-kcp-of-an-application)). On an installed bidder host the kcp kubeconfig is readable by root only, so run `kubectl` through `sudo` with `K=/var/lib/socialweb-computer/swc-bidder/handles/<hash>/kcp/admin.kubeconfig`; the `MarketIdentity` appears a few seconds after `install bidder` returns, so retry on `NotFound`. Run `oauth-signin.ts` on a machine with Chrome, passing the url.
 
 `oauth-signin.ts` options: `--creds`, `--account`, and `--url` (all required), `--out` (the screenshot directory), `--done "<text>"` (wait for this text after consent), `--chrome` (the browser path, default `/usr/bin/google-chrome`).
 
