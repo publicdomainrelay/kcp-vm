@@ -49,7 +49,13 @@ export function createOpenBaoWebSignIn(opts: OpenBaoWebSignInOptions): WebSignIn
       }
     },
     agentFor(caller: WebCaller): WebAccountAgent {
-      return createCustodyAgent({ custody: opts.connector.forToken(caller.token), did: caller.did, pds: caller.pds });
+      return createCustodyAgent({
+        custody: opts.connector.forToken(caller.token),
+        did: caller.did,
+        pds: caller.pds,
+        onRetry: (event) => log("web_account_request_retry", { did: caller.did, ...event }),
+        onGiveUp: (event) => log("web_account_request_gave_up", { did: caller.did, ...event }),
+      });
     },
   };
 }

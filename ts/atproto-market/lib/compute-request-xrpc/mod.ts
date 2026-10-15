@@ -1,5 +1,5 @@
 import { Secp256k1Keypair } from "@atproto/crypto";
-import { IdResolver } from "@atproto/identity";
+import { IdResolver, MemoryCache } from "@atproto/identity";
 import { getPdsEndpoint } from "@atproto/common-web";
 import {
   createRecordResolver,
@@ -7,11 +7,14 @@ import {
   getRecordAt,
   listRecordsAll,
   listRecordsPublic,
+  publicGet,
   scanRecords,
+  type ListedRecord,
   verifyRecordSignatures,
   verifyRemoteProof,
 } from "@publicdomainrelay/market-atproto";
 import { atUriAuthority, stripResolved } from "@publicdomainrelay/market-abc";
+import { TtlMemo } from "@publicdomainrelay/ttl-memo-common";
 import {
   ACCEPT_NSID,
   BID_NSID,
@@ -149,7 +152,67 @@ export function defaultVmName(): string {
   return `compute-${Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("")}`;
 }
 
+export const RELAY_DISCOVERY_CACHE_MS = 180_000;
+export const OFFERINGS_CACHE_MS = 120_000;
+export const DID_DOC_STALE_MS = 60_000;
+export const DID_DOC_MAX_MS = 300_000;
+
+const relayDiscoveryMemo = new TtlMemo<string[]>({ ttlMs: RELAY_DISCOVERY_CACHE_MS });
+const offeringsMemo = new TtlMemo<ListedRecord[]>({ ttlMs: OFFERINGS_CACHE_MS });
+const idResolvers = new Map<string, IdResolver>();
+
+export function sharedIdResolver(plcUrl?: string): IdResolver {
+  const key = plcUrl ?? "";
+  let resolver = idResolvers.get(key);
+  if (!resolver) {
+    resolver = new IdResolver({
+      ...(plcUrl ? { plcUrl } : {}),
+      didCache: new MemoryCache(DID_DOC_STALE_MS, DID_DOC_MAX_MS),
+    });
+    idResolvers.set(key, resolver);
+  }
+  return resolver;
+}
+
+export function clearRequesterReadCaches(): void {
+  relayDiscoveryMemo.clear();
+  offeringsMemo.clear();
+  idResolvers.clear();
+}
+
+export function requesterReadCacheStats(): Record<string, unknown> {
+  return { relayDiscovery: relayDiscoveryMemo.stats(), offerings: offeringsMemo.stats() };
+}
+
+function listOfferingsCached(pdsUrl: string, bidderDid: string): Promise<ListedRecord[]> {
+  return offeringsMemo.get(
+    `${pdsUrl}|${bidderDid}|${OFFERING_NSID}`,
+    () => listRecordsAll(pdsUrl, bidderDid, OFFERING_NSID),
+    (records) => records.length > 0 ? OFFERINGS_CACHE_MS : false,
+  );
+}
+
 export async function discoverBiddersFromRelay(opts: {
+  relayUrl: string;
+  collection: string;
+  log?: LoggerInterface;
+  timeoutMs?: number;
+}): Promise<string[]> {
+  const { relayUrl, collection, log, timeoutMs } = opts;
+  const key = `${relayUrl}|${collection}`;
+  const cached = relayDiscoveryMemo.peek(key);
+  if (cached) {
+    log?.info("relay_discovery_cached", { relayUrl, collection, count: cached.length });
+    return cached;
+  }
+  return await relayDiscoveryMemo.get(
+    key,
+    () => queryRelayForBidders({ relayUrl, collection, log, timeoutMs }),
+    (dids) => dids.length > 0 ? RELAY_DISCOVERY_CACHE_MS : false,
+  );
+}
+
+async function queryRelayForBidders(opts: {
   relayUrl: string;
   collection: string;
   log?: LoggerInterface;
@@ -163,9 +226,7 @@ export async function discoverBiddersFromRelay(opts: {
       encodeURIComponent(collection)
     }&limit=1000`;
     log?.info("relay_discovery_query", { url, collection });
-    const res = await fetch(url, {
-      signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
-    });
+    const res = await publicGet(url, timeoutMs ?? 10_000);
     if (!res.ok) {
       log?.warn("relay_discovery_http_error", { relayUrl, status: res.status, collection });
       return [];
@@ -366,7 +427,7 @@ async function getRecordFrom(
   const recordUrl = `${pdsUrl}/xrpc/com.atproto.repo.getRecord?repo=${
     encodeURIComponent(repo)
   }&collection=${encodeURIComponent(collection)}&rkey=${rkey}`;
-  const res = await fetch(recordUrl);
+  const res = await publicGet(recordUrl);
   const data = await res.json();
   const value = data.value as Record<string, unknown> | undefined;
   if (!value) return null;
@@ -980,7 +1041,7 @@ export async function requestCompute(
   const scopeCache = opts.scopeCache;
   const scopeRefresher = opts.scopeRefresher;
   wireTrustInvalidation(opts.eventStreams, scopeCache, scopeRefresher, log);
-  const idResolver = new IdResolver({ plcUrl: opts.plcUrl });
+  const idResolver = sharedIdResolver(opts.plcUrl);
   const resolveRecord = opts.recordResolver ?? createIdRecordResolver(idResolver);
   const verifyReceipt = opts.receiptVerifier ?? createReceiptVerifier(resolveRecord);
   const findReceipt = opts.receiptFinder ?? createRepoReceiptFinder(idResolver);
@@ -1466,7 +1527,7 @@ runcmd:
           try {
             const pdsUrl = await pdsUrlOf(idResolver, bidderDid);
             if (!pdsUrl) return;
-            const offerings = await listRecordsAll(pdsUrl, bidderDid, OFFERING_NSID);
+            const offerings = await listOfferingsCached(pdsUrl, bidderDid);
             for (const offering of offerings) {
               const appliesTo = offering.value.appliesTo as string[] | undefined;
               const endpointUrl = offering.value.endpointUrl as string | undefined;
@@ -2063,7 +2124,7 @@ export async function awaitComputeNetwork(
   const watch = openContractWatch({
     pds,
     eventStreams: opts.eventStreams,
-    idResolver: new IdResolver({ plcUrl: opts.plcUrl }),
+    idResolver: sharedIdResolver(opts.plcUrl),
     logger: opts.logger,
     log,
     verifyEvent: opts.eventVerifier,
@@ -2126,7 +2187,7 @@ export async function awaitComputeTermination(
   const watch = openContractWatch({
     pds,
     eventStreams: opts.eventStreams,
-    idResolver: new IdResolver({ plcUrl: opts.plcUrl }),
+    idResolver: sharedIdResolver(opts.plcUrl),
     logger: opts.logger,
     log,
     verifyEvent: opts.eventVerifier,
@@ -2168,7 +2229,7 @@ export async function awaitComputeHostKeys(
   const watch = openContractWatch({
     pds,
     eventStreams: opts.eventStreams,
-    idResolver: new IdResolver({ plcUrl: opts.plcUrl }),
+    idResolver: sharedIdResolver(opts.plcUrl),
     logger: opts.logger,
     log,
     verifyEvent: opts.eventVerifier,
@@ -2344,7 +2405,7 @@ type SessionLister = {
 };
 
 async function ownRecords(pds: Pick<RequesterPDS, "did">, plcUrl: string | undefined) {
-  const idResolver = new IdResolver({ plcUrl });
+  const idResolver = sharedIdResolver(plcUrl);
   const marketDid = (pds as unknown as { oauthSession?: { userDid?: string } }).oauthSession?.userDid ?? pds.did;
   const oauthAgent = (pds as unknown as Record<string, unknown>).oauthAgent as SessionLister | undefined;
   const ownApi = (pds as unknown as { api?: SessionLister }).api;

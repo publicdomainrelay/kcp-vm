@@ -3,7 +3,17 @@ import { getPdsEndpoint } from "@atproto/common-web";
 import type { IdResolver } from "@atproto/identity";
 import { parseAtUri, type RecordRef, type RecordResolver } from "@publicdomainrelay/market-abc";
 import { strongRef, OFFERING_NSID, RECEIPT_NSID, type Logger, type Resolved, type StrongRef } from "@publicdomainrelay/market-common";
+import { fetchWithRetry } from "@publicdomainrelay/http-retry-fetch";
 import { createRemoteProofRecord, type RecordSigner } from "./signing.ts";
+
+const PUBLIC_READ_RETRY = { maxTotalWaitMs: 30_000, maxAttempts: 5 };
+
+export function publicGet(url: string, timeoutMs = 10_000): Promise<Response> {
+  return fetchWithRetry(() => fetch(url, { signal: AbortSignal.timeout(timeoutMs) }), {
+    label: `GET ${new URL(url).pathname}`,
+    policy: PUBLIC_READ_RETRY,
+  });
+}
 
 /**
  * Create a record in the agent's own repo and return a strongRef to it. The
@@ -106,7 +116,7 @@ export async function listRecordsAll(
     url.searchParams.set("collection", collection);
     url.searchParams.set("limit", String(pageLimit));
     if (cursor) url.searchParams.set("cursor", cursor);
-    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await publicGet(url.toString(), timeoutMs);
     if (!res.ok) break;
     const data = await res.json() as { records: Array<{ uri: string; cid: string; value: unknown }>; cursor?: string };
     for (const r of data.records) out.push({ uri: r.uri, cid: r.cid, value: r.value as Record<string, unknown> });
@@ -125,7 +135,7 @@ export async function getRecordAt(
   url.searchParams.set("repo", repo);
   url.searchParams.set("collection", collection);
   url.searchParams.set("rkey", rkey);
-  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(opts.timeoutMs ?? 10000) });
+  const res = await publicGet(url.toString(), opts.timeoutMs ?? 10000);
   if (!res.ok) {
     await res.body?.cancel();
     return null;
@@ -151,7 +161,7 @@ export async function scanRecords(
     url.searchParams.set("collection", collection);
     url.searchParams.set("limit", String(pageLimit));
     if (cursor) url.searchParams.set("cursor", cursor);
-    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await publicGet(url.toString(), timeoutMs);
     if (!res.ok) {
       await res.body?.cancel();
       return false;
@@ -243,7 +253,7 @@ export function createRecordResolver(idResolver: IdResolver, own?: OwnRepo): Rec
       const pds = getPdsEndpoint(doc);
       if (!pds) throw new Error(`no pds endpoint for ${repo}`);
       const url = `${pds}/xrpc/com.atproto.repo.getRecord?repo=${repo}&collection=${collection}&rkey=${rkey}`;
-      const res = await fetch(url);
+      const res = await publicGet(url);
       if (!res.ok) throw new Error(`getRecord failed: ${res.status}`);
       const data = await res.json() as { uri: string; cid?: string; value: T };
       return { ...data.value, _uri: data.uri, _cid: data.cid ?? ref.cid } as Resolved<T>;

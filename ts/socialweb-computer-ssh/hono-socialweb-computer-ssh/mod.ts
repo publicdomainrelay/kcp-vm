@@ -172,7 +172,12 @@ const runner = createInProcessRequester({
   }),
   agentWithoutOAuthFor: (did) => {
     const session = testOwnerSessions?.get(did);
-    return session ? createPasswordSessionAgent(session) : null;
+    return session
+      ? createPasswordSessionAgent(session, {
+        onRetry: (event) => logger.info("password_session_request_retry", { did, ...event }),
+        onGiveUp: (event) => logger.warn("password_session_request_gave_up", { did, ...event }),
+      })
+      : null;
   },
   capabilityFor: async (did) => {
     const paired = await cocorePairing.token(did);

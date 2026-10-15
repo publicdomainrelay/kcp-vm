@@ -1906,6 +1906,11 @@
           "jsr:@publicdomainrelay/kcp-client-common@0"
         ]
       },
+      "socialweb-computer-k8s/lib/socialweb-computer-session-password": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/http-retry-fetch@0"
+        ]
+      },
       "socialweb-computer-k8s/lib/socialweb-computer-web-signin-openbao": {
         "dependencies": [
           "jsr:@publicdomainrelay/atproto-session-custody-abc@0",
@@ -1987,6 +1992,7 @@
       },
       "ts/atproto-market/lib/atproto-helpers": {
         "dependencies": [
+          "jsr:@publicdomainrelay/http-retry-fetch@0",
           "npm:@atproto/api@~0.20.8",
           "npm:@atproto/common-web@0.5",
           "npm:@atproto/identity@0.5"
@@ -2000,7 +2006,9 @@
       },
       "ts/atproto-market/lib/atproto-session-custody-openbao": {
         "dependencies": [
-          "jsr:@publicdomainrelay/atproto-session-custody-abc@0"
+          "jsr:@publicdomainrelay/atproto-session-custody-abc@0",
+          "jsr:@publicdomainrelay/http-retry-common@0",
+          "jsr:@publicdomainrelay/http-retry-fetch@0"
         ]
       },
       "ts/atproto-market/lib/common/cloud-init-common": {
@@ -2037,6 +2045,7 @@
           "jsr:@publicdomainrelay/requester-abc@0",
           "jsr:@publicdomainrelay/scope-refresh-timers@0",
           "jsr:@publicdomainrelay/trust-graph-tangled-graph@0",
+          "jsr:@publicdomainrelay/ttl-memo-common@0",
           "npm:@atproto/common-web@0.5",
           "npm:@atproto/crypto@0.5",
           "npm:@atproto/identity@0.5"
@@ -2180,6 +2189,7 @@
       },
       "ts/atproto-market/lib/market-atproto": {
         "dependencies": [
+          "jsr:@publicdomainrelay/http-retry-fetch@0",
           "npm:@atproto/api@~0.20.8",
           "npm:@atproto/common-web@0.5",
           "npm:@atproto/crypto@0.5",
@@ -2736,6 +2746,11 @@
           "jsr:@publicdomainrelay/hono-error-middleware@0",
           "jsr:@publicdomainrelay/http-error@0",
           "jsr:@publicdomainrelay/logger@0"
+        ]
+      },
+      "ts/typescript-helpers/lib/http-retry-fetch": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/http-retry-common@0"
         ]
       },
       "ts/typescript-helpers/lib/kcp-client-rest": {

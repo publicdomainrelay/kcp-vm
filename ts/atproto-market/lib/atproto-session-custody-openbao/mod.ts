@@ -5,6 +5,9 @@ import {
   originOf,
   SessionCustodyError,
 } from "@publicdomainrelay/atproto-session-custody-abc";
+import { fetchWithRetry, retryNoteOf } from "@publicdomainrelay/http-retry-fetch";
+import type { GiveUpEvent, RetryEvent } from "@publicdomainrelay/http-retry-fetch";
+import type { RetryPolicy } from "@publicdomainrelay/http-retry-common";
 import type {
   CustodyAgent,
   CustodyCompleteInput,
@@ -358,6 +361,9 @@ export interface CustodyFetchOptions {
   pds: string;
   fetch?: typeof fetch;
   nonces?: NonceBook;
+  retry?: Partial<RetryPolicy> | false;
+  onRetry?: (event: RetryEvent) => void;
+  onGiveUp?: (event: GiveUpEvent) => void;
 }
 
 export type CustodyFetchHandler = (url: string, init?: RequestInit) => Promise<Response>;
@@ -373,7 +379,7 @@ export function createCustodyFetchHandler(opts: CustodyFetchOptions): CustodyFet
     const url = resolveAgainst(opts.pds, target);
     const origin = originOf(url);
     const method = (init?.method ?? "GET").toUpperCase();
-    for (let attempt = 0;; attempt++) {
+    const sendOnce = async (): Promise<Response> => {
       const proof = await opts.custody.proof({
         did: opts.did,
         method,
@@ -386,6 +392,22 @@ export function createCustodyFetchHandler(opts: CustodyFetchOptions): CustodyFet
       const res = await baseFetch(url, { ...init, method, headers });
       const nonce = res.headers.get(DPOP_NONCE_HEADER);
       if (nonce) nonces.set(origin, nonce);
+      return res;
+    };
+    const retryable = opts.retry !== false && !(init?.body instanceof ReadableStream);
+    const send = retryable
+      ? () =>
+        fetchWithRetry(sendOnce, {
+          label: `${method} ${new URL(url).pathname}`,
+          ...(opts.retry ? { policy: opts.retry } : {}),
+          ...(opts.onRetry ? { onRetry: opts.onRetry } : {}),
+          ...(opts.onGiveUp ? { onGiveUp: opts.onGiveUp } : {}),
+          ...(init?.signal ? { signal: init.signal } : {}),
+        })
+      : sendOnce;
+    for (let attempt = 0;; attempt++) {
+      const res = await send();
+      const nonce = res.headers.get(DPOP_NONCE_HEADER);
       if (attempt > 0 || !nonce || init?.body instanceof ReadableStream) return res;
       let errorCode: string | undefined;
       if (res.status === 400 || res.status === 401) {
@@ -416,8 +438,11 @@ export function createCustodySessionManager(opts: CustodyFetchOptions): CustodyS
 
 async function expectOk(res: Response, what: string): Promise<Response> {
   if (!res.ok) {
+    const note = retryNoteOf(res);
     throw new Error(
-      `${what} failed: ${res.status} ${(await res.text().catch(() => "")).slice(0, 200)}`,
+      `${what} failed: ${res.status} ${(await res.text().catch(() => "")).slice(0, 200)}${
+        note === "" ? "" : ` (${note})`
+      }`,
     );
   }
   return res;

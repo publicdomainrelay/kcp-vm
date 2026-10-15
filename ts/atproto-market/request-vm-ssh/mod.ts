@@ -182,7 +182,12 @@ if (accountsMode) {
     custody: custody.own,
     agentWithoutOAuthFor: (did) => {
       const session = testSessions?.get(did);
-      return session ? createPasswordSessionAgent(session) : null;
+      return session
+        ? createPasswordSessionAgent(session, {
+          onRetry: (event) => logger.info("password_session_request_retry", { did, ...event }),
+          onGiveUp: (event) => logger.warn("password_session_request_gave_up", { did, ...event }),
+        })
+        : null;
     },
     log: (event, data) => logger.info(event, data ?? {}),
   });

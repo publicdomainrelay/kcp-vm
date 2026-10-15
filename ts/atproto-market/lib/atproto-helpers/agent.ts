@@ -24,6 +24,7 @@ import {
 import type { RecordMap } from "@atiproto/atproto-attestation";
 import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
 import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
+import { fetchWithRetry } from "@publicdomainrelay/http-retry-fetch";
 
 export interface AtprotoAgentLike {
   did: string;
@@ -934,7 +935,7 @@ function createDpopFetch_(opts: {
   const { key, nonces } = opts;
   const fetcher = opts.fetch ?? globalThis.fetch;
 
-  return async function dpopFetch(url: string, init: RequestInit): Promise<Response> {
+  const dpopFetchOnce = async function dpopFetch(url: string, init: RequestInit): Promise<Response> {
     const authHdr = (init.headers as Record<string, string> | undefined)?.["Authorization"] ?? "";
     const ath = authHdr.startsWith("DPoP ")
       ? await sha256_(authHdr.slice(5))
@@ -984,6 +985,12 @@ function createDpopFetch_(opts: {
 
     return res;
   };
+
+  return (url: string, init: RequestInit): Promise<Response> =>
+    fetchWithRetry(() => dpopFetchOnce(url, init), {
+      label: `${init.method ?? "GET"} ${new URL(url).pathname}`,
+      ...(init.signal ? { signal: init.signal } : {}),
+    });
 }
 
 function createTokenRefreshLock_() {

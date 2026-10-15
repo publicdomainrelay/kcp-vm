@@ -51,7 +51,13 @@ export function createAccountAgents(opts: AccountAgentsOptions): AccountAgents {
     }
     const agent = cached && cached.pds === session.pds
       ? cached.agent
-      : createCustodyAgent({ custody: opts.custody, did, pds: session.pds });
+      : createCustodyAgent({
+        custody: opts.custody,
+        did,
+        pds: session.pds,
+        onRetry: (event) => log("account_agent_request_retry", { did, ...event }),
+        onGiveUp: (event) => log("account_agent_request_gave_up", { did, ...event }),
+      });
     agents.set(did, { agent, pds: session.pds, checkedAt: Date.now() });
     return agent;
   }

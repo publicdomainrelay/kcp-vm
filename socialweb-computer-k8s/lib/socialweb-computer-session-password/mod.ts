@@ -1,3 +1,5 @@
+import { fetchWithRetry, retryNoteOf } from "@publicdomainrelay/http-retry-fetch";
+
 export interface PasswordSessionConfig {
   service: string;
   identifier: string;
@@ -42,7 +44,11 @@ interface Session {
 
 export async function createPasswordSessionAgent(
   cfg: PasswordSessionConfig,
-  deps: { fetch?: typeof fetch } = {},
+  deps: {
+    fetch?: typeof fetch;
+    onRetry?: (event: import("@publicdomainrelay/http-retry-fetch").RetryEvent) => void;
+    onGiveUp?: (event: import("@publicdomainrelay/http-retry-fetch").GiveUpEvent) => void;
+  } = {},
 ): Promise<PasswordSessionAgent> {
   const doFetch = deps.fetch ?? ((input: string | URL | Request, init?: RequestInit) => fetch(input, init));
   const xrpc = (nsid: string) => `${cfg.service}/xrpc/${nsid}`;
@@ -66,13 +72,18 @@ export async function createPasswordSessionAgent(
     const url = new URL(xrpc(nsid));
     for (const [k, v] of Object.entries(init.query ?? {})) url.searchParams.set(k, v);
     const send = () =>
-      doFetch(url, {
-        method: init.method,
-        headers: {
-          authorization: `Bearer ${session.accessJwt}`,
-          ...(init.body === undefined ? {} : { "content-type": "application/json" }),
-        },
-        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      fetchWithRetry(() =>
+        doFetch(url, {
+          method: init.method,
+          headers: {
+            authorization: `Bearer ${session.accessJwt}`,
+            ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+          },
+          ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+        }), {
+        label: `${init.method} ${nsid}`,
+        ...(deps.onRetry ? { onRetry: deps.onRetry } : {}),
+        ...(deps.onGiveUp ? { onGiveUp: deps.onGiveUp } : {}),
       });
     let res = await send();
     if (res.status === 401) {
@@ -86,7 +97,10 @@ export async function createPasswordSessionAgent(
   async function json(nsid: string, init: { method: "GET" | "POST"; query?: Record<string, string>; body?: unknown }) {
     const res = await call(nsid, init);
     const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (!res.ok) throw new Error(`${nsid} at ${cfg.service} failed: HTTP ${res.status} ${JSON.stringify(body)}`);
+    if (!res.ok) {
+      const note = retryNoteOf(res);
+      throw new Error(`${nsid} at ${cfg.service} failed: HTTP ${res.status} ${JSON.stringify(body)}${note === "" ? "" : ` (${note})`}`);
+    }
     return body;
   }
 
