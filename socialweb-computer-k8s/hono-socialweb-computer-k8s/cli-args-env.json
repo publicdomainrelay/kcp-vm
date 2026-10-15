@@ -1,6 +1,6 @@
 {
   "name": "hono-socialweb-computer-k8s",
-  "description": "Kubernetes front door for the social web computer: atproto OAuth, a cluster list, kubeconfig downloads, and market-provisioned nodes",
+  "description": "Kubernetes web app for the social web computer: atproto sign-in through OpenBao, a cluster list, kubeconfig downloads, and market-provisioned nodes",
   "options": {
     "http-port": {
       "type": "number",
@@ -16,7 +16,7 @@
     },
     "state-dir": {
       "type": "string",
-      "description": "Directory holding OAuth sessions when no OpenBaoServer is named",
+      "description": "Directory this web app keeps its run state in",
       "env": "STATE_DIR",
       "default": ".socialweb-computer-k8s"
     },
@@ -34,13 +34,8 @@
     },
     "public-origin": {
       "type": "string",
-      "description": "Public https origin this door is reached at; names the OAuth client_id and binds request proofs",
+      "description": "Public https origin this web app is reached at; the OAuth client_id and redirect URI the OpenBao atproto plugin was configured with start with it, and the cookie is Secure when it is https",
       "env": "PUBLIC_ORIGIN"
-    },
-    "oauth-client-id": {
-      "type": "string",
-      "description": "Fallback OAuth client_id to refresh as when a deposited session carries none",
-      "env": "OAUTH_CLIENT_ID"
     },
     "network-hosts": {
       "type": "string",
@@ -195,12 +190,12 @@
     },
     "openbao-server": {
       "type": "string",
-      "description": "Name of the OpenBaoServer object (in openbao-server-workspace, read through kcp-kubeconfig) whose client openbao-client holds this web app's OAuth sessions and the join-secret bundle of each NodeClaim contract; unset, the sessions are files in state-dir and no node is fulfilled",
+      "description": "Name of the OpenBaoServer object (in openbao-server-workspace, read through kcp-kubeconfig) whose client openbao-client signs users in through its atproto auth mount and holds the join-secret bundle of each NodeClaim contract; required",
       "env": "OPENBAO_SERVER"
     },
     "openbao-client": {
       "type": "string",
-      "description": "Client of the OpenBaoServer this web app logs in as with its client certificate; its kvMount holds the sessions and the bundles",
+      "description": "Client of the OpenBaoServer this web app logs in as with its client certificate; its kvMount holds the bundles",
       "env": "OPENBAO_CLIENT",
       "default": "socialweb-computer-k8s"
     },
@@ -214,6 +209,24 @@
       "description": "kcp workspace of the OpenBaoServer object",
       "env": "OPENBAO_SERVER_WORKSPACE",
       "default": "root"
+    },
+    "openbao-atproto-mount": {
+      "type": "string",
+      "description": "Mount of the OpenBao atproto auth plugin that signs users in and holds their sessions",
+      "env": "OPENBAO_ATPROTO_MOUNT",
+      "default": "atproto"
+    },
+    "atproto-role": {
+      "type": "string",
+      "description": "Role of the atproto auth mount that every sign-in uses",
+      "env": "ATPROTO_ROLE",
+      "default": "user"
+    },
+    "session-cookie-max-age-sec": {
+      "type": "number",
+      "description": "Lifetime of the browser's session cookie; the OpenBao token behind it expires on its own schedule",
+      "env": "SESSION_COOKIE_MAX_AGE_SEC",
+      "default": 2592000
     },
     "market-identity-workspace": {
       "type": "string",
@@ -229,11 +242,6 @@
       "type": "string",
       "description": "kcp workspace the ComputeContract of each NodeClaim is written into; the requester controller of the same Gateway application carries it out",
       "env": "CONTRACT_KCP_WORKSPACE"
-    },
-    "test-owner-sessions-file": {
-      "type": "string",
-      "description": "TEST ONLY: JSON object keyed by owner DID of {service, identifier, password}; those owners rent nodes through a password session instead of their deposited OAuth session. Never set in production",
-      "env": "TEST_OWNER_SESSIONS_FILE"
     },
     "test-node-download-host": {
       "type": "string",

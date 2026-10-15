@@ -1,5 +1,4 @@
 import { cocorePairPoll, cocorePairStart, cocoreStatus } from '../lib/cocore-pair.js';
-import { clearSession } from '../lib/pds.js';
 
 // co/core inference, started as part of the signed-in view.
 //
@@ -9,8 +8,7 @@ import { clearSession } from '../lib/pds.js';
 // a token is minted once per account and stored, so an account that already has
 // one is never walked through this again.
 export class SwcPair extends HTMLElement {
-  async start(session) {
-    this._session = session;
+  async start() {
     this._timer = null;
     this.render();
     await this._refresh();
@@ -30,7 +28,7 @@ export class SwcPair extends HTMLElement {
 
   async _refresh() {
     try {
-      const status = await cocoreStatus(this._session);
+      const status = await cocoreStatus();
       if (status.paired) {
         this._renderPaired(status);
         return;
@@ -63,7 +61,6 @@ export class SwcPair extends HTMLElement {
       <p class="help mt-3">Your session has expired, so co/core cannot be connected yet.</p>
       <div class="mt-3"><button class="btn btn-primary" id="pair-relogin">Sign in again</button></div>`);
     this.querySelector('#pair-relogin').addEventListener('click', () => {
-      clearSession();
       window.location.reload();
     });
   }
@@ -99,7 +96,7 @@ export class SwcPair extends HTMLElement {
       button.textContent = 'Starting…';
     }
     try {
-      const started = await cocorePairStart(this._session);
+      const started = await cocorePairStart();
       this._renderPending(started);
       this._poll(started);
     } catch (err) {

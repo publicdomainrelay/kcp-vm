@@ -28,7 +28,7 @@ import { createRequesterController } from "@publicdomainrelay/requester-controll
 import { createNodeJoinProfile } from "@publicdomainrelay/socialweb-computer-k8s-node-contract";
 import { createAccountAgents } from "@publicdomainrelay/socialweb-computer-account-agents";
 import { createAccountRequesters } from "@publicdomainrelay/socialweb-computer-account-requesters";
-import { createVaultSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-vault";
+import { createOpenBaoCustodyConnector } from "@publicdomainrelay/atproto-session-custody-openbao";
 import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
 import { loadOrCreateVaultKeyHex } from "@publicdomainrelay/key-vault";
 import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
@@ -48,7 +48,7 @@ if (!o.statusFile) {
   console.error("request-vm-ssh runs only as a requester DenoPod, in its application's own kcp: start a requester with `socialweb-computer run request`");
   Deno.exit(2);
 }
-const accountsMode = typeof o.accountSessionVaultMount === "string" && o.accountSessionVaultMount !== "";
+const accountsMode = typeof o.accountCustodyMount === "string" && o.accountCustodyMount !== "";
 const kcpBase = typeof o.kcpServer === "string" ? o.kcpServer.split("/clusters/")[0] : undefined;
 o.marketIdentityKcpServer ||= kcpBase;
 o.computeContractKcpServer ||= kcpBase;
@@ -171,10 +171,15 @@ if (accountsMode) {
     ? parsePasswordSessions(JSON.parse(await Deno.readTextFile(o.testOwnerSessionsFile as string)))
     : null;
   ownerDids = testSessions ? [...testSessions.keys()] : [];
-  const sessionStore = createVaultSessionStore({ vault, mount: o.accountSessionVaultMount });
+  const custody = createOpenBaoCustodyConnector({
+    endpoint: async () => {
+      const r = await resolveVault();
+      return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
+    },
+    mount: o.accountCustodyMount,
+  });
   const agents = createAccountAgents({
-    sessionStore,
-    oauthClientId: o.oauthSessionClientId,
+    custody: custody.own,
     agentWithoutOAuthFor: (did) => {
       const session = testSessions?.get(did);
       return session ? createPasswordSessionAgent(session) : null;
@@ -201,7 +206,7 @@ if (accountsMode) {
   healthDid = "controller";
   statusDid = "controller";
   statusRepoDid = "controller";
-  logger.info("requester_accounts_mode", { sessionMount: o.accountSessionVaultMount, testOwners: ownerDids.length });
+  logger.info("requester_accounts_mode", { custodyMount: o.accountCustodyMount, testOwners: ownerDids.length });
   if (o.testOwnerSessionsFile) logger.warn("test_seams_enabled", { ownerSessions: ownerDids });
 } else {
   const identityName = o.marketIdentityName as string;

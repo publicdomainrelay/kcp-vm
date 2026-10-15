@@ -24,13 +24,13 @@ Which identity carries a contract depends on the application:
   identity, the MarketIdentity `requester` (the core creates it from
   `spec.identity`; the CLI renders its QR, URL and association prompts), and
   one contract, `contract`;
-- a Gateway application sets `--account-session-vault-mount`: it has no
+- a Gateway application sets `--account-custody-mount`: it has no
   identity of its own and carries the contracts of the accounts named by
-  `spec.ownerDid`, with each account's delegated OAuth session read from that
-  mount of the vault. The web app writes one ComputeContract per NodeClaim
+  `spec.ownerDid`; it acts for each account through the atproto auth mount of its
+  OpenBao, which signs every DPoP proof and holds the session. The web app writes one ComputeContract per NodeClaim
   (`spec.nodeJoin` names the cluster and the pinned meshd build; `spec.secretsRef`
   names the join bundle the web app wrote into its own mount) and maps the
-  contract's status back; this controller holds the sessions, the requester key
+  contract's status back; this controller holds no session, the requester key
   and each contract's secrets-server key.
 
 A restart (a new process, or the same kcp started again from the invocation's

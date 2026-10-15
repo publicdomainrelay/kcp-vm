@@ -1865,7 +1865,8 @@
       "socialweb-computer-k8s/lib/socialweb-computer-account-agents": {
         "dependencies": [
           "jsr:@publicdomainrelay/atproto-helpers@0",
-          "jsr:@publicdomainrelay/socialweb-computer-abc@0"
+          "jsr:@publicdomainrelay/atproto-session-custody-abc@0",
+          "jsr:@publicdomainrelay/atproto-session-custody-openbao@0"
         ]
       },
       "socialweb-computer-k8s/lib/socialweb-computer-account-requesters": {
@@ -1903,6 +1904,13 @@
         "dependencies": [
           "jsr:@publicdomainrelay/kcp-client-abc@0",
           "jsr:@publicdomainrelay/kcp-client-common@0"
+        ]
+      },
+      "socialweb-computer-k8s/lib/socialweb-computer-web-signin-openbao": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/atproto-session-custody-abc@0",
+          "jsr:@publicdomainrelay/atproto-session-custody-openbao@0",
+          "jsr:@publicdomainrelay/socialweb-computer-abc@0"
         ]
       },
       "ts/atproto-market/hono-bidder": {
@@ -2342,6 +2350,7 @@
         "dependencies": [
           "jsr:@publicdomainrelay/atproto-event-streams-client@0",
           "jsr:@publicdomainrelay/atproto-helpers@0",
+          "jsr:@publicdomainrelay/atproto-session-custody-openbao@0",
           "jsr:@publicdomainrelay/cli-args-env@0",
           "jsr:@publicdomainrelay/cloud-init-common@0",
           "jsr:@publicdomainrelay/identity-prompt-kcp@0",
@@ -2370,7 +2379,6 @@
           "jsr:@publicdomainrelay/socialweb-computer-account-requesters@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-node-contract@0",
-          "jsr:@publicdomainrelay/socialweb-computer-oauth-session-vault@0",
           "jsr:@publicdomainrelay/socialweb-computer-session-password@0",
           "npm:@atproto/crypto@0.5"
         ]

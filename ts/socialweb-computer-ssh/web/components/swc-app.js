@@ -1,36 +1,46 @@
-import { completeLogin, startLogin, isLocalhost, pendingLogin } from '../lib/atproto-oauth.js';
-import { createPdsClient, clearSession, depositSession, loadSession, saveSession } from '../lib/pds.js';
-import { OAUTH_SCOPE } from '../generated/oauth-scope.js';
 import './swc-key-list.js';
 import './swc-pair.js';
 
-const RETURN_KEY = 'swc-return-to';
+async function currentSession() {
+  const res = await fetch('/session', { credentials: 'same-origin' });
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`could not read the sign-in: ${res.status}`);
+  return res.json();
+}
+
+async function startSignIn(handle) {
+  const res = await fetch('/oauth/start', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ handle }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || !data.authorizationUrl) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  return data.authorizationUrl;
+}
+
+async function signOut() {
+  await fetch('/session', { method: 'DELETE', credentials: 'same-origin' });
+}
 
 export class SwcApp extends HTMLElement {
-  connectedCallback() {
+  async connectedCallback() {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const state = params.get('state');
+    const failure = params.get('error');
+    if (failure) window.history.replaceState({}, '', window.location.pathname);
 
-    if (code && state) {
-      this._finishLogin(code, state);
-      return;
+    let session = null;
+    try {
+      session = await currentSession();
+    } catch (err) {
+      return this._renderLogin(failure || String(err.message || err));
     }
-    if (params.get('error')) {
-      const session = loadSession();
-      window.history.replaceState({}, '', window.location.pathname);
-      if (session) return this._renderKeys(session);
-      return this._renderLogin(`Sign-in failed: ${params.get('error_description') || params.get('error')}`, params.get('error'));
-    }
-    if (params.get('error')) window.history.replaceState({}, '', window.location.pathname);
-
-    const session = loadSession();
     if (session) this._renderKeys(session);
-    else this._renderLogin();
+    else this._renderLogin(failure || undefined);
   }
 
   _renderLogin(error) {
-    const localhost = isLocalhost();
     this.innerHTML = `
       <main class="app-shell">
         <header class="header-row">
@@ -44,14 +54,14 @@ export class SwcApp extends HTMLElement {
         <div class="card">
           <h2>Sign in</h2>
           <form id="login-form" class="mt-3">
-            <p class="help mb-3">Enter your handle to authenticate.</p>
+            <p class="help mb-3">Enter your handle or DID to authenticate.</p>
             <input type="text" id="handle" name="handle" placeholder="alice.example.com"
               autocomplete="username" autocapitalize="none" spellcheck="false" required>
             <button type="submit" class="btn btn-primary btn-block mt-3" id="login-submit">Sign in with the Atmosphere</button>
           </form>
           <button id="bsky-btn" class="btn btn-secondary btn-block mt-3">Sign in with Bluesky Social</button>
           <p id="login-error" class="text-danger mt-3 ${error ? '' : 'hidden'}" style="font-size:13px;">${this._esc(error || '')}</p>
-          ${localhost ? '' : '<p class="help mt-3">Your PDS will ask you to approve this app.</p>'}
+          <p class="help mt-3">Your PDS will ask you to approve this app.</p>
         </div>
 
         <nav class="text-center mt-3" style="font-size:13px;">
@@ -72,15 +82,14 @@ export class SwcApp extends HTMLElement {
     const error = this.querySelector('#login-error');
     error.classList.add('hidden');
     if (!handle) {
-      error.textContent = 'Enter your handle.';
+      error.textContent = 'Enter your handle or DID.';
       error.classList.remove('hidden');
       return;
     }
     button.disabled = true;
     button.textContent = 'Redirecting to your PDS…';
-    sessionStorage.setItem(RETURN_KEY, JSON.stringify({ at: Date.now() }));
     try {
-      window.location.href = await startLogin(handle, OAUTH_SCOPE, null);
+      window.location.href = await startSignIn(handle);
     } catch (err) {
       button.disabled = false;
       button.textContent = 'Sign in with the Atmosphere';
@@ -89,24 +98,7 @@ export class SwcApp extends HTMLElement {
     }
   }
 
-  async _finishLogin(code, state) {
-    this.innerHTML = '<main class="app-shell"><div class="card text-center"><p class="text-muted">Completing sign-in…</p></div></main>';
-    try {
-      const { session } = await completeLogin(code, state);
-      saveSession(session);
-      // The SSH server holds its own copy of the session so it can hand one to
-      // the requester process; it never writes to the account.
-      await depositSession(session);
-      window.history.replaceState({}, '', window.location.pathname);
-      this._renderKeys(session);
-    } catch (err) {
-      window.history.replaceState({}, '', window.location.pathname);
-      this._renderLogin(`Sign-in failed: ${err.message || err}`);
-    }
-  }
-
   async _renderKeys(session) {
-    const client = createPdsClient(session);
     // Which name to ssh to is the server's to say: more than one can reach this
     // door (an apex domain on the same address, for instance), and the page would
     // otherwise offer whichever one it happens to be served from.
@@ -117,14 +109,14 @@ export class SwcApp extends HTMLElement {
           <h1>socialweb<span class="text-muted">-computer-ssh</span></h1>
           <button class="btn btn-outline btn-sm" id="sign-out">Sign out</button>
         </header>
-        <p class="subheader">Signed in as <code>@${this._esc(session.handle || session.userDid)}</code></p>
+        <p class="subheader">Signed in as <code>@${this._esc(session.handle || session.did)}</code></p>
         <div class="card mt-3">
           <h3>Connect</h3>
           <p class="help mt-3">Once a key is registered:</p>
-          <div class="key-code mt-3">ssh ${this._esc(session.handle || session.userDid)}@${this._esc(sshHost)}</div>
+          <div class="key-code mt-3">ssh ${this._esc(session.handle || session.did)}@${this._esc(sshHost)}</div>
           <p class="help mt-3">Anything you pass as <code>LC_*</code> travels to the VM, and picks the
           fulfillment policy:</p>
-          <div class="key-code mt-3">LC_MY_VAR=hello ssh ${this._esc(session.handle || session.userDid)}@${this._esc(sshHost)} "echo \$LC_MY_VAR"</div>
+          <div class="key-code mt-3">LC_MY_VAR=hello ssh ${this._esc(session.handle || session.did)}@${this._esc(sshHost)} "echo \$LC_MY_VAR"</div>
         </div>
         <swc-key-list id="keys"></swc-key-list>
         <swc-pair id="pair"></swc-pair>
@@ -133,12 +125,13 @@ export class SwcApp extends HTMLElement {
         </nav>
       </main>`;
 
-    this.querySelector('#sign-out').addEventListener('click', () => {
-      clearSession();
+    const expired = () => this._renderLogin('Your sign-in is no longer accepted here. Sign in again.');
+    this.querySelector('#sign-out').addEventListener('click', async () => {
+      await signOut();
       this._renderLogin();
     });
-    this.querySelector('#keys').start(client, session);
-    this.querySelector('#pair').start(session);
+    this.querySelector('#keys').start(session, { onExpired: expired });
+    this.querySelector('#pair').start();
   }
 
   async _sshHost() {

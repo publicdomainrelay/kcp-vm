@@ -1,126 +1,221 @@
 import { createFactory } from "@hono/hono/factory";
-import type { SessionVerifier } from "@publicdomainrelay/socialweb-computer-abc";
-import type { OAuthSessionData } from "@publicdomainrelay/socialweb-computer-common";
+import type { Context } from "@hono/hono";
+import type { WebCaller, WebRequestAuth, WebRequestLike, WebSignedInUser, WebSignIn } from "@publicdomainrelay/socialweb-computer-abc";
 import { COCORE_APP_WELL_KNOWN_PATH } from "@publicdomainrelay/socialweb-computer-common";
-import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
 
-export interface WebFactoryOptions {
-  sessionStore: SessionStore;
-  verifier: SessionVerifier;
-  scope: string;
-  /**
-   * Public origin this deployment is reached at, e.g. https://ssh.example.com.
-   *
-   * Required whenever the app sits behind a TLS terminator: the client_id must
-   * be an https URL with no port, and a proxied request arrives as plain http,
-   * so the request origin would publish an http:// client_id that authorization
-   * servers refuse. Set explicitly rather than read from X-Forwarded-* -- the
-   * header is only trustworthy when the listener is unreachable except through
-   * the proxy, which is a property of the deployment, not of this code.
-   */
+export const WEB_SESSION_COOKIE = "swc_session";
+export const WEB_OAUTH_STATE_COOKIE = "swc_oauth_state";
+export const WEB_OAUTH_CALLBACK_PATH = "/oauth/callback";
+
+const DEFAULT_COOKIE_MAX_AGE_SEC = 2_592_000;
+const DEFAULT_CLIENT_METADATA_CACHE_MS = 60_000;
+const OAUTH_STATE_MAX_AGE_SEC = 600;
+const DEFAULT_MAX_BODY = 4 * 1024;
+const MAX_IDENTIFIER_LENGTH = 256;
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+export function cookieValue(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return undefined;
+}
+
+interface CookieAttributes {
+  maxAge: number;
+  sameSite: "Strict" | "Lax";
+  path: string;
+  secure: boolean;
+}
+
+function serializeCookie(name: string, value: string, attrs: CookieAttributes): string {
+  return `${name}=${value}; Path=${attrs.path}; Max-Age=${attrs.maxAge}; HttpOnly; SameSite=${attrs.sameSite}${attrs.secure ? "; Secure" : ""}`;
+}
+
+export interface WebRequestAuthOptions {
+  signIn: WebSignIn;
   publicOrigin?: string;
-  /**
-   * Hostname the page should tell people to ssh to.
-   *
-   * More than one name can reach this door -- an apex domain resolving to the
-   * same address, for instance -- and the page would otherwise offer whichever
-   * one it happens to be served from. Defaults to the public origin's hostname.
-   */
-  sshPublicHost?: string;
-  /**
-   * This deployment's own DID, i.e. the repo its dev.cocore.app.registration
-   * record lives in.
-   *
-   * Unset means the deployment runs no app PDS, so there is no DID to advertise
-   * and the well-known route 404s rather than naming one that does not answer.
-   */
-  appDid?: string;
-  clientName?: string;
-  clientMetadataPath?: string;
-  maxBodyBytes?: number;
+  cookieName?: string;
   log?: (event: string, data?: Record<string, unknown>) => void;
 }
 
-const DEFAULT_MAX_BODY = 16 * 1024;
+export function createWebRequestAuth(opts: WebRequestAuthOptions): WebRequestAuth {
+  const cookieName = opts.cookieName ?? WEB_SESSION_COOKIE;
+  const expectedOrigin = opts.publicOrigin?.replace(/\/+$/, "");
+  const log = opts.log ?? (() => {});
+
+  function originAllowed(request: WebRequestLike): boolean {
+    if (SAFE_METHODS.has(request.method.toUpperCase())) return true;
+    const origin = request.header("origin");
+    if (!origin) return false;
+    if (expectedOrigin) return origin === expectedOrigin;
+    try {
+      return new URL(origin).host === request.header("host");
+    } catch {
+      return false;
+    }
+  }
+
+  return {
+    async authenticate(request): Promise<WebCaller | null> {
+      const token = cookieValue(request.header("cookie"), cookieName);
+      if (!token) return null;
+      if (!originAllowed(request)) {
+        log("web_origin_refused", { method: request.method, origin: request.header("origin") ?? null });
+        return null;
+      }
+      const user = await opts.signIn.identify(token);
+      return user ? { ...user, token } : null;
+    },
+  };
+}
+
+export interface WebFactoryOptions {
+  signIn: WebSignIn;
+  auth: WebRequestAuth;
+  publicOrigin?: string;
+  sshPublicHost?: string;
+  appDid?: string;
+  cookieName?: string;
+  cookieMaxAgeSec?: number;
+  clientMetadataPath?: string;
+  clientMetadataCacheMs?: number;
+  maxBodyBytes?: number;
+  onSignedIn?: (user: WebSignedInUser) => Promise<void> | void;
+  onSignedOut?: (user: WebSignedInUser) => Promise<void> | void;
+  log?: (event: string, data?: Record<string, unknown>) => void;
+}
 
 export function createWebFactory(opts: WebFactoryOptions) {
   const clientMetadataPath = opts.clientMetadataPath ?? "/oauth-client-metadata.json";
+  const clientMetadataCacheMs = opts.clientMetadataCacheMs ?? DEFAULT_CLIENT_METADATA_CACHE_MS;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY;
+  const cookieName = opts.cookieName ?? WEB_SESSION_COOKIE;
+  const cookieMaxAge = opts.cookieMaxAgeSec ?? DEFAULT_COOKIE_MAX_AGE_SEC;
   const log = opts.log ?? (() => {});
   const publicOrigin = opts.publicOrigin?.replace(/\/+$/, "");
+  const secure = publicOrigin?.startsWith("https://") ?? false;
+  let metadata: { at: number; doc: Record<string, unknown> } | null = null;
+
+  const sessionCookie = (value: string, maxAge: number) =>
+    serializeCookie(cookieName, value, { maxAge, sameSite: "Strict", path: "/", secure });
+  const stateCookie = (value: string, maxAge: number) =>
+    serializeCookie(WEB_OAUTH_STATE_COOKIE, value, { maxAge, sameSite: "Lax", path: "/oauth", secure });
+
+  function back(c: Context, error?: string): Response {
+    const target = error ? `/?${new URLSearchParams({ error }).toString()}` : "/";
+    const res = c.redirect(target, 302);
+    res.headers.append("set-cookie", stateCookie("", 0));
+    res.headers.set("cache-control", "no-store");
+    return res;
+  }
 
   return createFactory({
     initApp: (app) => {
-      // What the page should put in its connect example. Served rather than
-      // derived client-side because only the server knows which names reach it.
+      app.get("/healthz", (c) => c.json({ ok: true }));
+
       app.get("/connect.json", (c) => {
         const origin = publicOrigin ?? new URL(c.req.url).origin;
-        return c.json({
-          sshHost: opts.sshPublicHost ?? new URL(origin).hostname,
-        });
+        return c.json({ sshHost: opts.sshPublicHost ?? new URL(origin).hostname });
       });
 
-      // co/core fetches this from the returnUrl's host to prove the app owns the
-      // redirect target. It has to answer before the first pairing can start:
-      // co/core refuses a devicePair.start whose app DID has published no
-      // registration record, and the record names these returnUrls.
       app.get(COCORE_APP_WELL_KNOWN_PATH, (c) => {
         if (!opts.appDid) return c.notFound();
         return c.json({ did: opts.appDid });
       });
 
-      // The browser runs the whole OAuth flow itself, client-side; this document
-      // is what its client_id points at when the app is not on loopback.
-      app.get(clientMetadataPath, (c) => {
-        const origin = publicOrigin ?? new URL(c.req.url).origin;
-        return c.json({
-          client_id: `${origin}${clientMetadataPath}`,
-          application_type: "web",
-          dpop_bound_access_tokens: true,
-          grant_types: ["authorization_code", "refresh_token"],
-          response_types: ["code"],
-          // Both spellings, because the page strips trailing slashes from its
-          // redirect_uri and the authorization server requires an exact match
-          // against a declared URI.
-          redirect_uris: [`${origin}/`, origin],
-          scope: opts.scope,
-          token_endpoint_auth_method: "none",
-          client_name: opts.clientName ?? "socialweb-computer-ssh",
-        });
+      app.get(clientMetadataPath, async (c) => {
+        try {
+          if (!metadata || Date.now() - metadata.at > clientMetadataCacheMs) {
+            metadata = { at: Date.now(), doc: await opts.signIn.clientMetadata() };
+          }
+          return c.json(metadata.doc, 200, { "cache-control": `public, max-age=${Math.floor(clientMetadataCacheMs / 1000)}` });
+        } catch (err) {
+          log("client_metadata_unavailable", { error: String(err) });
+          return c.json({ error: "client metadata is not available from the vault" }, 503);
+        }
       });
 
-      // The browser deposits the session it obtained so the SSH half can use it
-      // to act as the signed-in account. It is unauthenticated by nature --
-      // a session blob is the credential -- so it is proved against the PDS
-      // before being stored, which also means a deposit costs a real round trip
-      // rather than being a cheap way to fill the store.
-      app.post("/session", async (c) => {
+      app.post("/oauth/start", async (c) => {
+        if (!publicOrigin) return c.json({ error: "this deployment has no public-origin, so it cannot sign anyone in" }, 503);
         const declared = Number(c.req.header("content-length") ?? "0");
-        if (Number.isFinite(declared) && declared > maxBodyBytes) {
-          return c.json({ error: "body too large" }, 413);
+        if (Number.isFinite(declared) && declared > maxBodyBytes) return c.json({ error: "body too large" }, 413);
+        const body = await c.req.json().catch(() => null) as { handle?: unknown } | null;
+        const identifier = typeof body?.handle === "string" ? body.handle.trim().replace(/^@/, "") : "";
+        if (!identifier || identifier.length > MAX_IDENTIFIER_LENGTH || /\s/.test(identifier)) {
+          return c.json({ error: "expected a handle or a DID" }, 400);
         }
-        const text = await c.req.text();
-        if (text.length > maxBodyBytes) return c.json({ error: "body too large" }, 413);
-
-        let parsed: OAuthSessionData;
         try {
-          parsed = JSON.parse(text) as OAuthSessionData;
-        } catch {
-          return c.json({ error: "expected a JSON session" }, 400);
+          const started = await opts.signIn.start(identifier, `${publicOrigin}${WEB_OAUTH_CALLBACK_PATH}`);
+          log("web_sign_in_started", { identifier });
+          return c.json({ authorizationUrl: started.authorizationUrl }, 200, {
+            "set-cookie": stateCookie(started.state, OAUTH_STATE_MAX_AGE_SEC),
+            "cache-control": "no-store",
+          });
+        } catch (err) {
+          log("web_sign_in_start_failed", { identifier, error: String(err) });
+          return c.json({ error: `could not start the sign-in: ${err instanceof Error ? err.message : String(err)}` }, 502);
         }
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-          return c.json({ error: "expected a JSON session" }, 400);
-        }
+      });
 
-        const verified = await opts.verifier.verify(parsed);
-        if (!verified) {
-          log("session_rejected", { did: parsed.userDid });
-          return c.json({ error: "session did not verify against its PDS" }, 401);
+      app.get(WEB_OAUTH_CALLBACK_PATH, async (c) => {
+        const denied = c.req.query("error");
+        if (denied) return back(c, c.req.query("error_description") ?? denied);
+        const state = c.req.query("state") ?? "";
+        const code = c.req.query("code") ?? "";
+        if (!state || !code) return back(c, "the authorization server returned no code");
+        if (cookieValue(c.req.header("cookie"), WEB_OAUTH_STATE_COOKIE) !== state) {
+          log("web_sign_in_state_not_bound", {});
+          return back(c, "this sign-in was not started in this browser; start it again");
         }
+        try {
+          const grant = await opts.signIn.complete({ state, code, iss: c.req.query("iss") ?? undefined });
+          await opts.onSignedIn?.({ did: grant.did, handle: grant.handle, pds: grant.pds });
+          log("web_signed_in", { did: grant.did, handle: grant.handle });
+          const res = back(c);
+          res.headers.append("set-cookie", sessionCookie(grant.token, cookieMaxAge));
+          return res;
+        } catch (err) {
+          log("web_sign_in_failed", { error: String(err) });
+          return back(c, `sign-in failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      });
 
-        await opts.sessionStore.withAccount(verified.did, () => opts.sessionStore.set(verified.did, parsed));
-        log("session_deposited", { did: verified.did, handle: verified.handle });
-        return c.json({ did: verified.did, handle: verified.handle });
+      app.get("/session", async (c) => {
+        let caller: WebCaller | null;
+        try {
+          caller = await opts.auth.authenticate(c.req);
+        } catch (err) {
+          log("web_identify_failed", { error: String(err) });
+          return c.json({ error: "the vault is not answering" }, 503);
+        }
+        if (!caller) return c.json({ error: "Unauthorized", message: "sign in" }, 401);
+        return c.json({ did: caller.did, handle: caller.handle }, 200, { "cache-control": "no-store" });
+      });
+
+      app.delete("/session", async (c) => {
+        let caller: WebCaller | null;
+        try {
+          caller = await opts.auth.authenticate(c.req);
+        } catch (err) {
+          log("web_identify_failed", { error: String(err) });
+          return c.json({ error: "the vault is not answering" }, 503);
+        }
+        if (!caller) return c.json({ error: "Unauthorized", message: "sign in" }, 401, { "set-cookie": sessionCookie("", 0) });
+        try {
+          const result = await opts.signIn.signOut(caller);
+          await opts.onSignedOut?.({ did: caller.did, handle: caller.handle, pds: caller.pds });
+          log("web_signed_out", { did: caller.did, revoked: result.revoked, revokeError: result.revokeError ?? null });
+          return c.json({ revoked: result.revoked, ...(result.revokeError ? { revokeError: result.revokeError } : {}) }, 200, {
+            "set-cookie": sessionCookie("", 0),
+          });
+        } catch (err) {
+          log("web_sign_out_failed", { did: caller.did, error: String(err) });
+          return c.json({ error: "could not sign out" }, 502, { "set-cookie": sessionCookie("", 0) });
+        }
       });
     },
   });

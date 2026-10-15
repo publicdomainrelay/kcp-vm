@@ -5,18 +5,12 @@ import { createLogger, createStructuredLogger, getMinLogLevelFromEnv } from "@pu
 import { createServe } from "@publicdomainrelay/serve";
 import { EventBus } from "@publicdomainrelay/event-bus";
 import { createStaticFilesApp, type StaticFileEvent } from "@publicdomainrelay/hono-factory-static-files-fs";
-import { K8S_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
-import { createAtprotoSessionVerifier } from "@publicdomainrelay/socialweb-computer-oauth-atproto";
-import { createFileSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-fs";
-import { createVaultSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-vault";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import type { IdentityVault } from "@publicdomainrelay/market-identity-abc";
-import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
-import { createAccountAgents } from "@publicdomainrelay/socialweb-computer-account-agents";
-import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
-import { createWebFactory } from "@publicdomainrelay/hono-factory-socialweb-computer-oauth";
-import { createRequestProofVerifier } from "@publicdomainrelay/socialweb-computer-k8s-request-proof";
+import { createOpenBaoCustodyConnector } from "@publicdomainrelay/atproto-session-custody-openbao";
+import { createOpenBaoWebSignIn } from "@publicdomainrelay/socialweb-computer-web-signin-openbao";
+import { createWebFactory, createWebRequestAuth } from "@publicdomainrelay/hono-factory-socialweb-computer-oauth";
 import { createXrpcClusterGateway } from "@publicdomainrelay/socialweb-computer-k8s-gateway-xrpc";
 import {
   createClusterApiFactory,
@@ -61,18 +55,10 @@ const webDir = options.webDir as string;
 const publicOrigin = (options.publicOrigin as string | undefined)?.replace(/\/+$/, "");
 
 
-const testOwnerSessions = options.testOwnerSessionsFile
-  ? parsePasswordSessions(JSON.parse(await Deno.readTextFile(options.testOwnerSessionsFile as string)))
-  : null;
 const testNodeUserDataBase = options.testNodeUserDataBaseFile
   ? await Deno.readTextFile(options.testNodeUserDataBaseFile as string)
   : undefined;
-if (testOwnerSessions || testNodeUserDataBase !== undefined) {
-  logger.warn("test_seams_enabled", {
-    ownerSessions: testOwnerSessions ? [...testOwnerSessions.keys()] : [],
-    nodeUserDataBase: testNodeUserDataBase !== undefined,
-  });
-}
+if (testNodeUserDataBase !== undefined) logger.warn("test_seams_enabled", { nodeUserDataBase: true });
 
 const kcp: KcpClient | null = options.kcpKubeconfig
   ? createKcpRestClient(
@@ -86,16 +72,14 @@ const kcp: KcpClient | null = options.kcpKubeconfig
   })
   : null;
 
-async function accountState(): Promise<
-  { sessionStore: SessionStore; vault?: IdentityVault; vaultMount?: string }
-> {
+async function accountState(): Promise<{
+  vault: IdentityVault;
+  vaultMount: string;
+  connector: ReturnType<typeof createOpenBaoCustodyConnector>;
+  identities: ReturnType<typeof createKcpMarketIdentities> | null;
+}> {
   if (!options.openbaoServer) {
-    logger.warn("account_state_in_files", { stateDir, next: "set openbao-server to keep sessions in the vault and to fulfil nodes" });
-    return {
-      sessionStore: createFileSessionStore(`${stateDir}/oauth-sessions.json`, {
-        onCorrupt: ({ path, quarantine }) => logger.error("session_store_corrupt", { path, quarantine }),
-      }),
-    };
+    throw new Error("openbao-server is required: the sign-in, the sessions and the join secrets live in the application's OpenBao");
   }
   if (!kcp) throw new Error("openbao-server needs kcp-kubeconfig to read the OpenBaoServer object");
   const resolve = createOpenBaoServerResolver({
@@ -109,44 +93,24 @@ async function accountState(): Promise<
   });
   const resolved = await resolve();
   log("vault_resolved", { openbaoserver: resolved.name, address: resolved.address, kvMount: resolved.kvMount, role: resolved.certLogin.role });
-  const vault = createOpenBaoIdentityVault({
-    endpoint: async () => {
-      const r = await resolve();
-      return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
-    },
-  });
-  const identities = options.marketIdentityWorkspace
-    ? createKcpMarketIdentities({ kcp, workspace: options.marketIdentityWorkspace as string })
-    : null;
+  const endpoint = async () => {
+    const r = await resolve();
+    return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
+  };
   return {
-    sessionStore: createVaultSessionStore({
-      vault,
-      mount: resolved.kvMount,
-      onSet: async (did, session, ref) => {
-        const name = await identities?.signedIn({ did, handle: session.handle, pdsUrl: session.pds, sessionRef: ref })
-          .catch((err) => logger.warn("market_identity_write_failed", { did, error: String(err) }));
-        if (name) log("market_identity_ready", { did, marketIdentity: name });
-      },
-      onDel: async (did, ref) => {
-        await identities?.signedOut(did, ref).catch((err) => logger.warn("market_identity_write_failed", { did, error: String(err) }));
-      },
-    }),
-    vault,
+    vault: createOpenBaoIdentityVault({ endpoint }),
     vaultMount: resolved.kvMount,
+    connector: createOpenBaoCustodyConnector({ endpoint, mount: options.openbaoAtprotoMount as string }),
+    identities: options.marketIdentityWorkspace
+      ? createKcpMarketIdentities({ kcp, workspace: options.marketIdentityWorkspace as string })
+      : null,
   };
 }
 
-const { sessionStore, vault, vaultMount } = await accountState();
+const { vault, vaultMount, connector, identities } = await accountState();
 
-const accounts = createAccountAgents({
-  sessionStore,
-  oauthClientId: options.oauthClientId as string | undefined,
-  agentWithoutOAuthFor: (did) => {
-    const session = testOwnerSessions?.get(did);
-    return session ? createPasswordSessionAgent(session) : null;
-  },
-  log,
-});
+const signIn = createOpenBaoWebSignIn({ connector, role: options.atprotoRole as string, log });
+const webAuth = createWebRequestAuth({ signIn, publicOrigin, log });
 
 function gatewayUrl(): string | (() => Promise<string>) {
   if (options.gatewayUrl) return options.gatewayUrl as string;
@@ -162,13 +126,6 @@ function gatewayUrl(): string | (() => Promise<string>) {
 const gateway = createXrpcClusterGateway({
   gatewayUrl: gatewayUrl(),
   audience: options.gatewayAudience as string,
-  serviceAuth: {
-    async serviceAuth(did, aud, lxm) {
-      const agent = await accounts.agentFor(did);
-      if (!agent.getServiceAuth) throw new Error("the account's agent cannot mint service auth");
-      return await agent.getServiceAuth(aud, lxm);
-    },
-  },
 });
 
 const downloadsDir = (options.downloadsDir as string | undefined) ??
@@ -211,17 +168,31 @@ const serve = createServe({
 });
 
 const web = createWebFactory({
-  sessionStore,
-  verifier: createAtprotoSessionVerifier({ log }),
-  scope: K8S_OAUTH_SCOPE.join(" "),
+  signIn,
+  auth: webAuth,
   publicOrigin,
-  clientName: "socialweb-computer-k8s",
+  cookieMaxAgeSec: options.sessionCookieMaxAgeSec as number,
+  onSignedIn: async (user) => {
+    const sessionRef = { mount: `auth/${options.openbaoAtprotoMount}`, path: `session/${user.did}` };
+    const name = await identities?.signedIn({ did: user.did, handle: user.handle, pdsUrl: user.pds, sessionRef })
+      .catch((err) => logger.warn("market_identity_write_failed", { did: user.did, error: String(err) }));
+    if (name) log("market_identity_ready", { did: user.did, marketIdentity: name });
+  },
+  onSignedOut: async (user) => {
+    const sessionRef = { mount: `auth/${options.openbaoAtprotoMount}`, path: `session/${user.did}` };
+    await identities?.signedOut(user.did, sessionRef).catch((err) => logger.warn("market_identity_write_failed", { did: user.did, error: String(err) }));
+  },
   log,
 });
 
 const api = createClusterApiFactory({
   gateway,
-  proof: createRequestProofVerifier({ sessions: sessionStore, publicOrigin, log }),
+  caller: async (request) => {
+    const who = await webAuth.authenticate(request);
+    if (!who) return null;
+    const agent = signIn.agentFor(who);
+    return { did: who.did, serviceAuth: (aud, lxm) => agent.getServiceAuth(aud, lxm) };
+  },
   maxKubeconfigTtlSec: options.kubeconfigMaxTtlSec as number,
   kcpPublicHost: options.kcpPublicHost as string | undefined,
   credentialHelpers: helpers,
@@ -259,7 +230,7 @@ const nodeDownloadOrigin = testNodeDownloadHost
 const meshd = meshdPinOf(pinned.list(), nodeDownloadOrigin);
 
 let fulfiller: NodeClaimMapper | null = null;
-if (kcp && kcpWorkspace && contractWorkspace && vault && vaultMount) {
+if (kcp && kcpWorkspace && contractWorkspace) {
   fulfiller = createNodeClaimMapper({
     store: createKcpNodeClaimStore({ kcp, homesWorkspace: kcpWorkspace }),
     links: createKcpClusterLinkReader({ kcp }),
@@ -282,8 +253,7 @@ if (kcp && kcpWorkspace && contractWorkspace && vault && vaultMount) {
 } else if (kcp && kcpWorkspace) {
   logger.warn("node_claims_not_mapped", {
     contractWorkspace: contractWorkspace ?? null,
-    vault: vault !== undefined,
-    next: "set contract-kcp-workspace and openbao-server so each NodeClaim becomes a ComputeContract the requester controller carries out",
+    next: "set contract-kcp-workspace so each NodeClaim becomes a ComputeContract the requester controller carries out",
   });
 }
 
@@ -310,7 +280,6 @@ if (fulfiller && !meshd) {
 
 async function shutdown(): Promise<void> {
   await fulfiller?.stop();
-  await accounts.shutdown();
   serve.shutdown();
   Deno.exit(0);
 }

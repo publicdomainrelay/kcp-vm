@@ -1,7 +1,7 @@
 import { createFactory } from "@hono/hono/factory";
 import type { Context } from "@hono/hono";
 import { ClusterGatewayError } from "@publicdomainrelay/socialweb-computer-k8s-abc";
-import type { ClusterGateway, PinnedDownloads, RequestProofVerifier } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import type { ClusterCaller, ClusterGateway, PinnedDownloads } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import {
   isClusterName,
   kubeconfigFilename,
@@ -14,9 +14,14 @@ export interface CredentialHelper {
   path: string;
 }
 
+export interface ClusterApiRequest {
+  method: string;
+  header(name: string): string | undefined;
+}
+
 export interface ClusterApiFactoryOptions {
   gateway: ClusterGateway;
-  proof: RequestProofVerifier;
+  caller: (request: ClusterApiRequest) => Promise<ClusterCaller | null>;
   maxKubeconfigTtlSec: number;
   kcpPublicHost?: string;
   credentialHelpers?: CredentialHelper[];
@@ -33,14 +38,16 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
   const log = opts.log ?? (() => {});
   const ttlChoices = ttlChoicesUpTo(opts.maxKubeconfigTtlSec);
 
-  async function caller(c: Context): Promise<string | Response> {
-    const verified = await opts.proof.verify({
-      method: c.req.method,
-      path: c.req.path,
-      authorization: c.req.header("authorization"),
-    });
-    if (!verified) return c.json({ error: "Unauthorized", message: "sign in again" }, 401);
-    return verified.did;
+  async function caller(c: Context): Promise<ClusterCaller | Response> {
+    let who: ClusterCaller | null;
+    try {
+      who = await opts.caller(c.req);
+    } catch (err) {
+      log("cluster_api_auth_unavailable", { error: String(err) });
+      return c.json({ error: "Unavailable", message: "the vault is not answering; try again" }, 503);
+    }
+    if (!who) return c.json({ error: "Unauthorized", message: "sign in again" }, 401);
+    return who;
   }
 
   async function body(c: Context): Promise<Record<string, unknown> | Response> {
@@ -68,7 +75,7 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
     return c.json({ error: "InternalError", message: "the cluster request failed" }, 500);
   }
 
-  async function named(c: Context): Promise<{ did: string; name: string; input: Record<string, unknown> } | Response> {
+  async function named(c: Context): Promise<{ caller: ClusterCaller; name: string; input: Record<string, unknown> } | Response> {
     const who = await caller(c);
     if (who instanceof Response) return who;
     const input = await body(c);
@@ -76,7 +83,7 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
     if (!isClusterName(input.name)) {
       return c.json({ error: "InvalidRequest", message: "name must be a lowercase DNS label of at most 63 characters" }, 400);
     }
-    return { did: who, name: input.name, input };
+    return { caller: who, name: input.name, input };
   }
 
   function nameAction(action: NameAction) {
@@ -85,16 +92,16 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
       if (req instanceof Response) return req;
       try {
         const out = action === "create"
-          ? await opts.gateway.create(req.did, req.name)
+          ? await opts.gateway.create(req.caller, req.name)
           : action === "up"
-          ? await opts.gateway.up(req.did, req.name)
+          ? await opts.gateway.up(req.caller, req.name)
           : action === "down"
-          ? await opts.gateway.down(req.did, req.name)
-          : await opts.gateway.remove(req.did, req.name);
-        log("cluster_api_ok", { did: req.did, action, name: req.name, phase: out.phase });
+          ? await opts.gateway.down(req.caller, req.name)
+          : await opts.gateway.remove(req.caller, req.name);
+        log("cluster_api_ok", { did: req.caller.did, action, name: req.name, phase: out.phase });
         return c.json({ name: req.name, phase: out.phase });
       } catch (err) {
-        return failure(c, req.did, action, err);
+        return failure(c, req.caller.did, action, err);
       }
     };
   }
@@ -115,7 +122,7 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
         try {
           return c.json({ clusters: await opts.gateway.list(who) });
         } catch (err) {
-          return failure(c, who, "list", err);
+          return failure(c, who.did, "list", err);
         }
       });
 
@@ -143,12 +150,12 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
           ttl = requested;
         }
         try {
-          const grant = await opts.gateway.kubeconfig(req.did, req.name, ttl, noExpiry);
-          log("cluster_api_ok", { did: req.did, action: "kubeconfig", name: req.name, ttlSeconds: ttl ?? null, noExpiry });
+          const grant = await opts.gateway.kubeconfig(req.caller, req.name, ttl, noExpiry);
+          log("cluster_api_ok", { did: req.caller.did, action: "kubeconfig", name: req.name, ttlSeconds: ttl ?? null, noExpiry });
           c.header("Cache-Control", "no-store");
           return c.json({ name: req.name, filename: kubeconfigFilename(req.name), kubeconfig: grant.kubeconfig });
         } catch (err) {
-          return failure(c, req.did, "kubeconfig", err);
+          return failure(c, req.caller.did, "kubeconfig", err);
         }
       });
     },

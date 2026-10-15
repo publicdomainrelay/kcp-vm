@@ -5,7 +5,7 @@ import {
   runComputeContract,
 } from "@publicdomainrelay/requester-xrpc";
 import type { SshSessionProvider } from "@publicdomainrelay/requester-abc";
-import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
+import type { SessionCustody } from "@publicdomainrelay/atproto-session-custody-abc";
 import type { CommandIo, ComputeCommandRunner } from "@publicdomainrelay/socialweb-computer-abc";
 import { createAccountAgents } from "@publicdomainrelay/socialweb-computer-account-agents";
 import { createAccountRequesters } from "@publicdomainrelay/socialweb-computer-account-requesters";
@@ -37,21 +37,12 @@ export function guestBaseUserData(opts: { caPem?: string; curlHome?: string }): 
 }
 
 export interface InProcessRequesterOptions {
-  sessionStore: SessionStore;
+  custody: SessionCustody;
   requesterKeyHex: () => Promise<string>;
   plcDirectoryUrl?: string;
   ingressProxyHost?: string;
   relayUrls?: string[];
   vmReadyTimeoutSec?: number;
-  /**
-   * OAuth client_id to refresh as, when the stored session does not carry one.
-   *
-   * A refresh token is bound to the client that obtained it. The session
-   * deposited by the page normally carries its own client_id; this is the
-   * fallback for a session that does not, and must match the metadata document
-   * this deployment publishes.
-   */
-  oauthClientId?: string;
   /** /etc/hosts entries the guest needs to reach this dispatcher. */
   guestHostAliases?: string[];
   extraBidderDids?: string[];
@@ -156,8 +147,7 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
     error: (message: string, meta?: Record<string, unknown>) => log(message, meta ?? {}),
   };
   const agents = createAccountAgents({
-    sessionStore: opts.sessionStore,
-    oauthClientId: opts.oauthClientId,
+    custody: opts.custody,
     agentWithoutOAuthFor: opts.agentWithoutOAuthFor,
     log,
   });

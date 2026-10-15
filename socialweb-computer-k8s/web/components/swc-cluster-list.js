@@ -34,8 +34,7 @@ function phaseChip(cluster) {
 }
 
 export class SwcClusterList extends HTMLElement {
-  start(session, { onExpired } = {}) {
-    this._session = session;
+  start({ onExpired } = {}) {
     this._onExpired = onExpired || (() => {});
     this._clusters = [];
     this._config = { ttlChoicesSec: [28800], credentialHelpers: [], kcpPublicHost: null };
@@ -51,7 +50,7 @@ export class SwcClusterList extends HTMLElement {
 
   async _load() {
     try {
-      const [config, clusters] = await Promise.all([fetchConfig(), listClusters(this._session)]);
+      const [config, clusters] = await Promise.all([fetchConfig(), listClusters()]);
       this._config = config;
       this._clusters = clusters.sort((a, b) => a.name.localeCompare(b.name));
       this._error = '';
@@ -159,7 +158,7 @@ export class SwcClusterList extends HTMLElement {
         this._render();
         return;
       }
-      this._act(name, () => createCluster(this._session, name));
+      this._act(name, () => createCluster(name));
     });
 
     for (const row of this.querySelectorAll('.cluster-row')) {
@@ -179,15 +178,15 @@ export class SwcClusterList extends HTMLElement {
         `This kubeconfig for ${name} never expires. It works until it is revoked, the cluster is deleted, or the cluster CA expires. Anyone who holds the file has your access. Issue it?`,
       )) return;
       return this._act(name, async () => {
-        const grant = await fetchKubeconfig(this._session, name, ttl, noExpiry);
+        const grant = await fetchKubeconfig(name, ttl, noExpiry);
         saveText(grant.filename, grant.kubeconfig);
       });
     }
-    if (act === 'up') return this._act(name, () => clusterUp(this._session, name));
-    if (act === 'down') return this._act(name, () => clusterDown(this._session, name));
+    if (act === 'up') return this._act(name, () => clusterUp(name));
+    if (act === 'down') return this._act(name, () => clusterDown(name));
     if (act === 'delete') {
       if (!window.confirm(`Delete cluster ${name}? Its objects and every kubeconfig for it stop working.`)) return;
-      return this._act(name, () => deleteCluster(this._session, name));
+      return this._act(name, () => deleteCluster(name));
     }
   }
 }

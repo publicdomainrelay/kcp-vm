@@ -14,31 +14,6 @@ export const LC_POLICY_BID_WINDOW_SEC = "LC_POLICY_BID_WINDOW_SEC";
 export const LC_VM_NAME = "LC_VM_NAME";
 export const LC_SECRETS = "LC_SECRETS";
 
-/**
- * The portable OAuth session the rest of the polyrepo exchanges: what
- * qr.fedfork.com hands out, what hono-pds's session injector mints, and what
- * request-vm-ssh reads with --atproto-oauth-qr --oauth-session-file. Duplicated
- * from @publicdomainrelay/oauth-server-common so this leaf layer stays free of
- * project-local imports.
- */
-export interface OAuthSessionData {
-  accessJwt: string;
-  refreshJwt: string;
-  userDid: string;
-  handle: string;
-  pds: string;
-  dpopPublicJwk: Record<string, string>;
-  dpopPrivateJwk: Record<string, string>;
-  dpopNonce?: string;
-  /**
-   * The client_id this session was issued to. Optional because the rest of the
-   * polyrepo does not carry it, but a refresh token is bound to the client that
-   * obtained it, so a session that knows its own client_id can be refreshed
-   * without the operator having to configure what that was.
-   */
-  clientId?: string;
-}
-
 export interface PresentedKey {
   algo: string;
   key: string;

@@ -1,12 +1,3 @@
-import { createRecord, deleteRecord, listRecords } from '../lib/pds.js';
-
-// The record the SSH server reads: a badgeBlueKeys association of service
-// requester_associate, whose challenge is the account and whose keyId is the
-// OpenSSH public key with its comment stripped. Same shape the polyrepo's
-// market policies use for the same association type.
-const BADGE_BLUE_KEYS_NSID = 'com.publicdomainrelay.temp.badgeBlueKeys';
-const REQUESTER_ASSOCIATE = 'requester_associate';
-
 function parsePublicKey(text) {
   const parts = String(text).trim().split(/\s+/);
   if (parts.length < 2) return null;
@@ -16,9 +7,9 @@ function parsePublicKey(text) {
 }
 
 export class SwcKeyList extends HTMLElement {
-  start(client, session) {
-    this._client = client;
+  start(session, { onExpired } = {}) {
     this._session = session;
+    this._onExpired = onExpired || (() => {});
     this._keys = [];
     this.render();
     this._load();
@@ -62,22 +53,15 @@ export class SwcKeyList extends HTMLElement {
   async _load() {
     const list = this.querySelector('#key-list');
     try {
-      const records = await listRecords(this._client, BADGE_BLUE_KEYS_NSID);
-      this._keys = records.filter((r) => this._isAssociation(r.value)).map((r) => ({
-        rkey: r.uri.split('/').pop(),
-        name: r.value.name || 'unnamed',
-        keyId: String(r.value.keyId || ''),
-      }));
+      const res = await fetch('/keys', { credentials: 'same-origin' });
+      if (res.status === 401) return this._onExpired();
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
+      this._keys = Array.isArray(body.keys) ? body.keys : [];
       this._renderList();
     } catch (err) {
       list.innerHTML = `<p class="text-danger" style="font-size:13px;">Could not read your keys: ${this._esc(err.message || err)}</p>`;
     }
-  }
-
-  _isAssociation(value) {
-    return value
-      && value.service === REQUESTER_ASSOCIATE
-      && value.challenge === this._session.userDid;
   }
 
   _renderList() {
@@ -136,14 +120,15 @@ export class SwcKeyList extends HTMLElement {
     try {
       // keyId carries the key without its comment, which is what the SSH
       // server compares against the key the client presents.
-      await createRecord(this._client, BADGE_BLUE_KEYS_NSID, {
-        $type: BADGE_BLUE_KEYS_NSID,
-        keyId: `${parsed.algo} ${parsed.key}`,
-        name: name || parsed.comment || 'key',
-        challenge: this._session.userDid,
-        service: REQUESTER_ASSOCIATE,
-        createdAt: new Date().toISOString(),
+      const res = await fetch('/keys', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ publicKey: raw, name }),
       });
+      if (res.status === 401) return this._onExpired();
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
       this._closeAdd();
       await this._load();
     } catch (err) {
@@ -156,7 +141,12 @@ export class SwcKeyList extends HTMLElement {
 
   async _remove(rkey) {
     try {
-      await deleteRecord(this._client, BADGE_BLUE_KEYS_NSID, rkey);
+      const res = await fetch(`/keys/${encodeURIComponent(rkey)}`, { method: 'DELETE', credentials: 'same-origin' });
+      if (res.status === 401) return this._onExpired();
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error((body && body.error) || `HTTP ${res.status}`);
+      }
       await this._load();
     } catch (err) {
       this.querySelector('#key-list').insertAdjacentHTML(

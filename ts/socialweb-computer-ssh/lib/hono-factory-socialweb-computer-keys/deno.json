@@ -1,5 +1,5 @@
 {
-  "name": "@publicdomainrelay/key-file-fs",
+  "name": "@publicdomainrelay/hono-factory-socialweb-computer-keys",
   "version": "0.0.0",
   "license": "Unlicense",
   "exports": "./mod.ts"

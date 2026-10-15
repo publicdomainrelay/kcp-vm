@@ -121,9 +121,9 @@ export default {
       type: "string" as const,
       description: "kcp workspace holding the ComputeContract objects; the controller carries out every one of them",
     },
-    "account-session-vault-mount": {
+    "account-custody-mount": {
       type: "string" as const,
-      description: "kv mount that holds the accounts' OAuth sessions (oauth-sessions/<did>); set, the controller carries contracts for the accounts named by spec.ownerDid, with no identity of its own; unset, it carries contracts with the application's own MarketIdentity",
+      description: "Mount of the OpenBao atproto auth plugin that holds the accounts' OAuth sessions and signs their DPoP proofs; set, the controller carries contracts for the accounts named by spec.ownerDid, with no identity of its own; unset, it carries contracts with the application's own MarketIdentity",
     },
     "test-owner-sessions-file": {
       type: "string" as const,

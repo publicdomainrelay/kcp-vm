@@ -1,4 +1,4 @@
-import type { AuthorizedAccount, OAuthSessionData, PresentedKey } from "@publicdomainrelay/socialweb-computer-common";
+import type { AuthorizedAccount, PresentedKey } from "@publicdomainrelay/socialweb-computer-common";
 
 export interface KeyAuthorizer {
   authorize(username: string, key: PresentedKey): Promise<AuthorizedAccount | null>;
@@ -29,15 +29,6 @@ export interface ComputeCommandRunner {
     env: Record<string, string>,
     io: CommandIo,
   ): Promise<void>;
-}
-
-export interface VerifiedSession {
-  did: string;
-  handle: string;
-}
-
-export interface SessionVerifier {
-  verify(session: OAuthSessionData): Promise<VerifiedSession | null>;
 }
 
 export interface SshServerConfig {
@@ -125,26 +116,68 @@ export interface CocorePairing {
   token(did: string): Promise<CocoreToken | undefined>;
 }
 
-
-export interface SessionStore {
-  get(did: string): Promise<OAuthSessionData | undefined>;
-  set(did: string, session: OAuthSessionData): Promise<void>;
-  del(did: string): Promise<void>;
-  withAccount<T>(did: string, fn: () => Promise<T>): Promise<T>;
+export interface WebSignedInUser {
+  did: string;
+  handle: string;
+  pds: string;
 }
 
-export type AccountLock = <T>(did: string, fn: () => Promise<T>) => Promise<T>;
+export interface WebSignInStart {
+  authorizationUrl: string;
+  state: string;
+}
 
-export function createAccountLock(): AccountLock {
-  const locks = new Map<string, Promise<unknown>>();
-  return <T>(did: string, fn: () => Promise<T>): Promise<T> => {
-    const prior = locks.get(did) ?? Promise.resolve();
-    const run = prior.then(fn, fn);
-    const chained = run.catch(() => {});
-    locks.set(did, chained);
-    void chained.then(() => {
-      if (locks.get(did) === chained) locks.delete(did);
-    });
-    return run;
-  };
+export interface WebSignInCompleteParams {
+  state: string;
+  code: string;
+  iss?: string;
+}
+
+export interface WebSignInGrant extends WebSignedInUser {
+  token: string;
+  leaseSeconds: number;
+}
+
+export interface WebCaller extends WebSignedInUser {
+  token: string;
+}
+
+export interface WebSignOutResult {
+  revoked: boolean;
+  revokeError?: string;
+}
+
+export interface WebAccountAgent {
+  getServiceAuth(aud: string, lxm?: string): Promise<string>;
+  listRecords(
+    did: string,
+    collection: string,
+    opts?: { limit?: number },
+  ): Promise<{ records: Array<{ uri: string; cid: string; value: Record<string, unknown> }> }>;
+  createRecord(did: string, collection: string, rkey: string, record: Record<string, unknown>): Promise<{ uri: string; cid: string }>;
+  applyWrites(
+    did: string,
+    writes: Array<
+      | { action: "create" | "update"; collection: string; rkey: string; record: Record<string, unknown> }
+      | { action: "delete"; collection: string; rkey: string }
+    >,
+  ): Promise<unknown>;
+}
+
+export interface WebSignIn {
+  clientMetadata(): Promise<Record<string, unknown>>;
+  start(identifier: string, redirectUri: string): Promise<WebSignInStart>;
+  complete(params: WebSignInCompleteParams): Promise<WebSignInGrant>;
+  identify(token: string): Promise<WebSignedInUser | null>;
+  signOut(caller: WebCaller): Promise<WebSignOutResult>;
+  agentFor(caller: WebCaller): WebAccountAgent;
+}
+
+export interface WebRequestLike {
+  method: string;
+  header(name: string): string | undefined;
+}
+
+export interface WebRequestAuth {
+  authenticate(request: WebRequestLike): Promise<WebCaller | null>;
 }

@@ -33,7 +33,7 @@
     "@publicdomainrelay/socialweb-computer-account-requesters": "jsr:@publicdomainrelay/socialweb-computer-account-requesters@^0",
     "@publicdomainrelay/socialweb-computer-k8s-api": "jsr:@publicdomainrelay/socialweb-computer-k8s-api@^0",
     "@publicdomainrelay/socialweb-computer-k8s-node-contract": "jsr:@publicdomainrelay/socialweb-computer-k8s-node-contract@^0",
-    "@publicdomainrelay/socialweb-computer-oauth-session-vault": "jsr:@publicdomainrelay/socialweb-computer-oauth-session-vault@^0",
+    "@publicdomainrelay/atproto-session-custody-openbao": "jsr:@publicdomainrelay/atproto-session-custody-openbao@^0",
     "@publicdomainrelay/socialweb-computer-session-password": "jsr:@publicdomainrelay/socialweb-computer-session-password@^0"
   }
 }

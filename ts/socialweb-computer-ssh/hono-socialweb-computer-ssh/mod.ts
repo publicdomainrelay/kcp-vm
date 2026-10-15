@@ -3,26 +3,23 @@ import { createLogger, createStructuredLogger, getMinLogLevelFromEnv } from "@pu
 import { createServe, tcpListenerAddress } from "@publicdomainrelay/serve";
 import { EventBus } from "@publicdomainrelay/event-bus";
 import { createStaticFilesApp, type StaticFileEvent } from "@publicdomainrelay/hono-factory-static-files-fs";
-import { REQUESTER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { createAtprotoKeyAuthorizer } from "@publicdomainrelay/socialweb-computer-atproto";
-import { createAtprotoSessionVerifier } from "@publicdomainrelay/socialweb-computer-oauth-atproto";
-import { createFileSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-fs";
-import { createVaultSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-vault";
 import { loadOrCreateVaultKeyHex } from "@publicdomainrelay/key-vault";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
-import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
 import { createInProcessRequester, guestBaseUserData, unixSocketIrohDialer } from "@publicdomainrelay/socialweb-computer-ssh-requester";
 import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
 import { marketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
-import { createWebFactory } from "@publicdomainrelay/hono-factory-socialweb-computer-oauth";
+import { createWebFactory, createWebRequestAuth } from "@publicdomainrelay/hono-factory-socialweb-computer-oauth";
+import { createKeysFactory } from "@publicdomainrelay/hono-factory-socialweb-computer-keys";
+import { createOpenBaoCustodyConnector } from "@publicdomainrelay/atproto-session-custody-openbao";
+import { createOpenBaoWebSignIn } from "@publicdomainrelay/socialweb-computer-web-signin-openbao";
 import { createSshServer } from "@publicdomainrelay/socialweb-computer-ssh-ssh2";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { DenoKvStorage, signerFromKeypair } from "@publicdomainrelay/atproto-repo-deno";
 import { createRepoFactory } from "@publicdomainrelay/hono-factory-atproto-repo-deno";
 import { createJsonFileStore } from "@publicdomainrelay/json-file-store-fs";
-import { loadOrCreateKeyHex } from "@publicdomainrelay/key-file-fs";
 import { createSecretsCapability } from "@publicdomainrelay/guest-capability-secrets";
 import { createPiCocoreModule } from "@publicdomainrelay/cloud-init-plugin-pi";
 import { cocoreSecretEntry, createCocorePairing } from "@publicdomainrelay/socialweb-computer-cocore-http";
@@ -63,15 +60,9 @@ const appHandle = appOrigin ? ((options.appHandle as string) || new URL(appOrigi
 const appDid = appOrigin ? ((options.appDid as string) || `did:web:${new URL(appOrigin).hostname}`) : undefined;
 const cocoreReturnUrl = (options.cocoreReturnUrl as string) || `${webOrigin}/`;
 
-async function accountState(): Promise<{ sessionStore: SessionStore; keyHex: (name: string, file: string) => Promise<string> }> {
+async function accountState() {
   if (!options.openbaoServer) {
-    logger.warn("account_state_in_files", { stateDir, next: "set openbao-server to keep sessions and keys in the application's OpenBao" });
-    return {
-      sessionStore: createFileSessionStore(`${stateDir}/oauth-sessions.json`, {
-        onCorrupt: ({ path, quarantine }) => logger.error("session_store_corrupt", { path, quarantine }),
-      }),
-      keyHex: (_name, file) => loadOrCreateKeyHex(file),
-    };
+    throw new Error("openbao-server is required: the sign-in, the sessions and the keys live in the application's OpenBao");
   }
   const kcpServer = (options.openbaoKcpServer as string) || String(options.kcpServer ?? "").split("/clusters/")[0];
   if (!kcpServer) throw new Error("openbao-server needs openbao-kcp-server or KCP_SERVER to read the OpenBaoServer object");
@@ -87,24 +78,21 @@ async function accountState(): Promise<{ sessionStore: SessionStore; keyHex: (na
   });
   const resolved = await resolve();
   log("vault_resolved", { openbaoserver: resolved.name, address: resolved.address, kvMount: resolved.kvMount, role: resolved.certLogin.role });
-  const vault = createOpenBaoIdentityVault({
-    endpoint: async () => {
-      const r = await resolve();
-      return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
-    },
-  });
+  const endpoint = async () => {
+    const r = await resolve();
+    return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
+  };
+  const vault = createOpenBaoIdentityVault({ endpoint });
   return {
-    sessionStore: createVaultSessionStore({ vault, mount: resolved.kvMount }),
-    keyHex: (name) => loadOrCreateVaultKeyHex(vault, { mount: resolved.kvMount, path: `keys/${name}` }),
+    connector: createOpenBaoCustodyConnector({ endpoint, mount: options.openbaoAtprotoMount as string }),
+    keyHex: (name: string) => loadOrCreateVaultKeyHex(vault, { mount: resolved.kvMount, path: `keys/${name}` }),
   };
 }
 
-const { sessionStore, keyHex } = await accountState();
+const { connector, keyHex } = await accountState();
+const signIn = createOpenBaoWebSignIn({ connector, role: options.atprotoRole as string, log });
+const webAuth = createWebRequestAuth({ signIn, publicOrigin: options.publicOrigin as string | undefined, log });
 
-// Filed here rather than on the deposited session: POST /session is
-// unauthenticated by construction and stores the blob it was handed, so any
-// field on that type is a field any caller can plant -- and an inference
-// credential is not something a browser has any business naming.
 const cocoreTokens = createJsonFileStore<CocoreToken>(`${stateDir}/cocore-tokens.json`, {
   onCorrupt: ({ path, quarantine }) => logger.error("cocore_token_store_corrupt", { path, quarantine }),
 });
@@ -169,13 +157,12 @@ const serve = createServe({
 // In-process: one agent per account owns the session, so concurrent
 // connections share a refresh lock instead of racing a single-use token.
 const runner = createInProcessRequester({
-  sessionStore,
-  requesterKeyHex: () => keyHex("requester", `${stateDir}/requester-private-key`),
+  custody: connector.own,
+  requesterKeyHex: () => keyHex("requester"),
   plcDirectoryUrl: options.plcDirectoryUrl as string,
   ingressProxyHost: options.ingressProxyHost as string,
   relayUrls,
   vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
-  oauthClientId: options.oauthClientId as string | undefined,
   guestHostAliases: splitList(options.guestHostAliases),
   extraBidderDids: splitList(options.bidderDids),
   irohDialer: options.irohDialSocket ? unixSocketIrohDialer(options.irohDialSocket as string) : undefined,
@@ -269,21 +256,19 @@ const ssh = createSshServer({
   log,
 });
 
-const verifier = createAtprotoSessionVerifier({
-  log: (reason, data) => log("session_verify_failed", { reason, ...(data ?? {}) }),
-});
-
 const web = createWebFactory({
-  sessionStore,
-  verifier,
-  scope: REQUESTER_OAUTH_SCOPE.join(" "),
+  signIn,
+  auth: webAuth,
   publicOrigin: options.publicOrigin as string | undefined,
   sshPublicHost: options.sshPublicHost as string | undefined,
   appDid,
+  cookieMaxAgeSec: options.sessionCookieMaxAgeSec as number,
   log,
 });
 
-const cocore = createCocorePairFactory({ pairing: cocorePairing, verifier, log });
+const keys = createKeysFactory({ signIn, auth: webAuth, log });
+
+const cocore = createCocorePairFactory({ pairing: cocorePairing, auth: webAuth, log });
 
 // The app's own PDS, on the listener and hostname Caddy already routes here.
 //
@@ -299,10 +284,7 @@ const cocore = createCocorePairFactory({ pairing: cocorePairing, verifier, log }
 let appPds: ReturnType<typeof createRepoFactory> | null = null;
 if (appDid) {
   const appSigner = signerFromKeypair(
-    await Secp256k1Keypair.import(await keyHex(
-      "app-pds",
-      (options.appPdsKeyPath as string) || `${stateDir}/app-pds-private-key`,
-    )),
+    await Secp256k1Keypair.import(await keyHex("app-pds")),
   );
   // One signer for both the repo and the published key. Two would put a key in
   // the DID document that does not verify this repo's commits.
@@ -349,6 +331,7 @@ const staticApp = createStaticFilesApp(options.webDir as string, createStructure
 
 serve.app.route("/", web.createApp());
 serve.app.route("/", cocore.createApp());
+serve.app.route("/", keys.createApp());
 if (appPds) serve.app.route("/", appPds.app as never);
 serve.app.route("/", staticApp as never);
 

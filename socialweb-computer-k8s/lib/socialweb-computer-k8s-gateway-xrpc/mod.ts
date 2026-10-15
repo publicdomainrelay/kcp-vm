@@ -1,5 +1,5 @@
 import { ClusterGatewayError } from "@publicdomainrelay/socialweb-computer-k8s-abc";
-import type { ClusterGateway, ServiceAuthSource } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import type { ClusterCaller, ClusterGateway } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import {
   CLUSTER_NSID,
   type ClusterNsid,
@@ -11,7 +11,6 @@ import {
 export interface XrpcClusterGatewayOptions {
   gatewayUrl: string | (() => Promise<string>);
   audience: string;
-  serviceAuth: ServiceAuthSource;
   fetch?: typeof fetch;
   timeoutMs?: number;
 }
@@ -24,10 +23,10 @@ export function createXrpcClusterGateway(opts: XrpcClusterGatewayOptions): Clust
   const doFetch = opts.fetch ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 30_000;
 
-  async function call<T>(did: string, nsid: ClusterNsid, body?: Record<string, unknown>): Promise<T> {
+  async function call<T>(caller: ClusterCaller, nsid: ClusterNsid, body?: Record<string, unknown>): Promise<T> {
     let token: string;
     try {
-      token = await opts.serviceAuth.serviceAuth(did, opts.audience, nsid);
+      token = await caller.serviceAuth(opts.audience, nsid);
     } catch (err) {
       throw new ClusterGatewayError(401, "ServiceAuthUnavailable", `could not obtain service auth from the account's PDS: ${String(err)}`);
     }
@@ -62,27 +61,27 @@ export function createXrpcClusterGateway(opts: XrpcClusterGatewayOptions): Clust
   }
 
   return {
-    async list(did) {
-      const out = await call<{ clusters?: ClusterSummary[] }>(did, CLUSTER_NSID.listClusters);
+    async list(caller) {
+      const out = await call<{ clusters?: ClusterSummary[] }>(caller, CLUSTER_NSID.listClusters);
       return Array.isArray(out.clusters) ? out.clusters : [];
     },
-    create(did, name) {
-      return call<ClusterPhaseResult>(did, CLUSTER_NSID.createCluster, { name });
+    create(caller, name) {
+      return call<ClusterPhaseResult>(caller, CLUSTER_NSID.createCluster, { name });
     },
-    kubeconfig(did, name, ttlSeconds, noExpiry) {
+    kubeconfig(caller, name, ttlSeconds, noExpiry) {
       const body: Record<string, unknown> = { name };
       if (typeof ttlSeconds === "number") body.ttlSeconds = ttlSeconds;
       if (noExpiry === true) body.noExpiry = true;
-      return call<KubeconfigGrant>(did, CLUSTER_NSID.getKubeconfig, body);
+      return call<KubeconfigGrant>(caller, CLUSTER_NSID.getKubeconfig, body);
     },
-    up(did, name) {
-      return call<ClusterPhaseResult>(did, CLUSTER_NSID.controlPlaneUp, { name });
+    up(caller, name) {
+      return call<ClusterPhaseResult>(caller, CLUSTER_NSID.controlPlaneUp, { name });
     },
-    down(did, name) {
-      return call<ClusterPhaseResult>(did, CLUSTER_NSID.controlPlaneDown, { name });
+    down(caller, name) {
+      return call<ClusterPhaseResult>(caller, CLUSTER_NSID.controlPlaneDown, { name });
     },
-    remove(did, name) {
-      return call<ClusterPhaseResult>(did, CLUSTER_NSID.deleteCluster, { name });
+    remove(caller, name) {
+      return call<ClusterPhaseResult>(caller, CLUSTER_NSID.deleteCluster, { name });
     },
   };
 }

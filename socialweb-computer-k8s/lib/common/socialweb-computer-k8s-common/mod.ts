@@ -44,18 +44,6 @@ export function kubeconfigFilename(cluster: string): string {
   return `${cluster}.kubeconfig.yaml`;
 }
 
-export const REQUEST_PROOF_SCHEME = "SWC-Proof";
-export const REQUEST_PROOF_TYP = "swc-proof+jwt";
-export const REQUEST_PROOF_MAX_SKEW_SEC = 60;
-
-export interface RequestProofClaims {
-  iss: string;
-  htm: string;
-  htu: string;
-  iat: number;
-  jti: string;
-}
-
 export const HOUR_SEC = 3_600;
 
 export const DAY_SEC = 86_400;

@@ -1,15 +1,15 @@
-import { createOAuthAgentFromSession } from "@publicdomainrelay/atproto-helpers";
 import type { AtprotoAgentLike } from "@publicdomainrelay/atproto-helpers";
-import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
+import type { CustodyAgent, SessionCustody } from "@publicdomainrelay/atproto-session-custody-abc";
+import { createCustodyAgent } from "@publicdomainrelay/atproto-session-custody-openbao";
 
 export interface AccountAgentsOptions {
-  sessionStore: SessionStore;
-  oauthClientId?: string;
+  custody: SessionCustody;
   agentWithoutOAuthFor?: (did: string) => Promise<unknown> | null;
+  sessionCacheMs?: number;
   log?: (event: string, data?: Record<string, unknown>) => void;
 }
 
-export type AccountAgent = Awaited<ReturnType<typeof createOAuthAgentFromSession>>;
+export type AccountAgent = CustodyAgent;
 
 export type LiveAccountAgent = AtprotoAgentLike & { sessionData: { userDid: string } };
 
@@ -19,48 +19,45 @@ export interface AccountAgents {
   shutdown(): Promise<void>;
 }
 
+const DEFAULT_SESSION_CACHE_MS = 30_000;
+
 export function createAccountAgents(opts: AccountAgentsOptions): AccountAgents {
   const log = opts.log ?? (() => {});
-  const agents = new Map<string, { refreshJwt: string; agent: Promise<AccountAgent> }>();
+  const cacheMs = opts.sessionCacheMs ?? DEFAULT_SESSION_CACHE_MS;
+  const agents = new Map<string, { agent: CustodyAgent; pds: string; checkedAt: number }>();
   const agentsWithoutOAuth = new Map<string, Promise<AccountAgent>>();
 
-  function agentFor(did: string): Promise<AccountAgent> {
+  async function agentFor(did: string): Promise<AccountAgent> {
     const cachedWithoutOAuth = agentsWithoutOAuth.get(did);
-    if (cachedWithoutOAuth) return cachedWithoutOAuth;
+    if (cachedWithoutOAuth) return await cachedWithoutOAuth;
     const withoutOAuth = opts.agentWithoutOAuthFor?.(did);
     if (withoutOAuth) {
       const agent = withoutOAuth as Promise<AccountAgent>;
       agentsWithoutOAuth.set(did, agent);
       agent.catch(() => agentsWithoutOAuth.delete(did));
       log("account_agent_without_oauth", { did });
-      return agent;
-    }
-    return (async () => {
-      const stored = await opts.sessionStore.get(did);
-      if (!stored) throw new Error(`no oauth session stored for ${did}`);
-      const cached = agents.get(did);
-      if (cached && cached.refreshJwt === stored.refreshJwt) return await cached.agent;
-      if (cached) {
-        agents.delete(did);
-        void cached.agent
-          .then((a) => (a as unknown as { dispose?: () => void }).dispose?.())
-          .catch(() => {});
-      }
-      const clientId = stored.clientId ?? opts.oauthClientId;
-      const agent = createOAuthAgentFromSession(stored, {
-        clientId,
-        saveSession: (updated) => opts.sessionStore.set(did, { ...updated, clientId }),
-      });
-      agents.set(did, { refreshJwt: stored.refreshJwt, agent });
-      agent.catch(() => {
-        if (agents.get(did)?.agent === agent) agents.delete(did);
-      });
       return await agent;
-    })();
+    }
+    const cached = agents.get(did);
+    if (cached && Date.now() - cached.checkedAt < cacheMs) return cached.agent;
+    const session = await opts.custody.session(did);
+    if (!session) {
+      agents.delete(did);
+      throw new Error(`no oauth session held in the vault for ${did}`);
+    }
+    if (session.status !== "active") {
+      agents.delete(did);
+      throw new Error(`the oauth session of ${did} is ${session.status}: ${session.statusReason}`);
+    }
+    const agent = cached && cached.pds === session.pds
+      ? cached.agent
+      : createCustodyAgent({ custody: opts.custody, did, pds: session.pds });
+    agents.set(did, { agent, pds: session.pds, checkedAt: Date.now() });
+    return agent;
   }
 
   function liveAgentFor(did: string): LiveAccountAgent {
-    const current = () => agentFor(did) as Promise<AtprotoAgentLike>;
+    const current = () => agentFor(did) as unknown as Promise<AtprotoAgentLike>;
     return {
       did,
       sessionData: { userDid: did },
@@ -93,10 +90,11 @@ export function createAccountAgents(opts: AccountAgentsOptions): AccountAgents {
     agentFor,
     liveAgentFor,
     async shutdown(): Promise<void> {
-      for (const settled of await Promise.allSettled([...agents.values()].map((e) => e.agent))) {
+      for (const settled of await Promise.allSettled([...agentsWithoutOAuth.values()])) {
         if (settled.status === "fulfilled") (settled.value as unknown as { dispose?: () => void }).dispose?.();
       }
       agents.clear();
+      agentsWithoutOAuth.clear();
     },
   };
 }

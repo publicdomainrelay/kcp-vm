@@ -57,7 +57,6 @@
     "./ts/typescript-helpers/lib/abc/kcp-client",
     "./socialweb-computer-k8s/lib/cloud-init-plugin-k3s-join",
     "./socialweb-computer-k8s/lib/json-file-store-fs",
-    "./socialweb-computer-k8s/lib/key-file-fs",
     "./socialweb-computer-k8s/lib/key-vault",
     "./socialweb-computer-k8s/lib/socialweb-computer-account-agents",
     "./socialweb-computer-k8s/lib/socialweb-computer-account-requesters",
@@ -66,11 +65,8 @@
     "./socialweb-computer-k8s/lib/socialweb-computer-k8s-node-contract",
     "./socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market",
     "./socialweb-computer-k8s/lib/socialweb-computer-k8s-nodeclaim-kcp",
-    "./socialweb-computer-k8s/lib/socialweb-computer-k8s-request-proof",
-    "./socialweb-computer-k8s/lib/socialweb-computer-oauth-atproto",
-    "./socialweb-computer-k8s/lib/socialweb-computer-oauth-session-fs",
-    "./socialweb-computer-k8s/lib/socialweb-computer-oauth-session-vault",
     "./socialweb-computer-k8s/lib/socialweb-computer-session-password",
+    "./socialweb-computer-k8s/lib/socialweb-computer-web-signin-openbao",
     "./ts/atproto-market/lib/atproto-attestation-port",
     "./ts/atproto-market/lib/atproto-helpers",
     "./ts/atproto-market/lib/atproto-oauth-helpers",
@@ -164,6 +160,7 @@
     "./ts/hono-compute-provider/lib/hono-factory-compute-provider-kcp",
     "./ts/hono-pds/lib/hono-factory-atproto-repo-deno",
     "./ts/socialweb-computer-ssh/lib/hono-factory-socialweb-computer-cocore",
+    "./ts/socialweb-computer-ssh/lib/hono-factory-socialweb-computer-keys",
     "./ts/typescript-helpers/lib/hono-factory-static-files-fs",
     "./socialweb-computer-k8s/hono-socialweb-computer-k8s",
     "./ts/atproto-market/hono-bidder",
@@ -211,8 +208,7 @@
   "tasks": {
     "check": "deno check --node-modules-dir=none socialweb-computer-k8s/hono-socialweb-computer-k8s/undici-preload.ts socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts ts/atproto-market/hono-bidder/mod.ts ts/atproto-market/hono-bidder-guest/mod.ts ts/atproto-market/request-vm-ssh/mod.ts ts/socialweb-computer-ssh/hono-socialweb-computer-ssh/mod.ts ts/atproto-market/hono-plc/mod.ts ts/atproto-relay/hono-atproto-relay/mod.ts ts/did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts ts/hono-pds/main.ts ts/did-key-associator/hono-backend/mod.ts ts/policy-engine/hono-policy-engine/mod.ts",
     "test": "deno test -A --node-modules-dir=none --ignore=ts/socialweb-computer-ssh/test/live_market_test.ts ts/atproto-market/test ts/atproto-market/request-vm-ssh ts/atproto-relay/test ts/deno-worker-sandbox/test ts/did-key-ingress-proxy/test ts/hono-compute-provider/test ts/hono-pds/test ts/policy-engine/test ts/policy-engine/lib/policy-engine-server-gha-lite ts/socialweb-computer-ssh/test ts/typescript-helpers/test socialweb-computer-k8s/test",
-    "socialweb-computer-k8s:start": "deno run -A --preload socialweb-computer-k8s/hono-socialweb-computer-k8s/undici-preload.ts socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts",
-    "socialweb-computer-k8s:scope": "deno run -A socialweb-computer-k8s/scripts/generate-web-scope.ts"
+    "socialweb-computer-k8s:start": "deno run -A --preload socialweb-computer-k8s/hono-socialweb-computer-k8s/undici-preload.ts socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts"
   },
   "fmt": {
     "lineWidth": 100

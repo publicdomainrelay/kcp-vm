@@ -21,13 +21,18 @@ export function nodeClaimKey(claim: Pick<NodeClaim, "workspace" | "name">): stri
   return `${claim.workspace}/${claim.name}`;
 }
 
+export interface ClusterCaller {
+  did: string;
+  serviceAuth(aud: string, lxm: string): Promise<string>;
+}
+
 export interface ClusterGateway {
-  list(did: string): Promise<ClusterSummary[]>;
-  create(did: string, name: string): Promise<ClusterPhaseResult>;
-  kubeconfig(did: string, name: string, ttlSeconds?: number, noExpiry?: boolean): Promise<KubeconfigGrant>;
-  up(did: string, name: string): Promise<ClusterPhaseResult>;
-  down(did: string, name: string): Promise<ClusterPhaseResult>;
-  remove(did: string, name: string): Promise<ClusterPhaseResult>;
+  list(caller: ClusterCaller): Promise<ClusterSummary[]>;
+  create(caller: ClusterCaller, name: string): Promise<ClusterPhaseResult>;
+  kubeconfig(caller: ClusterCaller, name: string, ttlSeconds?: number, noExpiry?: boolean): Promise<KubeconfigGrant>;
+  up(caller: ClusterCaller, name: string): Promise<ClusterPhaseResult>;
+  down(caller: ClusterCaller, name: string): Promise<ClusterPhaseResult>;
+  remove(caller: ClusterCaller, name: string): Promise<ClusterPhaseResult>;
 }
 
 export class ClusterGatewayError extends Error {
@@ -38,43 +43,6 @@ export class ClusterGatewayError extends Error {
   ) {
     super(message);
     this.name = "ClusterGatewayError";
-  }
-}
-
-export interface ServiceAuthSource {
-  serviceAuth(did: string, aud: string, lxm: string): Promise<string>;
-}
-
-export interface ProvedRequest {
-  method: string;
-  path: string;
-  authorization: string | undefined;
-}
-
-export interface RequestProofVerifier {
-  verify(request: ProvedRequest): Promise<{ did: string } | null>;
-}
-
-export class ReplayLedger {
-  private readonly seen = new Map<string, number>();
-
-  constructor(readonly windowSec: number) {}
-
-  claim(jti: string, nowSec: number): boolean {
-    this.evict(nowSec);
-    if (this.seen.has(jti)) return false;
-    this.seen.set(jti, nowSec + this.windowSec * 2);
-    return true;
-  }
-
-  get size(): number {
-    return this.seen.size;
-  }
-
-  private evict(nowSec: number): void {
-    for (const [jti, expires] of this.seen) {
-      if (expires < nowSec) this.seen.delete(jti);
-    }
   }
 }
 

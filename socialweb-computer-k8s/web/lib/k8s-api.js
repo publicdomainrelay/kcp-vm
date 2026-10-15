@@ -1,37 +1,3 @@
-const enc = new TextEncoder();
-
-function base64url(bytes) {
-  let binary = '';
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-function randomHex(n) {
-  const b = new Uint8Array(n);
-  crypto.getRandomValues(b);
-  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-}
-
-async function signingKey(session) {
-  const { key_ops, ext, use, alg, ...jwk } = session.dpopPrivateJwk;
-  return crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
-}
-
-export async function requestProof(session, method, url) {
-  const target = new URL(url, window.location.origin);
-  const header = { typ: 'swc-proof+jwt', alg: 'ES256' };
-  const claims = {
-    iss: session.userDid,
-    htm: method,
-    htu: `${target.origin}${target.pathname}`,
-    iat: Math.floor(Date.now() / 1000),
-    jti: randomHex(16),
-  };
-  const input = `${base64url(enc.encode(JSON.stringify(header)))}.${base64url(enc.encode(JSON.stringify(claims)))}`;
-  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, await signingKey(session), enc.encode(input));
-  return `${input}.${base64url(new Uint8Array(sig))}`;
-}
-
 export class ApiError extends Error {
   constructor(status, code, message) {
     super(message || code || `HTTP ${status}`);
@@ -40,18 +6,41 @@ export class ApiError extends Error {
   }
 }
 
-async function call(session, path, body) {
+async function call(path, body) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `SWC-Proof ${await requestProof(session, 'POST', path)}`,
-    },
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body || {}),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, data && data.error, data && data.message);
   return data;
+}
+
+export async function currentSession() {
+  const res = await fetch('/session', { credentials: 'same-origin' });
+  if (res.status === 401) return null;
+  if (!res.ok) throw new ApiError(res.status, 'SessionUnavailable', 'could not read the sign-in');
+  return res.json();
+}
+
+export async function startSignIn(handle) {
+  const res = await fetch('/oauth/start', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ handle }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || !data.authorizationUrl) {
+    throw new ApiError(res.status, data && data.error, (data && data.error) || `HTTP ${res.status}`);
+  }
+  return data.authorizationUrl;
+}
+
+export async function signOut() {
+  await fetch('/session', { method: 'DELETE', credentials: 'same-origin' });
 }
 
 export async function fetchConfig() {
@@ -60,32 +49,32 @@ export async function fetchConfig() {
   return res.json();
 }
 
-export async function listClusters(session) {
-  const out = await call(session, '/api/clusters/list');
+export async function listClusters() {
+  const out = await call('/api/clusters/list');
   return Array.isArray(out.clusters) ? out.clusters : [];
 }
 
-export function createCluster(session, name) {
-  return call(session, '/api/clusters/create', { name });
+export function createCluster(name) {
+  return call('/api/clusters/create', { name });
 }
 
-export function clusterUp(session, name) {
-  return call(session, '/api/clusters/up', { name });
+export function clusterUp(name) {
+  return call('/api/clusters/up', { name });
 }
 
-export function clusterDown(session, name) {
-  return call(session, '/api/clusters/down', { name });
+export function clusterDown(name) {
+  return call('/api/clusters/down', { name });
 }
 
-export function deleteCluster(session, name) {
-  return call(session, '/api/clusters/delete', { name });
+export function deleteCluster(name) {
+  return call('/api/clusters/delete', { name });
 }
 
-export function fetchKubeconfig(session, name, ttlSeconds, noExpiry) {
+export function fetchKubeconfig(name, ttlSeconds, noExpiry) {
   const body = { name };
   if (noExpiry) body.noExpiry = true;
   else if (ttlSeconds) body.ttlSeconds = ttlSeconds;
-  return call(session, '/api/clusters/kubeconfig', body);
+  return call('/api/clusters/kubeconfig', body);
 }
 
 export function saveText(filename, text) {

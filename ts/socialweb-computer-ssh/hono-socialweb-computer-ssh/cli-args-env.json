@@ -108,11 +108,6 @@
       "env": "SESSION_MAX_SEC",
       "default": 3600
     },
-    "oauth-client-id": {
-      "type": "string",
-      "description": "Fallback client_id to refresh as when a deposited session does not carry its own. Must be the exact URL the authorization server fetches, e.g. https://<host>/oauth-client-metadata.json. Normally unnecessary: the page sends the client_id its session was issued to.",
-      "env": "OAUTH_CLIENT_ID"
-    },
     "public-origin": {
       "type": "string",
       "description": "Public origin this deployment is reached at, e.g. https://ssh.example.com. Set it when the app sits behind a TLS terminator: the client_id must be an https URL with no port, and a proxied request arrives as plain http. Omit on loopback.",
@@ -161,7 +156,7 @@
     },
     "openbao-server": {
       "type": "string",
-      "description": "OpenBaoServer object holding the OAuth sessions, the requester key and the app PDS key. Unset: they stay in files under state-dir",
+      "description": "OpenBaoServer object that signs users in through its atproto auth mount and holds the requester key and the app PDS key; required",
       "env": "OPENBAO_SERVER"
     },
     "openbao-client": {
@@ -195,6 +190,24 @@
       "description": "PEM CA of the kcp that holds the OpenBaoServer object",
       "env": "KCP_PROJECTED_KCP_CA"
     },
+    "openbao-atproto-mount": {
+      "type": "string",
+      "description": "Mount of the OpenBao atproto auth plugin that signs users in and holds their sessions",
+      "env": "OPENBAO_ATPROTO_MOUNT",
+      "default": "atproto"
+    },
+    "atproto-role": {
+      "type": "string",
+      "description": "Role of the atproto auth mount that every sign-in uses",
+      "env": "ATPROTO_ROLE",
+      "default": "user"
+    },
+    "session-cookie-max-age-sec": {
+      "type": "number",
+      "description": "Lifetime of the browser's session cookie; the OpenBao token behind it expires on its own schedule",
+      "env": "SESSION_COOKIE_MAX_AGE_SEC",
+      "default": 2592000
+    },
     "listeners-file": {
       "type": "string",
       "description": "File the bound listeners (the HTTP server and the SSH server) are written to as JSON once both listen",
@@ -219,11 +232,6 @@
       "type": "string",
       "description": "Handle to declare in the DID document's alsoKnownAs. Defaults to the public origin's hostname. The handle is proved separately by a _atproto.<handle> TXT record pointing at this DID.",
       "env": "APP_HANDLE"
-    },
-    "app-pds-key-path": {
-      "type": "string",
-      "description": "Secp256k1 key signing the app repo. Defaults to <state-dir>/app-pds-private-key. Generated if missing; losing it makes every commit unverifiable.",
-      "env": "APP_PDS_KEY_PATH"
     },
     "app-pds-kv-path": {
       "type": "string",

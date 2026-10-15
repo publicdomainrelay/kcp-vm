@@ -288,12 +288,12 @@ export function createKcpMarketIdentities(opts: KcpMarketIdentitiesOptions): Kcp
         handle: account.handle,
         pdsUrl: account.pdsUrl,
         sessionRef: account.sessionRef,
-        message: "the web app holds this account's OAuth session in its vault",
+        message: "the application OpenBao holds this account's OAuth session",
         conditions: [{
           type: "SignedIn",
           status: "True",
-          reason: "SessionDeposited",
-          message: "an OAuth session is in the vault at the session ref",
+          reason: "SignedInThroughVault",
+          message: "an OAuth session is held by the atproto auth mount at the session ref",
           lastTransitionTime: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
         }],
       };
@@ -310,8 +310,15 @@ export function createKcpMarketIdentities(opts: KcpMarketIdentitiesOptions): Kcp
               phase: "SessionExpired",
               did,
               sessionRef,
-              message: "the web app holds no OAuth session for this account; sign in again",
+              message: "the application OpenBao holds no OAuth session for this account; sign in again",
               pendingAction: { kind: "signInAgain" },
+              conditions: [{
+                type: "SignedIn",
+                status: "False",
+                reason: "SignedOut",
+                message: "the session was deleted from the atproto auth mount and its tokens revoked",
+                lastTransitionTime: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+              }],
             },
           },
         }, { subresource: "status" });

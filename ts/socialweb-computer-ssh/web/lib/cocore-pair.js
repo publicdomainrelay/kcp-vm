@@ -1,18 +1,9 @@
-// The co/core pairing client.
-//
-// Its own module rather than a few more lines in pds.js: that file's contract is
-// that the only thing the page sends the server is the session it obtained, and
-// a test asserts it. Pairing sends the session too, but for a different reason
-// and to different endpoints, so it reads as its own client.
-//
-// It deposits no session and renews nothing. The server it is talking to holds
-// the session already and is the only thing that refreshes it.
-
 async function post(path, body) {
   const res = await fetch(path, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(body || {}),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) {
@@ -25,12 +16,12 @@ async function post(path, body) {
   return data;
 }
 
-export function cocoreStatus(session) {
-  return post('/cocore/status', session);
+export function cocoreStatus() {
+  return post('/cocore/status');
 }
 
-export function cocorePairStart(session) {
-  return post('/cocore/pair/start', session);
+export function cocorePairStart() {
+  return post('/cocore/pair/start');
 }
 
 // No session: the pairId is the whole request, and the server advances a pairing
