@@ -18,6 +18,7 @@ SHA256="${SHA256:-}"
 WEB_APP_PORT=8788
 KCP_PORT=6443
 GATEWAY_TLS_PORT=8443
+CERT_FRONT_PORT=8444
 SSH_OPTS=(-p "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=20
   -o ControlMaster=auto -o "ControlPath=${HOME}/.ssh/cm-swc-%r@%h:%p" -o ControlPersist=10m -o ServerAliveInterval=15)
 if [ -n "$SSH_KEY" ]; then
@@ -59,7 +60,7 @@ if [ -n "$GATEWAY_SPEC_FILE" ]; then
   ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat > $(q "$INCOMING.spec")" < "$GATEWAY_SPEC_FILE"
 fi
 
-REMOTE_ENV="ACCOUNT=$(q "$ACCOUNT") STATE_DIR=$(q "$STATE_DIR") INCOMING=$(q "$INCOMING") SHA256=$(q "$SHA256") ORIGIN=$(q "$ORIGIN") KCP_ORIGIN=$(q "$KCP_ORIGIN") WEB_APP_PORT=$(q "$WEB_APP_PORT") KCP_PORT=$(q "$KCP_PORT") GATEWAY_TLS_PORT=$(q "$GATEWAY_TLS_PORT")"
+REMOTE_ENV="ACCOUNT=$(q "$ACCOUNT") STATE_DIR=$(q "$STATE_DIR") INCOMING=$(q "$INCOMING") SHA256=$(q "$SHA256") ORIGIN=$(q "$ORIGIN") KCP_ORIGIN=$(q "$KCP_ORIGIN") WEB_APP_PORT=$(q "$WEB_APP_PORT") KCP_PORT=$(q "$KCP_PORT") GATEWAY_TLS_PORT=$(q "$GATEWAY_TLS_PORT") CERT_FRONT_PORT=$(q "$CERT_FRONT_PORT")"
 
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "$REMOTE_ENV bash -s" <<'REMOTE_EOF'
 set -euo pipefail
@@ -132,6 +133,10 @@ admin="$(sed -n 's/.*"adminKubeconfig": *"\([^"]*\)".*/\1/p' "$STATE_DIR/gateway
 sed -n 's/^ *certificate-authority-data: *//p' "$admin" | head -n1 | base64 -d > "$CA_DIR/kcp.crt"
 [ -s "$CA_DIR/kcp.crt" ] || { say "kcp's serving CA could not be read out of $admin"; exit 1; }
 install -m 0644 "$STATE_DIR/tls/tls.crt" "$CA_DIR/gateway.crt"
+[ -s "$STATE_DIR/tls/edge-client.crt" ] && [ -s "$STATE_DIR/tls/edge-client.key" ] || { say "the gateway made no edge client certificate"; exit 1; }
+getent group caddy >/dev/null || { say "no caddy group: the edge client key cannot be given to caddy only"; exit 1; }
+install -m 0644 "$STATE_DIR/tls/edge-client.crt" "$CA_DIR/edge-client.crt"
+install -m 0640 -o root -g caddy "$STATE_DIR/tls/edge-client.key" "$CA_DIR/edge-client.key"
 chmod 0644 "$CA_DIR"/*.crt
 
 install -d -m 0755 /etc/caddy/sites
@@ -153,12 +158,34 @@ ${ORIGIN} {
 SITE
 cat > "/etc/caddy/sites/${KCP_ORIGIN}.caddy" <<SITE
 ${KCP_ORIGIN} {
-  reverse_proxy https://127.0.0.1:${KCP_PORT} {
-    flush_interval -1
-    transport http {
-      tls_trusted_ca_certs ${CA_DIR}/kcp.crt
-      tls_server_name 127.0.0.1
-      versions 1.1
+  tls {
+    client_auth {
+      mode request
+    }
+  }
+  @clientcert expression {tls_client_certificate_der_base64} != ""
+  handle @clientcert {
+    reverse_proxy https://127.0.0.1:${CERT_FRONT_PORT} {
+      header_up -X-Socialweb-Client-Certificate
+      header_up X-Socialweb-Client-Certificate {tls_client_certificate_der_base64}
+      flush_interval -1
+      transport http {
+        tls_trusted_ca_certs ${CA_DIR}/gateway.crt
+        tls_client_auth ${CA_DIR}/edge-client.crt ${CA_DIR}/edge-client.key
+        tls_server_name 127.0.0.1
+        versions 1.1
+      }
+    }
+  }
+  handle {
+    reverse_proxy https://127.0.0.1:${KCP_PORT} {
+      header_up -X-Socialweb-Client-Certificate
+      flush_interval -1
+      transport http {
+        tls_trusted_ca_certs ${CA_DIR}/kcp.crt
+        tls_server_name 127.0.0.1
+        versions 1.1
+      }
     }
   }
 }

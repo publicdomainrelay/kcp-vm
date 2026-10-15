@@ -820,7 +820,7 @@ items:
     risks:
       - "Caddy holds the edge client key: whoever runs as caddy or root can present any certificate it has seen as a header. Caddy already sees every bearer token of today's path; root can read every vault anyway."
       - "`mode request` makes Caddy ask every client of kcp.socialweb.computer for a certificate; kubectl and curl without one continue without one."
-    status: todo
+    status: done
     evidence:
   - id: M3-DOCS
     milestone: M3
