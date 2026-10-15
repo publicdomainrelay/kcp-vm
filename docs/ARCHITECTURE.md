@@ -3563,6 +3563,55 @@ open list, are two stated LIMITS rather than open work: each marks where a behav
 being true, which is a fact about the design rather than a question left in it, and each sits here
 because it bounds a mechanism the rest of this document leans on.
 
+- **The kcp store keeps a bounded history by mechanism; the plateau reading is open (plan 0013
+  M3-STORE-COMPACTION, closes with M4-SOAK-READING, on 2026-10-15).** Four mechanisms, each read live on
+  hat-8 (test-0001, own `dev up` instances, no VM):
+  - Compaction stays the apiserver's. kine compacts to the revision the apiserver wrote, and never within
+    its last 1000 revisions (`compactIter`, kine v0.17.1), so a quiet store keeps a deleted object's rows
+    until 1000 more revisions pass. Reading: 150 ConfigMaps of 400 KB created, patched and deleted left 300
+    rows of 400 KB in the store after two compaction ticks; 1300 small writes later the next tick removed
+    them. The row count and file size therefore plateau at about the live set plus the last 1000
+    revisions, not at the live set.
+  - sqlite (a bidder, and the dev instances that use kine-sqlite). The DSN carries `_auto_vacuum=incremental`
+    (`kcpstore.SqliteParams`; the driver sets it before `journal_mode`, so a new file gets it on its first
+    connection). Compaction deletes rows and leaves free pages; with `auto_vacuum=NONE` the file never
+    shrinks. `internal/storemaint` runs in the core (`devcore.Run`, every core: bidder, gateway, dev), first
+    pass after 30 s and then every 5 minutes: it opens the file as a second connection (modernc.org/sqlite,
+    pure Go, busy timeout 30 s), runs `PRAGMA incremental_vacuum(2000)` until the freelist is empty, then
+    `PRAGMA wal_checkpoint(TRUNCATE)`, which is what makes the main file shrink under WAL. Reading, the
+    `quick` profile: a fresh store answers `auto_vacuum` 2 and `journal_mode` wal; after the churn above the
+    pass at 11:35:33 freed 449 pages (247058432 -> 245219328 bytes), at 11:40:34 freed 162, and at 11:45:35,
+    one tick after the 1000-revision window passed the churn, freed 59079 pages: `fileBytesBefore`
+    246345728, `fileBytesAfter` 4063232.
+  - **Only a store created by this binary is incremental.** `auto_vacuum` of an existing file cannot change
+    without a full `VACUUM`, and a prod deployment preserves nothing (AGENTS.md, Prod deployments), so no
+    `VACUUM` runs: an old file reports `autoVacuum: none` in `status.store` and `incremental_vacuum` is
+    skipped for it. The plan item's risk line, a one-time `VACUUM` at the next start, is not built.
+  - postgres (the gateway's kcp store). `kcpstore.PostgresSettings` (`autovacuum=on`, `track_counts=on`)
+    is in the store unit's argv and in `postgresctl.DefaultSettings` (tenant cluster postgres);
+    the core sets the kine table's `autovacuum_vacuum_scale_factor=0.02` and `..._threshold=1000` on its
+    first successful pass (`ALTER TABLE kine SET (...)`, once kine has made the table) and then reads
+    `pg_total_relation_size`, `n_live_tup`, `n_dead_tup`, `autovacuum_count`, `last_autovacuum` over the
+    unix socket through `pgunit.Query`. Reading, `prodlike` profile: first read `totalBytes` 253779968,
+    deadTuples 54; the pass at 11:31:47 showed `autovacuums` 1, `lastAutovacuum` 18:27:24Z, deadTuples 0;
+    the pass at 11:41:47 deadTuples 587 again after more churn. Vacuum keeps the table's size, it does not
+    return it to the file system; the table size plateaus, it does not fall.
+  - `status.store` (`v1alpha1.StoreUsage`: kind, path, bytes, freeBytes, rows, deadTuples, autoVacuum,
+    vacuums, reclaimedBytes, lastVacuumAt, sampledAt) is on `ApplicationStatus`, so the root object of a
+    MarketBidder, MarketRequester, Gateway and SshGateway carries it next to `status.stateDir`;
+    the four schemas moved a revision. `socialweb-computer status` prints it for the MarketBidder,
+    MarketRequester and Gateway roots. Reading: a `market-network` instance's bidder and gateway roots
+    (both kine-sqlite in that profile) showed `autoVacuum: incremental`, bytes and rows; a Gateway object
+    applied to the `prodlike` instance showed `kind: kine-postgres`, `autoVacuum: "on"`, bytes 254844928,
+    rows 1685, `vacuums` 1.
+  - kcp starts with `--event-ttl=1h` (`kcpserver.EventTTLFlag`; `CheckArgv` refuses a slot without it).
+    Reading: the running `kcp start` command line carried it. The flag is accepted, hidden from `--help`.
+    No Go controller and no TypeScript package in this tree creates an Event object (searched for
+    EventRecorder, `events.k8s.io` and core/v1 Events), so every controller already writes status only.
+  - Not read: the plateau of file size, kine rows and kine table size under M4-SOAK-READING load. This
+    item's `done_when` is that reading, so the plan item stays `todo`. A child kcp of a market network is
+    covered because its core also runs `devcore.Run`.
+
 - **Disk use of a long-running instance is bounded by rule; the soak reading is open (plan 0013
   M3-DISK-RETENTION, closes with M4-SOAK-READING).** The rules, by owner:
   - Run directories (`<state>/denokcp/runs/<pod|engine>-<id>`). The deno-kcp provider removes the
