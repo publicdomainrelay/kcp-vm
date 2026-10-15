@@ -263,19 +263,21 @@ items:
     evidence:
   - id: G2-IT-BIDDER-RESTART
     milestone: G2
-    title: Integration test - a bidder kill, restart and upgrade keep its VMs and still release them
-    depends_on: ["G2-IT-HARNESS", "0007:M6-LIVE-RECOVERY", "0007:M6-BIDDER-UPGRADE"]
+    title: Integration test - a bidder kill and restart keep its VMs and still release them
+    depends_on: ["G2-IT-HARNESS", "0007:M6-LIVE-RECOVERY"]
     decision: >
-      Proposed by Claude: the regression form of 0007 M6-LIVE-RECOVERY cases (a)-(c) and M6-BIDDER-UPGRADE
-      (was G3-RESTART-LEAK, GAP-3): rent a guest, then kill -9 the bidder's core, restart its unit, and
-      `upgrade --binary` it to a build with a different closure; after each the VM unit's InvocationID,
-      firecracker pid and start ticks are unchanged, the ComputeVM is Running, the issuer URL is the same,
-      the guest's next onNetwork is accepted; release gives vm.delete 200 and nothing is left. Case (d)
-      (user-manager restart) stays a manual reading in 0007: it stops every unit of the account.
+      Proposed by Claude, reduced by the lead 2026-10-15 to the cases a `dev up` instance can run
+      (`upgrade --binary` works only on an installed host): the regression form of 0007 M6-LIVE-RECOVERY
+      cases (a)-(c) (was G3-RESTART-LEAK, GAP-3): rent a guest, then kill -9 the bidder's DenoPod, `dev
+      restart` it, and kill -9 the bidder's core; after each the VM unit's InvocationID, firecracker pid
+      and start ticks are unchanged, the ComputeVM is Running with the same guest address and onNetwork
+      record, the issuer URL is the same; release gives vm.delete 200 and nothing is left. Case (d)
+      (user-manager restart) and the `upgrade --binary` leg (0007 M6-BIDDER-UPGRADE) stay manual readings
+      in 0007: (d) stops every unit of the account, and the upgrade needs an installed host.
     files: ["test/integration/bidder_restart_test.go"]
     done_when: the test passes in CI.
     risks: []
-    status: todo
+    status: done
     evidence: []
   - id: G2-IT-FAILOVER
     milestone: G2
@@ -292,7 +294,7 @@ items:
     files: ["test/integration/failover_test.go"]
     done_when: the test passes in CI.
     risks: ["firstFree means the faster bidder wins most RFPs; the test sets the requester policy so both bidders win before the kill."]
-    status: todo
+    status: done
     evidence: []
   - id: G3-CI-INTEGRATION
     milestone: G3

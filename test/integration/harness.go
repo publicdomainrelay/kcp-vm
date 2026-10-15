@@ -343,6 +343,8 @@ type NetworkOptions struct {
 	Bidders     int
 	WithGateway bool
 	UpTimeout   time.Duration
+
+	GatewayOptions map[string]string
 }
 
 type Network struct {
@@ -418,9 +420,20 @@ func StartNetwork(t testing.TB, opts NetworkOptions) *Network {
 	}
 	n.h.liveSlot(t, filepath.Base(n.h.Repo)+"-"+inst)
 	t.Cleanup(n.cleanup)
-	values := fmt.Sprintf(`{"bidder": {"kcp": {"handle": "{app}.%s.bob.test"}}}`, inst)
+	values := map[string]any{"bidder": map[string]any{"kcp": map[string]any{"handle": "{app}." + inst + ".bob.test"}}}
+	if len(opts.GatewayOptions) > 0 {
+		var gwOptions []map[string]string
+		for _, k := range sortedKeys(opts.GatewayOptions) {
+			gwOptions = append(gwOptions, map[string]string{"name": k, "value": opts.GatewayOptions[k]})
+		}
+		values["gateway"] = map[string]any{"options": gwOptions}
+	}
+	valuesJSON, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
 	valuesFile := filepath.Join(n.Dir, "app-values.json")
-	if err := h.WriteFile(valuesFile, []byte(values), 0o644); err != nil {
+	if err := h.WriteFile(valuesFile, valuesJSON, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	args := []string{"dev", "up", "--instance", inst, "--profile", "market-network", "--bidders", strconv.Itoa(opts.Bidders),
@@ -441,6 +454,15 @@ func StartNetwork(t testing.TB, opts NetworkOptions) *Network {
 	}
 	t.Logf("market network %s Ready in %.1fs (dev up %.1fs)", inst, n.Up.Seconds, r.Elapsed.Seconds())
 	return n
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (n *Network) swc(args ...string) []string {

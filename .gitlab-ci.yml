@@ -63,7 +63,7 @@ variables:
 integration:
   stage: test
   extends: [.containers]
-  timeout: 75m
+  timeout: 90m
   interruptible: false
   variables:
     SOCIALWEB_IT_ACCOUNT: socialweb-ci
@@ -72,7 +72,7 @@ integration:
   script:
     - export SOCIALWEB_IT_GUEST_IMAGE="https://socialweb-computer-kcp.sfo3.digitaloceanspaces.com/main/$CI_COMMIT_SHA/guest-image/firecracker-x86_64"
     - export SOCIALWEB_IT_PUBLISH="/var/tmp/swcci/bin-$CI_JOB_ID" SOCIALWEB_IT_ARTIFACTS="$CI_PROJECT_DIR/it-artifacts"
-    - timeout -k 30 4380 go test -tags integration -count=1 -v -timeout 72m ./test/integration/ 2>&1 | tee "$TMPDIR/it.log"
+    - timeout -k 30 5280 go test -tags integration -count=1 -v -timeout 87m ./test/integration/ 2>&1 | tee "$TMPDIR/it.log"
     - grep -E '^(--- |ok|FAIL)' "$TMPDIR/it.log"
   after_script:
     - |

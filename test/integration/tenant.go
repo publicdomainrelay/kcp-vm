@@ -32,32 +32,31 @@ var (
 func (n *Network) BidderVMs(ctx context.Context) ([]v1alpha1.ComputeVM, error) {
 	var out []v1alpha1.ComputeVM
 	for i := range n.Handles {
-		dir := filepath.Join(n.StateDir, "apps", "dev", fmt.Sprintf("%s-bidder-%d", n.Instance, i+1))
-		kc, err := n.read(filepath.Join(dir, "kcp", "admin.kubeconfig"))
+		vms, err := n.BidderVMsOf(ctx, i)
 		if err != nil {
 			return nil, err
 		}
-		cfg, err := clientcmd.RESTConfigFromKubeConfig(kc)
-		if err != nil {
+		out = append(out, vms...)
+	}
+	return out, nil
+}
+
+func (n *Network) BidderVMsOf(ctx context.Context, i int) ([]v1alpha1.ComputeVM, error) {
+	var out []v1alpha1.ComputeVM
+	dyn, err := n.bidderClient(i)
+	if err != nil {
+		return nil, err
+	}
+	l, err := dyn.Resource(computeVMGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range l.Items {
+		var vm v1alpha1.ComputeVM
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &vm); err != nil {
 			return nil, err
 		}
-		cfg.Host = strings.TrimSuffix(strings.SplitN(cfg.Host, "/clusters/", 2)[0], "/") + "/clusters/root"
-		cfg.Timeout = 15 * time.Second
-		dyn, err := dynamic.NewForConfig(cfg)
-		if err != nil {
-			return nil, err
-		}
-		l, err := dyn.Resource(computeVMGVR).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return nil, err
-		}
-		for _, u := range l.Items {
-			var vm v1alpha1.ComputeVM
-			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &vm); err != nil {
-				return nil, err
-			}
-			out = append(out, vm)
-		}
+		out = append(out, vm)
 	}
 	return out, nil
 }

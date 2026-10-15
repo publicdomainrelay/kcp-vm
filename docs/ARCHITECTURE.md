@@ -7397,6 +7397,34 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   front), and `leases.json` records which port each front holds; after a host reboot the front binds its
   recorded ports again and fails loudly (warning, new port) if one is taken.
 
+- **Two bidders failing over and a bidder restart keep a rented VM are integration tests (plan 0010
+  G2-IT-FAILOVER and G2-IT-BIDDER-RESTART, 2026-10-15).** `test/integration/failover_test.go`
+  (`TestAStoppedBidderIsReplacedAndReleasesItsOrphan`): a market network with two bidders and a gateway;
+  each bidder first wins a contract through `run request` that denies the other bidder's DID
+  (`--deny-bidder-dids`), so both are proven to win; the tenant cluster then gets a pod, and the bidder that
+  wins the node's RFP is stopped as soon as its accept shows on the NodeClaim, through
+  `spec.apps[].stopped` of the MarketNetwork (its kcp, kine, core and DenoPods go down, its state dir stays;
+  `Network.SetBidderStopped`). The gateway runs with `vm-ready-timeout-sec` 90 (`NetworkOptions.GatewayOptions`).
+  The NodeClaim of the stopped bidder ends Failed, not Lost, with "a VM was accepted but it never reported
+  that it was on the network before the VM ready timeout"; the node never joined, so the join grace of a
+  Node object is not the clock. The scaler claims a replacement under the same name, the other bidder wins
+  its RFP and the pod runs. Starting the stopped bidder again makes it release the orphaned ComputeVM of
+  the old receipt through its restored contract store, with nothing left. Readings (each run on its own
+  market network): bidder-1 stopped, claim Failed 82.4 s after the stop, bidder-2 won the new RFP and the pod
+  ran 134.6 s after the stop, the orphan was Releasing 0.7 s after bidder-1 was Ready again and gone 3.0 s
+  after; mirrored in a second run (bidder-2 stopped, bidder-1 won) with 83.0 s, 135.4 s and 2.3 s. The test
+  takes 421.6 s from `dev up` to a clean `dev down`.
+  `test/integration/bidder_restart_test.go` (`TestARentedVMSurvivesABidderKillAndRestart`): one bidder, a
+  guest rented with `run request --hold`; then kill -9 of the bidder DenoPod, `dev restart` of it, and kill
+  -9 of the bidder's `dev-core`. After each the VM unit's InvocationID, MainPID and start ticks, the
+  ComputeVM's runtime pid and start time, its guest address, its onNetwork record and its receipt are the
+  same, and the bidder's logs name one issuer URL. The held contract is then released with vm.delete 200 and
+  no ComputeVM, VM unit or VM work dir is left. Readings: the bidder was back 3.6 s, 3.5 s and 10.5 s after
+  the three cases (2.5 s for the core case in a second run); 446-459 s for the test. The `upgrade --binary`
+  leg of 0007 M6-BIDDER-UPGRADE is not in the test: `upgrade --binary` works only on an installed host, so it
+  stays a manual live reading. The integration job of `.gitlab-ci.yml` has 90 minutes instead of 75 for the
+  two added networks.
+
 ## 16. Vocabulary
 
 | | |
