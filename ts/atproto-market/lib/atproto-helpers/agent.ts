@@ -536,7 +536,7 @@ export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<Re
         repo,
         writes: writes.map((w) => {
           const base: Record<string, unknown> = {
-            action: w.action,
+            $type: `com.atproto.repo.applyWrites#${w.action}`,
             collection: w.collection,
             rkey: w.rkey,
           };
@@ -700,7 +700,7 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ repo, writes: writes.map((w) => {
             const base: Record<string, unknown> = {
-              action: w.action,
+              $type: `com.atproto.repo.applyWrites#${w.action}`,
               collection: w.collection,
               rkey: w.rkey,
             };
@@ -1224,7 +1224,7 @@ export async function createOAuthAgentFromSession(
             },
             body: JSON.stringify({ repo, writes: writes.map((w) => {
               const base: Record<string, unknown> = {
-                action: w.action, collection: w.collection, rkey: w.rkey,
+                $type: `com.atproto.repo.applyWrites#${w.action}`, collection: w.collection, rkey: w.rkey,
               };
               if (w.action !== "delete") (base as Record<string, unknown>).value = (w as { record: unknown }).record;
               return base;
