@@ -8306,6 +8306,13 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   separate pool with no slot. The VM account test-0001 has 16 VM slots (a 1048576-id range in /etc/subuid, 16 x
   65536), shared by every concurrent network, so five slots fit while each uses at most three guests; test-0002
   has 4 slots. More than 16 concurrent guests on this host need another account with its own range.
+  Release runner on a second host, the one asset that follows the compiler: `rust/build.sh x86_64` (from
+  commit 917f06bb, clang 22.1.8) read sha256 a6f31ac8...5c92 on hat-8 (Fedora clang 22.1.8-4.fc44, binutils
+  2.46.1-1.fc44), a6f31ac8...5c92 on a DigitalOcean Fedora 44 droplet with the same two package versions,
+  and 143e6e8e...7a03 on an Ubuntu 24.04 droplet with apt.llvm.org clang 22.1.8. The same clang version number
+  from another packager is not enough; only the same distribution packages reproduce the bytes. The other
+  release assets and the Go closure were not built on the droplet, so no second release runner is proposed
+  or registered; a Fedora 44 host would be the candidate and needs the full `--verify-reproducible` run first.
 
 ## 16. Vocabulary
 
