@@ -31,6 +31,7 @@ type rootStatusView struct {
 	Phase   v1alpha1.ApplicationPhase  `json:"phase,omitempty"`
 	Message string                     `json:"message,omitempty"`
 	Market  *v1alpha1.MarketLoopStatus `json:"market,omitempty"`
+	Store   *v1alpha1.StoreUsage       `json:"store,omitempty"`
 }
 
 type contractStatusView struct {
@@ -135,7 +136,7 @@ func readAppStatus(ctx context.Context, ak appKcp) appStatusView {
 	for _, r := range []struct {
 		gvr  schema.GroupVersionResource
 		kind string
-	}{{appctl.MarketBidderGVR, "MarketBidder"}, {appctl.MarketRequesterGVR, "MarketRequester"}} {
+	}{{appctl.MarketBidderGVR, "MarketBidder"}, {appctl.MarketRequesterGVR, "MarketRequester"}, {appctl.GatewayGVR, "Gateway"}} {
 		list, err := dc.Resource(r.gvr).List(ctx, metav1.ListOptions{})
 		if absentResource(err) {
 			continue
@@ -154,7 +155,7 @@ func readAppStatus(ctx context.Context, ak appKcp) appStatusView {
 				return v
 			}
 			v.Roots = append(v.Roots, rootStatusView{Kind: r.kind, Name: o.Name, Phase: o.Status.Phase, Message: o.Status.Message,
-				Market: o.Status.Market})
+				Market: o.Status.Market, Store: o.Status.Store})
 		}
 	}
 	list, err := dc.Resource(appctl.ComputeContractGVR).Namespace("").List(ctx, metav1.ListOptions{})

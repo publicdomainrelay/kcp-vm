@@ -489,8 +489,23 @@ export interface ApplicationStatus {
   components?: ApplicationComponent[];
   listeners?: ApplicationListener[];
   stateDir?: StateDirUsage;
+  store?: StoreUsage;
   conditions?: Condition[];
   market?: MarketLoopStatus;
+}
+
+export interface StoreUsage {
+  kind: string;
+  path?: string;
+  bytes: number;
+  freeBytes?: number;
+  rows?: number;
+  deadTuples?: number;
+  autoVacuum?: string;
+  vacuums?: number;
+  reclaimedBytes?: number;
+  lastVacuumAt?: string;
+  sampledAt: string;
 }
 
 export interface MarketLoopStatus {
@@ -751,7 +766,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-7.marketbidders.socialweb.computer",
+  schema: "v1alpha1-8.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -762,7 +777,7 @@ export const MARKET_REQUESTER_RESOURCE: ApiResource = {
   listKind: "MarketRequesterList",
   plural: "marketrequesters",
   singular: "marketrequester",
-  schema: "v1alpha1-5.marketrequesters.socialweb.computer",
+  schema: "v1alpha1-6.marketrequesters.socialweb.computer",
   export: "applications",
 };
 
@@ -784,7 +799,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-8.gateways.socialweb.computer",
+  schema: "v1alpha1-9.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -795,7 +810,7 @@ export const SSH_GATEWAY_RESOURCE: ApiResource = {
   listKind: "SshGatewayList",
   plural: "sshgateways",
   singular: "sshgateway",
-  schema: "v1alpha1-3.sshgateways.socialweb.computer",
+  schema: "v1alpha1-4.sshgateways.socialweb.computer",
   export: "applications",
 };
 
@@ -890,6 +905,7 @@ export type ApiTypeName =
   | "SshGateway"
   | "SshGatewaySpec"
   | "StateDirUsage"
+  | "StoreUsage"
   | "VaultRef";
 
 type Shape =
@@ -1147,6 +1163,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "stateDir": {
         "ref": "StateDirUsage"
+      },
+      "store": {
+        "ref": "StoreUsage"
       }
     },
     "required": [],
@@ -2939,6 +2958,49 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "StoreUsage": {
+    "properties": {
+      "autoVacuum": {
+        "type": "string"
+      },
+      "bytes": {
+        "type": "integer"
+      },
+      "deadTuples": {
+        "type": "integer"
+      },
+      "freeBytes": {
+        "type": "integer"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "lastVacuumAt": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "reclaimedBytes": {
+        "type": "integer"
+      },
+      "rows": {
+        "type": "integer"
+      },
+      "sampledAt": {
+        "type": "string"
+      },
+      "vacuums": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "kind",
+      "bytes",
+      "sampledAt"
+    ],
+    "type": "object"
+  },
   "VaultRef": {
     "properties": {
       "mount": {
@@ -4105,6 +4167,24 @@ export function assertApplicationStatus(value: unknown): asserts value is Applic
 
 export function parseApplicationStatus(value: unknown): ApplicationStatus {
   assertApplicationStatus(value);
+  return value;
+}
+
+export function validateStoreUsage(value: unknown): ApiIssue[] {
+  return validate("StoreUsage", value);
+}
+
+export function isStoreUsage(value: unknown): value is StoreUsage {
+  return validate("StoreUsage", value).length === 0;
+}
+
+export function assertStoreUsage(value: unknown): asserts value is StoreUsage {
+  const issues = validate("StoreUsage", value);
+  if (issues.length > 0) throw new ApiValidationError("StoreUsage", issues);
+}
+
+export function parseStoreUsage(value: unknown): StoreUsage {
+  assertStoreUsage(value);
   return value;
 }
 

@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-7.marketbidders.socialweb.computer
+  name: v1alpha1-8.marketbidders.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -211,6 +211,41 @@ spec:
                   - path
                   - bytes
                   - files
+                  - sampledAt
+              store:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                  path:
+                    type: string
+                  bytes:
+                    type: integer
+                    format: int64
+                  freeBytes:
+                    type: integer
+                    format: int64
+                  rows:
+                    type: integer
+                    format: int64
+                  deadTuples:
+                    type: integer
+                    format: int64
+                  autoVacuum:
+                    type: string
+                  vacuums:
+                    type: integer
+                    format: int64
+                  reclaimedBytes:
+                    type: integer
+                    format: int64
+                  lastVacuumAt:
+                    type: string
+                  sampledAt:
+                    type: string
+                required:
+                  - kind
+                  - bytes
                   - sampledAt
               conditions:
                 type: array

@@ -74,6 +74,7 @@ type Config struct {
 	WebApp       *WebApp
 	OnComponents func(owner string, listeners []v1alpha1.ApplicationListener)
 	SignInGuard  SignInGuard
+	StoreUsage   func() *v1alpha1.StoreUsage
 	Log          *slog.Logger
 }
 
@@ -335,8 +336,16 @@ func (ctl *Controller) writeStatus(ctx context.Context, gvr schema.GroupVersionR
 	if err := json.Unmarshal(b, &m); err != nil {
 		return err
 	}
+	extra := false
 	if u := ctl.stateDir.Load(); u != nil {
-		m["stateDir"] = u
+		m["stateDir"], extra = u, true
+	}
+	if ctl.c.StoreUsage != nil {
+		if u := ctl.c.StoreUsage(); u != nil {
+			m["store"], extra = u, true
+		}
+	}
+	if extra {
 		if b, err = json.Marshal(m); err != nil {
 			return err
 		}

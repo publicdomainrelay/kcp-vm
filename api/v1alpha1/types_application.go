@@ -125,6 +125,8 @@ type ApplicationStatus struct {
 
 	StateDir *StateDirUsage `json:"stateDir,omitempty"`
 
+	Store *StoreUsage `json:"store,omitempty"`
+
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	Market *MarketLoopStatus `json:"market,omitempty"`
@@ -192,6 +194,30 @@ type StateDirUsage struct {
 	Bytes int64 `json:"bytes"`
 
 	Files int64 `json:"files"`
+
+	SampledAt string `json:"sampledAt"`
+}
+
+type StoreUsage struct {
+	Kind string `json:"kind"`
+
+	Path string `json:"path,omitempty"`
+
+	Bytes int64 `json:"bytes"`
+
+	FreeBytes int64 `json:"freeBytes,omitempty"`
+
+	Rows int64 `json:"rows,omitempty"`
+
+	DeadTuples int64 `json:"deadTuples,omitempty"`
+
+	AutoVacuum string `json:"autoVacuum,omitempty"`
+
+	Vacuums int64 `json:"vacuums,omitempty"`
+
+	ReclaimedBytes int64 `json:"reclaimedBytes,omitempty"`
+
+	LastVacuumAt string `json:"lastVacuumAt,omitempty"`
 
 	SampledAt string `json:"sampledAt"`
 }

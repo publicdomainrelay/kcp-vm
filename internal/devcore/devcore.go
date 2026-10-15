@@ -22,6 +22,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/storemaint"
 )
 
 const CheckInterval = 5 * time.Second
@@ -139,6 +140,13 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		ac := AppConfig(bcfg, rec, m, log)
 		ac.Listeners, ac.WebApp, ac.OnComponents = cfg.Listeners, cfg.WebApp, cfg.OnComponents
 		ac.SignInGuard = cfg.SignInGuard
+		if sc, err := StoreMaintConfig(bcfg, rec, log); err != nil {
+			log.Warn("the store maintenance does not start", "err", err.Error())
+		} else {
+			mon := storemaint.New(sc)
+			ac.StoreUsage = mon.Usage
+			go mon.Run(ctx)
+		}
 		go appctl.Supervise(ctx, ac)
 	}
 	members := make(chan error, 1)

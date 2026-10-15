@@ -15,9 +15,11 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpstore"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/storemaint"
 )
 
 const HostProcessApplyTimeout = time.Minute
@@ -98,4 +100,17 @@ func OpenBaoServerConfig(bcfg bootstrap.Config, rec devinstance.Record, log *slo
 	hp := HostProcessConfig(bcfg, rec, nil, log)
 	return openbaoctl.Config{Kubeconfig: hp.Kubeconfig, Workspace: hp.Workspace, StateDir: bcfg.Layout.StateDir, Prefix: hp.Prefix,
 		Env: openbaoctl.OutboundEnv(os.Getenv), Resolve: hp.Resolve, Log: log}
+}
+
+func StoreMaintConfig(bcfg bootstrap.Config, rec devinstance.Record, log *slog.Logger) (storemaint.Config, error) {
+	app, err := bcfg.App(&rec)
+	if err != nil {
+		return storemaint.Config{}, err
+	}
+	p := bcfg.Params(app)
+	c := storemaint.Config{Kind: kcpstore.Kind(app.Store), PgSocketDir: p.PgSocketDir(), Log: log}
+	for _, slot := range app.KineSlots() {
+		c.SqliteDirs = append(c.SqliteDirs, p.KineDir(slot))
+	}
+	return c, nil
 }
