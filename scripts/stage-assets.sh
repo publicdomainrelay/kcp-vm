@@ -229,22 +229,26 @@ repo_index() {
   ring="$(key_ring "$(jq -r --arg a "$asset" --arg r "$repo" '.assets[$a].repos[$r].key' "$versions")" "$fpr")"
   : >"$x/$repo.packages"
   for suite in $(jq -r --arg a "$asset" --arg r "$repo" '.assets[$a].repos[$r].suites[]' "$versions"); do
-    fetch_fresh "${base}dists/$suite/InRelease" "$x/$suite.InRelease"
-    gpg_verify "$ring" "$fpr" "$x/$suite.InRelease" "" "$x/$suite.Release"
-    local found=""
-    for ext in xz gz; do
-      idx="$comp/binary-$arch/Packages.$ext"
-      local sum
-      sum="$(awk -v f="$idx" '/^SHA256:/{s=1;next} /^[^ ]/{s=0} s && $3==f {print $1}' "$x/$suite.Release" | head -1)"
-      [ -n "$sum" ] || continue
-      local pf
-      pf="$(fetch_pinned "${base}dists/$suite/$idx" "$sum")"
-      case "$ext" in xz) xz -dc "$pf" >>"$x/$repo.packages" ;; gz) gzip -dc "$pf" >>"$x/$repo.packages" ;; esac
-      echo >>"$x/$repo.packages"
-      found=1
-      break
+    local found="" attempt pf="" sum
+    for attempt in 1 2 3 4 5 6; do
+      fetch_fresh "${base}dists/$suite/InRelease" "$x/$suite.InRelease"
+      gpg_verify "$ring" "$fpr" "$x/$suite.InRelease" "" "$x/$suite.Release"
+      for ext in xz gz; do
+        idx="$comp/binary-$arch/Packages.$ext"
+        sum="$(awk -v f="$idx" '/^SHA256:/{s=1;next} /^[^ ]/{s=0} s && $3==f {print $1}' "$x/$suite.Release" | head -1)"
+        [ -n "$sum" ] || continue
+        if pf="$(fetch_pinned "${base}dists/$suite/$idx" "$sum")"; then
+          case "$ext" in xz) xz -dc "$pf" >>"$x/$repo.packages" ;; gz) gzip -dc "$pf" >>"$x/$repo.packages" ;; esac
+          echo >>"$x/$repo.packages"
+          found=1
+        fi
+        break
+      done
+      [ -z "$found" ] || break
+      say "$suite index does not match its signed InRelease (the mirror is syncing); retry $attempt of 6 in 20 s"
+      sleep 20
     done
-    [ -n "$found" ] || die "$suite InRelease names no $comp/binary-$arch/Packages index"
+    [ -n "$found" ] || die "$suite: no Packages index matching its signed InRelease after 6 tries, or InRelease names no $comp/binary-$arch/Packages index"
   done
   echo "$base"
 }
