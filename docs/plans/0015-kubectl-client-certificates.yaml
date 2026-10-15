@@ -270,7 +270,7 @@ items:
       - The binding has only one subject on a cluster created after this change.
     done_when: "a new tenant cluster binds the group socialweb.computer:cluster-owners to cluster-admin."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M1-CERT-ISSUER
     milestone: M1

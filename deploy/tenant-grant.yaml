@@ -50,6 +50,9 @@ subjects:
   - kind: ServiceAccount
     name: __SOCIALWEB_OWNER_SERVICE_ACCOUNT__
     namespace: users
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: socialweb.computer:cluster-owners
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
