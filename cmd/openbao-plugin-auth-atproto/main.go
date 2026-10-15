@@ -34,6 +34,8 @@ func factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 			pathRole(b),
 			pathLoginStart(b),
 			pathLogin(b),
+			pathSessionProof(b),
+			pathSession(b),
 		},
 		AuthRenew: b.loginRenew,
 	}
