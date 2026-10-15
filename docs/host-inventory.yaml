@@ -997,7 +997,7 @@ indirect:
     resolves: [kcp, kubectl]
   - site: "socialweb-computer-kcp/internal/kcplibs/internal/livekcp/livekcp.go: name"
     resolves: [kcp, kubectl]
-  - site: "socialweb-computer-kcp/socialweb-computer-k8s/lib/socialweb-computer-requester-inproc/bridge.ts: argv[0]"
+  - site: "socialweb-computer-kcp/ts/socialweb-computer-ssh/lib/socialweb-computer-ssh-requester/bridge.ts: argv[0]"
     resolves: [dumbpipe]
   - site: "socialweb-computer-kcp/ts/hono-compute-provider/lib/container-backend-docker/mod.ts: bin"
     resolves: [sudo]

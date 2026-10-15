@@ -977,18 +977,17 @@ no_bids back-off keys on `Failed` + `rfpUri` without `acceptUri`), every field o
 All optional, so every existing claim stays valid. None of it is secret: records are public repo
 records, `submitAccept`/`submitEventRef` are bidder endpoints.
 
-**The claim is the durable record a door releases from.** The door's fulfiller
-(`lib/socialweb-computer-k8s-node-market`) calls atproto-market's `requestCompute` (not
-`runComputeContract`) with handlers that write the evolving `ContractState` into `status.contract`
-at `onRfpSubmitted`, `onAccepted` (phase `Provisioning`), `onReceipt` and `onNetwork`; each handler
-awaits its status write before the flow moves on, so the receipt is on the claim before the guest
-boots. Writes stay the door's alone and go through the existing store (its 429 Retry-After hold
-applies to reads; a status PATCH is not held). The legacy `vmUri|rfpUri|acceptUri|receiptUri|
-receiptCid` are mirrored from the strongRefs on every write, so the provider's no_bids back-off is
-unchanged. There is no session after the flow: the flow returns when the guest
-fetched its join secrets and the door releases only when the claim is DELETED, reading the claim back
-with `NodeClaimStore.get` and calling `releaseCompute` with the state parsed FROM THE CLAIM, never from
-its memory (section 9, "A market node joins through its cluster's OpenBao, never through ssh").
+**The claim is the durable record a node is released from; the contract carries the flow.** The
+requester controller (`lib/requester-controller-kcp`) calls atproto-market's `requestCompute` (not
+`runComputeContract`) with handlers that write the evolving `ContractState` into the
+ComputeContract's `status.contract` at `onRfpSubmitted`, `onAccepted`, `onReceipt` and `onNetwork`;
+each handler awaits its status write before the flow moves on, so the receipt is on the contract
+before the guest boots. The web app copies `status.contract` onto the claim's `status.contract` on
+every transition, with the legacy `vmUri|rfpUri|acceptUri|receiptUri|receiptCid` mirrored from the
+strongRefs, so the provider's no_bids back-off is unchanged. A node is released when its claim is
+DELETED: the web app sets `spec.release` on the contract and the controller calls `releaseCompute`
+with the state parsed FROM THE CONTRACT, never from its memory (section 9, "A market node joins
+through its cluster's OpenBao, never through ssh").
 Decisions, made by Claude, user may veto. The two marked SUPERSEDED are kept for the record:
 
 - A claim needs releasing iff its contract has receipt refs (`receipt` + `submitEventRef`) and its
@@ -1980,70 +1979,60 @@ Plan 0005 M3-SECRETS-TICKET, M3-UNITS and the door half of M3-NODE-LOSS, built t
 guest dials its cluster through the cluster's ClusterLinks and reads its join secrets from the
 cluster's OpenBao. Decisions not in the contract are marked "decided by Claude, user may veto".
 
-**What the door does per claim** (`lib/socialweb-computer-k8s-node-market`):
+**What the web app and the requester controller do per claim** (`lib/socialweb-computer-k8s-node-market`,
+`lib/socialweb-computer-k8s-node-contract`, `request-vm-ssh` with `lib/requester-controller-kcp`):
 
-- It derives the cluster key the provider uses, `<accountHash(ownerDid)>-<spec.cluster>`:
-  `accountHashOf` (first 8 characters of the base-36 SHA-256 of the DID, as `kcpclient.AccountHash`)
-  and `clusterKeyOf` in `socialweb-computer-k8s-common`, `clusterKeyOfClaim` in the fulfiller. A test
-  pins it to values printed by the Go function (`did:plc:nodeowner` + `ci` = `d90m41be-ci`).
-- It reads the ClusterLink `<clusterKey>-openbao` from the claim's own workspace
-  (`createKcpClusterLinkReader`, beside the claim store in `socialweb-computer-k8s-nodeclaim-kcp`,
-  sharing its request plumbing and 429 hold; `ClusterLinkReader` in `lib/abc`). A link with no
-  `status.ticket` fails the claim before any market round.
-- It reads the cluster OpenBao CA. Decided by Claude, user may veto: the path is
-  `<dirname(spec.tokenFile)>/openbao/tls/ca.crt`, because the provider names the token file
-  `TokenPath(clusterDir)` and keeps the CA at `clusterstack.OpenBaoTLSCAPath(clusterDir)`. It is an
-  option (`openBaoCAFileOf`) so a provider-published path replaces the derivation without a door
-  change; that published path is an open interface need, below.
-- It hands the guest exactly four files through atproto-market's secrets capability:
-  `/etc/socialweb/node/openbao-ticket`, `/etc/socialweb/node/openbao-ca.pem`,
-  `/etc/socialweb/node/claim.json` = `{node, cluster, jwtMount, role, audience, kvMount, kvPath}` with
-  `cluster` the cluster KEY, `jwtMount` = `jwt-<first 12 hex of sha256(issuer)>`, `role` = `kvPath` =
-  the node name and `kvMount` = `socialweb-nodes`, and `/etc/socialweb/node/apiserver.env` =
-  `NODE_NAME`, `ADVERTISE_ADDRESS`, `APISERVER_PORT`, `APISERVER_TICKET` from the claim's spec and the
-  `<clusterKey>-apiserver` link's `status.ticket`. None of the four is a credential: the two tickets
-  are the links' public halves, the CA is public, and `claim.json` holds names.
-  The apiserver link is read beside the OpenBao one and its absence is not an error: a link that is not
-  listening yet, or a ticket outside `[a-z0-9]+`, leaves `apiserver.env` out of the bundle, and the
-  guest falls back to reading those three values out of the KV entry, which is what every door did
-  before this one. Delivering them is what lets `socialweb-apiserver-link` start with the OpenBao link
-  rather than after the KV read, and that is the whole of M3-JOIN-PATH.
-- It writes `status.grant` = `{issuer, subject, audience: socialweb.computer/node/<clusterKey>/<node>,
-  role: <node>}` when the capability is granted. `grantingCapability` composes the secrets capability:
-  its `onContract` first awaits the grant write, then appends `claim.json` (its `jwtMount` needs the
-  winning bid's issuer, which is unknown before), then lets the inner capability install its
-  authorizer. `requestCompute` calls `onContract` after the winner is chosen and BEFORE it writes the
-  accept record, so the grant is on the claim before the bidder can provision anything. Decided by
-  Claude, user may veto: `role` is written although the API marks it optional, so the claim names the
-  role the provider must create. A grant write that fails leaves the inner capability unauthorized
-  (the guest can never fetch), drops the grant from the door's in-memory status so later writes do
-  not carry it, and makes `onReceipt` return `return`; the claim ends `Failed` with that reason and
-  stays releasable from its receipt. `onAccepted` never returns `return`, for the reason section 6
-  gives: the receipt may not have arrived yet.
-- Handlers: `onRfpSubmitted`, `onAccepted` (phase `Provisioning`), `onReceipt` and `onNetwork` (which
-  also records `status.fqdn`) write the contract as before; a deleted claim or a stopping door turns
-  into a `return` from all but `onAccepted`. `onSecretsFetched` writes phase `Joining`
-  and returns `return`. `requestCompute` itself returns at the network report, so the door then waits
-  up to `vmReadyTimeoutSec` for the fetch and disposes the capabilities, which shuts the per-contract
-  secrets server. `Joining` is the door's last word: it cannot observe the agent and writes no
-  `Running`.
-- It releases ONLY when the claim is deleted: from the claim read back, `releaseCompute` with reason
-  `claim_deleted`, `Released` on `release.ok` and `Failed` otherwise, finalizer removed either way.
-  Every other end (no bids, a guest that never fetched, an invalid receipt, a failed grant, no link,
-  no CA) writes `Failed` with its reason and releases nothing; the provider ends the claim by deleting
-  it, and the deletion releases.
+The web app maps. It runs no market flow, holds no PDS session, no claim key and no secrets key. For
+each NodeClaim it writes one ComputeContract in the Gateway application's own workspace and maps the
+contract's status back onto the claim. The requester DenoPod of the same application carries the flow.
 
-**A restarted door never reaps** (M3-NODE-LOSS, door half). Decided by Claude, user may veto. A
-`Joining` or `Running` claim is adopted as it is: no write, no release, there is no session to
-rebuild. A `Bidding` or `Provisioning` claim is marked `Failed` and NOT released: the guest's
-`user_data` names the old door's secrets server, which is per process and died with it, so that guest
-can never fetch its bundle, and resuming with `awaitComputeNetwork` would only find an address the
-door no longer needs. The release comes with the claim's deletion, from the receipt it carries.
-`stop()` (SIGTERM) releases nothing and writes nothing; the next door sees the claim as above. Two
-edges are stated rather than closed: a guest that fetched in the instant between the fetch and the
-`Joining` write is marked `Failed` and released on deletion although it may have joined; and an
-accept written just before a crash, with no status write after it, is a VM no claim names, which
-only the bidder's own expiry ends.
+- *Web app, per claim.* It names the contract `nodeclaim-<first 20 hex of sha256(claim uid)>`, puts the
+  finalizer on the claim, reads the ClusterLink `<clusterKey>-openbao` from the claim's own workspace
+  (`createKcpClusterLinkReader`; a link with no `status.ticket` fails the claim before any market
+  round) and the cluster OpenBao CA (`<dirname(spec.tokenFile)>/openbao/tls/ca.crt`, or the path the
+  provider publishes in `--cluster-ca-dir`), and writes the join bundle as one KV entry
+  `contracts/<contract>/bundle` in its own vault mount. The bundle holds the files
+  `/etc/socialweb/node/openbao-ticket`, `openbao-ca.pem` and, when the `<clusterKey>-apiserver` link
+  is listening, `apiserver.env` (`NODE_NAME`, `ADVERTISE_ADDRESS`, `APISERVER_PORT`,
+  `APISERVER_TICKET`). None is a credential: the tickets are the links' public halves and the CA is
+  public. The contract carries `spec.vmName` (the node name), `spec.ownerDid`, `spec.secretsRef` (the
+  bundle), `spec.nodeJoin` (the cluster key and the pinned socialweb-meshd build), the bidders to
+  admit and deny, the policy and `spec.vmReadyTimeoutSec`.
+- *Requester controller, per contract.* `createRequesterController` lists and watches ComputeContracts,
+  admits at most `--max-concurrent` of them and `--per-account-max` of one account, and runs
+  `requestCompute` for each under the owner account's delegated session (`--account-session-vault-mount`
+  names the web app's mount; the controller reads `oauth-sessions/<did>` and writes a refreshed session
+  back, and reads `contracts/*` there; its own client `requester` has a KV mount of its own for the
+  requester key and each contract's secrets-server key). The node-join profile adds the `k3s` and
+  k3s-join user-data modules and wraps the secrets capability: on the grant it writes `status.grant`
+  = `{issuer, subject, audience: socialweb.computer/node/<clusterKey>/<node>, role: <node>}` and
+  appends `claim.json` = `{node, cluster, jwtMount, role, audience, kvMount, kvPath}` to the bundle
+  (`jwtMount` = `jwt-<first 12 hex of sha256(issuer)>` needs the winning bid's issuer). A grant write
+  that fails leaves the inner capability unauthorized and the contract `Failed`, releasable from its
+  receipt. The controller waits up to `vmReadyTimeoutSec` from the accept for the guest to fetch its
+  bundle (`status.secretsFetchedAt`), then writes phase `Held`; a guest that never fetches ends
+  `Failed` with the reason and keeps its receipt.
+- *Mapping.* `Requesting` is claim phase `Bidding` until the accept, then `Provisioning`; `Held` with
+  `secretsFetchedAt` is `Joining`; a contract `Released` with `status.contract.termination` is claim
+  `Lost`; `Failed` is `Failed` with the contract's message. `status.grant` and `status.contract` are
+  copied on every transition; a claim in `Joining` or `Running` changes only on `Lost`, `Failed` or
+  `Released`, so the provider's `Running` is never overwritten.
+- *Release.* When a claim is deleted the web app sets `spec.release` on its contract, waits until the
+  contract is `Released` or `Failed`, then deletes the contract and the bundle and removes the claim's
+  finalizer (claim phase `Released` when the VM was released or none was held, else `Failed`). A
+  contract that is deleted while it holds a VM releases the VM first. A contract the controller never
+  admitted is settled `Released` at once.
+- *Adoption.* A claim the provider recreates for a node that already joined (`Adopting`) becomes a
+  contract with `spec.adopt`: no RFP; the controller finds the receipt and the bidder-signed
+  `vm.hostKeys` in the owner's records and holds it `Held`, which the web app maps to `Running`.
+- *Unclaimed receipts.* The controller lists the VM records of every account that owns a contract (and
+  the test owners) and releases, once, a receipt that no contract names after
+  `--unclaimed-grace-ms`.
+
+**A restarted web app or requester loses nothing.** Every step the controller takes is in
+`status.contract` of its contract; a restarted controller resumes each contract from it (no second
+RFP) and a contract that already fetched its bundle is only watched for the bidder's
+`vm.terminated`. A restarted web app finds each claim's contract by name and maps it again.
 
 **A restarted provider never reaps; it adopts** (M3-NODE-LOSS, provider half). Decided by Claude,
 user may veto. Before this, the provider's shutdown reap (`nodeHosts.reap`) called the market host's
@@ -7502,6 +7491,76 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   dir. The run was a manual reading through a scratch Go test (not kept: it needs docker and a free
   8 GiB for GitLab, which the CI runner of `test/integration` does not promise); the guest reaches the host
   address the fixture publishes on, so the default `--address` works for a runner in a tenant cluster.
+
+- **One requester controller for the CLI and the gateway; the web app holds no market session (plan 0009
+  M3-REQUESTER-CONTROLLER, 2026-10-15).** Before, the requester existed twice: `request-vm-ssh` carried
+  exactly one ComputeContract per DenoPod, and the web app ran the same flow in its internet-facing
+  process for every NodeClaim, with the owners' OAuth sessions, a requester key and each claim's secrets
+  key in its own vault mount and memory. Now `request-vm-ssh` is a controller over every ComputeContract
+  of its workspace (`lib/abc/requester-controller` for admission, disposition and the profile
+  interface; `lib/requester-controller-kcp` for the watch, the per-contract runner and the orphan
+  scan). A MarketRequester application (`run request`) keeps its one identity and its one contract
+  `contract`. A Gateway application renders a second DenoPod, `requester`
+  (`deploy/apps/gateway/requester.<profile>.values.yaml`, own ServiceAccount, no `env: true`, no
+  `sys: true`), with its own client `requester` of the root vault: a KV mount of its own for the
+  requester key and each contract's secrets-server key, read and update on
+  `socialweb-computer-k8s/oauth-sessions/*` (the delegated sessions the web app deposits at sign-in; the
+  controller reads each fresh from the vault on every use, so a refresh by either process is the next
+  call's session) and read on `socialweb-computer-k8s/contracts/*` (the join bundles). The web app's
+  node market (`lib/socialweb-computer-k8s-node-market`) is now a NodeClaim to ComputeContract mapper: it
+  writes `nodeclaim-<hash of the claim uid>` with `createIfAbsent` in the Gateway's own workspace (a
+  claim in a home workspace cannot own an object in another, so the claim's finalizer, not an owner
+  reference, ties them: the web app sets `spec.release`, waits for `Released` or `Failed`, deletes the
+  contract and the bundle, and only then removes the finalizer), writes the join bundle to its own vault
+  mount, and maps `status.contract`, `status.grant` and the phases back. It holds no PDS session, no
+  claim key and no secrets key; `socialweb-computer-k8s-claim-keys-openbao`, `-claim-keys-vault`, the
+  in-process account requesters and the node fulfiller are deleted. What stays in the web app is the
+  user's sign-in session (the vault session store, request proofs, and `getServiceAuth` for the
+  cluster gateway until plan 0014 M2-WEB-APP-SIGNIN replaces it with `bao login`); two processes now
+  refresh one session, so each re-reads the vault session before every use and a rotation by the other
+  is seen on the next call. The unclaimed-receipt scan and the adoption of joined nodes moved with the
+  flow (contracts with `spec.adopt`). The shared ComputeContract kind gained `spec.ownerDid`,
+  `spec.adopt`, `spec.nodeJoin` and `status.grant`. The ssh gateway keeps its in-process session
+  requester as `ts/socialweb-computer-ssh/lib/socialweb-computer-ssh-requester` over the shared
+  `socialweb-computer-account-agents` and `socialweb-computer-account-requesters`; the package
+  `socialweb-computer-requester-inproc` is gone. Readings (market network m3a, `dev up --profile market-network --bidders 2 --with-gateway`,
+  guests as VM units of test-0001, UTC, 2026-10-15): Ready 1 min 40 s after the start; the gateway
+  application listed DenoPods `requester` and `socialweb-computer-k8s`. A pod applied to the tenant
+  cluster at zero nodes at 18:18:28: NodeClaim `tenant-node1`, ComputeContract `nodeclaim-de81bc9e...`
+  created 18:18:30, RFP submitted 18:18:31.09, winner 31.35, accept 31.70, receipt 31.75, claim
+  `Joining` 18:18:49, node Ready 18:19:02, pod Running 18:19:06 (38 s after the apply). Vault, read
+  with each client's own certificate: the web app's `socialweb-computer-k8s` token gets 403 on every
+  `requester/*` path (read and write) and 200 on its own mount; the `requester` token reads and writes
+  `requester/*`, reads and updates `socialweb-computer-k8s/oauth-sessions/*`, reads
+  `socialweb-computer-k8s/contracts/*` and gets 403 writing there. The web app process has no
+  `--allow-run` and an `--allow-env` list of the projected names and `PORT_FILE`, `LISTENERS_FILE`,
+  `STATUS_FILE`, `KCP_NAMESPACE`, `KCP_WORKSPACE`, `PATH`, `HOME`, `BUNDLED_ACTIONS_DIR`. A second pod
+  (anti-affinity) at 18:19:21 made a second claim; the requester DenoPod was restarted at 18:19:33,
+  while that contract was at `receipt` and the first was `Held`: the new run logged `rfp_resumed`,
+  `accept_resumed` and `receipt_resumed` for the second contract (no second RFP, no second accept),
+  `requester_contract_held_resume` for the first, the guest of the second fetched its bundle through
+  the re-mounted secrets server at 18:19:44.6 and the contract was `Held` at 18:19:46.7; both nodes
+  Ready. `run request --secrets` in the same network delivered the secret to its guest
+  (`m3-secret-8f3a1c77d2` read at the guest's path), 2 bids, released 200 at 18:23:17. Both pods
+  deleted at 18:23:22: the web app set `spec.release`, the controller sent `vm.delete` (200) at
+  18:23:36.7 and 18:23:38.7, the contracts and bundles were deleted, the claims finalized and the cluster
+  was at zero nodes at 18:23:39. A repeated status write of an unchanged claim (key order differing
+  between the object and the mapped status) was found in the first run, fixed with a canonical
+  comparison, and the second cycle on the same network logged 5 claim writes. Open edge: the web app and
+  the requester refresh one session from two processes; both re-read the vault session before each
+  use, so only two refreshes in the same instant can replay a refresh token.
+
+- **The requester records the bids it saw and why it chose one (plan 0009 M3-REQUESTER-BIDS,
+  2026-10-15).** ComputeContract `status.bids` holds at most 20 entries `{did, uri, offer (the bid
+  payload NSID), cost, verdict, arrivedAt}` and `status.chosen` `{uri, did, reason, considered}`; no
+  object per bid. `requestCompute` gained the handler `onWinner` (called after the policy re-check and
+  before the accept record) and `arrivedAt` on `onBid`. `reason` is `firstFree` (the first
+  policy-allowed free bid ended the window), `bestWithinWindow` (the lowest cost after the window),
+  `policy` (best within the window, confirmed by the RFP's attached policy) or `resumed`; the verdict of
+  each recorded bid is `considered`, then `chosen` or `notChosen`. Reading (the run above):
+  `kubectl get computecontract -o yaml` showed two bids, both `offer:
+  com.publicdomainrelay.temp.market.bids.free`, arrived at 18:18:31.347, the winner `chosen` and the
+  other `notChosen`, and `chosen: {reason: firstFree, considered: 2}`.
 
 ## 16. Vocabulary
 

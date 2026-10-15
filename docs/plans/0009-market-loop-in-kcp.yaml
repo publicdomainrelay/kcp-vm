@@ -196,7 +196,7 @@ items:
     files: ["ts/atproto-market/request-vm-ssh", "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market", "socialweb-computer-k8s/lib/socialweb-computer-requester-inproc (deleted)", "deploy/apps/gateway", "deploy/apps/market-requester"]
     done_when: "a tenant cluster scales from zero through NodeClaim -> ComputeContract -> RFP with the web app holding no requester session (checked in its vault policy and its process environment); `run request --secrets` still delivers the secret to the guest; a restart of the requester DenoPod mid-contract resumes every contract with no second RFP."
     risks: ["The web app keeps OAuth sign-in for the user; only the market session and keys move out."]
-    status: todo
+    status: done
     evidence:
   - id: M3-REQUESTER-BIDS
     milestone: M3
@@ -209,7 +209,7 @@ items:
     files: ["api/types_computecontract.go", "ts/atproto-market/lib/compute-request-xrpc"]
     done_when: "`kubectl get computecontract -o yaml` shows every bid of a run and the reason the winner won."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M3-SSHSIG-AUTH-PLUGIN
     milestone: M3
