@@ -1,5 +1,6 @@
 name: policy-engine
 entry: hono-policy-engine
+memory: 512Mi
 stateDir: "{{.StateDir}}/policy-engine"
 tls: none
 args: ["--port", "0", "--bundled-actions-dir", "${SOCIALWEB_TS_ROOT}/ts/policy-engine/lib/policies/gha-lite/bundled-actions"]
