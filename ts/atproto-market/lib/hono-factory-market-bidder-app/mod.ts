@@ -8,9 +8,8 @@ import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
-import { createFsContractStore } from "@publicdomainrelay/market-bidder-contract-store-fs";
 import { createKcpContractStore } from "@publicdomainrelay/market-bidder-contract-store-kcp";
-import { createKcpBidLedger } from "@publicdomainrelay/market-bidder-bids-kcp";
+import { createBidTombstoneStore, createKcpBidLedger } from "@publicdomainrelay/market-bidder-bids-kcp";
 import type { BidLedger } from "@publicdomainrelay/market-bidder-abc";
 import type { KcpComputeVMClient } from "@publicdomainrelay/compute-provider-kcp";
 import type { ComputeVMAccepts } from "@publicdomainrelay/compute-provider-kcp-abc";
@@ -23,7 +22,7 @@ import {
   registerKeypairPlcDid,
 } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
-import { explicitRelayUrls, isLocalMarketNetwork, splitHostPort } from "@publicdomainrelay/market-network-common";
+import { explicitRelayUrls, splitHostPort } from "@publicdomainrelay/market-network-common";
 import type { MarketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import { vaultRefs } from "@publicdomainrelay/market-identity-abc";
@@ -46,7 +45,6 @@ import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-v
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import type { ResolvedOpenBaoServer } from "@publicdomainrelay/openbao-server-kcp";
 import type { GuestKv, JwkStore } from "@publicdomainrelay/oidc-issuer-abc";
-import { createFileIdentityVault, createSessionFileIdentityVault } from "@publicdomainrelay/market-identity-vault-file";
 import { oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueKeysRecord, loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
@@ -58,11 +56,7 @@ import { createCoalescedStatusWriter, createKcpRestClient, statusFieldWrite } fr
 import { MARKET_BIDDER_RESOURCE, type MarketBidder as MarketBidderObject, type MarketLoopStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
-import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
-import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
-import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-provider-firecracker";
 import { createComputeProviderKcpFactory } from "@publicdomainrelay/hono-factory-compute-provider-kcp";
-import { createVmruntimeMicrovm } from "@publicdomainrelay/microvm-vmruntime";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { loadOrCreateAttestationKeyHex } from "@publicdomainrelay/utils-attestation-key";
@@ -80,15 +74,13 @@ export interface MarketBidderOpenBaoServerRef {
 }
 
 export type MarketBidderIdentityVaultSpec =
-  | { kind: "openbao"; address?: string; tokenFile?: string; caCertFile?: string; namespace?: string; server?: MarketBidderOpenBaoServerRef }
-  | { kind: "file"; path: string };
+  { kind: "openbao"; address?: string; tokenFile?: string; caCertFile?: string; namespace?: string; server?: MarketBidderOpenBaoServerRef };
 
 export interface MarketBidderIdentitySpec {
   name: string;
   vaultMount: string;
   prompt: MarketBidderIdentityPromptSpec;
   vault?: MarketBidderIdentityVaultSpec;
-  stateDir?: string;
   handle?: string;
   pdsUrl?: string;
   password?: string;
@@ -99,18 +91,11 @@ export interface MarketBidderIdentitySpec {
     clientId?: string;
     redirectUri?: string;
     sessionPath?: string;
-    sessionFile?: string;
     sessionClientId?: string;
   };
 }
 
 export type MarketBidderRepoSpec = { kind: "inproc"; statePath?: string } | { kind: "url" };
-
-export interface FirecrackerProviderSpec {
-  kind: "firecracker";
-  vmruntimeCommand: string[];
-  workRoot: string;
-}
 
 export interface KcpProviderSpec {
   kind: "kcp";
@@ -124,9 +109,6 @@ export interface KcpProviderSpec {
 }
 
 export type MarketBidderProviderSpec =
-  | { kind: "digitalocean"; token: string; baseUrl?: string }
-  | { kind: "local"; containerImage?: string; caCertPem?: string }
-  | FirecrackerProviderSpec
   | KcpProviderSpec
   | { kind: "denoWorker"; permissionMode?: string };
 
@@ -140,7 +122,6 @@ export interface MarketBidderMarketSpec {
   policyArgs?: unknown;
   onlyRemotePolicyExec?: boolean;
   allowUntrustedPolicyExec?: boolean;
-  contractStoreDir?: string;
   ingressKeyDir?: string;
   root?: { name: string };
 }
@@ -170,7 +151,6 @@ export interface MarketBidderApp {
   start(): Promise<MarketBidderAppStatus>;
   announce(): Promise<void>;
   shutdown(): Promise<void>;
-  readonly serves: readonly ServeHandle[];
   readonly relays: ReadonlyMap<string, IngressRef>;
 }
 
@@ -207,14 +187,11 @@ function isCrawlRoot(u: string): boolean {
 }
 
 const REQUIRED_PROVIDER_FIELDS = {
-  firecracker: ["vmruntimeCommand", "workRoot"],
   kcp: ["server", "workspace", "handle"],
 } as const;
 
 export function missingProviderFields(p: MarketBidderProviderSpec): string[] {
-  const required: readonly string[] = p.kind === "firecracker" || p.kind === "kcp"
-    ? REQUIRED_PROVIDER_FIELDS[p.kind]
-    : [];
+  const required: readonly string[] = p.kind === "kcp" ? REQUIRED_PROVIDER_FIELDS[p.kind] : [];
   const values = p as unknown as Record<string, unknown>;
   return required.filter((k) => !values[k]);
 }
@@ -243,13 +220,9 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   const id = spec.identity;
   const listenersFile = spec.reports?.listenersFile;
   const guestTlsPort = guestTlsPortOf(network);
-  const serves: ServeHandle[] = [];
   const relays = new Map<string, IngressRef>();
   const acceptToContract = new Map<string, GuestContractEntry>();
-  const ensureImages: Array<() => Promise<void>> = [];
-  const firecracker = spec.providers.find((p): p is FirecrackerProviderSpec => p.kind === "firecracker");
-  const contractStoreDir = spec.market.contractStoreDir || (firecracker ? `${firecracker.workRoot}/contracts` : undefined);
-  const ingressKeyDir = spec.market.ingressKeyDir || (contractStoreDir ? `${contractStoreDir}/ingress` : undefined);
+  const ingressKeyDir = spec.market.ingressKeyDir;
 
   let identityHandle: MarketIdentityHandle | undefined;
   let bidder: MarketBidder | undefined;
@@ -341,7 +314,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     }
   }
 
-  function baseIdentityVault(mode: MarketIdentityMode): IdentityVault {
+  function baseIdentityVault(): IdentityVault {
     if (ports.identityVault) return ports.identityVault;
     if (id.vault && id.password) logger.warn("atproto_password_ignored", { hint: "the identity vault holds the password" });
     if (id.vault?.kind === "openbao") {
@@ -359,10 +332,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           : undefined,
       });
     }
-    if (id.vault?.kind === "file") return createFileIdentityVault({ path: id.vault.path });
-    if (mode === "pdsAccount" && id.password) return createMemoryIdentityVault();
-    if (id.stateDir) return createFileIdentityVault({ path: `${id.stateDir}/identity-vault.json` });
-    logger.warn("bidder_identity_store_in_memory", { hint: "pass --state-dir to keep the sign-in across restarts" });
+    if (!id.password) logger.warn("bidder_identity_store_in_memory", { hint: "name an OpenBao identity vault to keep the sign-in across restarts" });
     return createMemoryIdentityVault();
   }
 
@@ -421,13 +391,6 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     return relay;
   }
 
-  async function openProviderServe(role: string): Promise<{ relay: IngressRef; serve: ServeHandle }> {
-    const relay = await openIngress(role);
-    const serve = createServe({ logger, relays: [relay], listenersFile });
-    serves.push(serve);
-    return { relay, serve };
-  }
-
   async function signIn(): Promise<{ agent: unknown; attestationKp: Awaited<ReturnType<typeof loadOrGenerateKeypair>> }> {
     const prompt: IdentityPrompt = ports.identityPrompt ?? kcpPrompt();
     logger.info("bidder_identity_mode", { mode: "kcp", name: id.name });
@@ -441,17 +404,15 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     const mode: MarketIdentityMode = identitySpec.mode;
     const refs = vaultRefs(id.name, identitySpec, vaultMount);
 
-    const baseVault = baseIdentityVault(mode);
+    const baseVault = baseIdentityVault();
     if (mode === "pdsAccount" && id.password && !id.vault && !ports.identityVault) {
       logger.warn("atproto_password_from_options", { hint: "development only; production keeps the password in the identity vault" });
       await baseVault.write(refs.keys, { password: id.password });
     }
-    if (keysOutOfFiles && (id.oauth?.sessionFile || id.oauth?.sessionPath || id.privateKeyHexPath)) {
+    if (keysOutOfFiles && (id.oauth?.sessionPath || id.privateKeyHexPath)) {
       logger.warn("bidder_key_files_ignored", { hint: "with an OpenBao vault the repo key and the OAuth session live only in the vault" });
     }
-    const identityVault: IdentityVault = id.oauth?.sessionFile && !keysOutOfFiles
-      ? createSessionFileIdentityVault({ base: baseVault, ref: refs.session, path: id.oauth.sessionFile })
-      : baseVault;
+    const identityVault: IdentityVault = baseVault;
     if (id.vault || ports.identityVault) keyVault = baseVault;
 
     const given = await readPrivateKeyHex();
@@ -580,74 +541,6 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     const signed = at.createSignedRepoRecord.bind(at);
     const callService = at.callService.bind(at);
     switch (p.kind) {
-      case "digitalocean": {
-        const { relay, serve } = await openProviderServe("digitalocean");
-        const ref = createComputeProviderHooks({
-          provider: createDigitalOceanComputeProvider({
-            logger, atproto: computeAtproto, serve,
-            getIssuerUrl: () => relay.ingressUrl,
-            digitaloceanBaseUrl: p.baseUrl || "https://api.digitalocean.com",
-            doToken: p.token,
-            oidcJwkStore: oidcJwkStore("digitalocean"),
-            oidcProvisioning: true,
-            rbacProvisioner: createRbacProvisioner(),
-            acceptToContract,
-            createSignedRepoRecord: (collection: string, record: Record<string, unknown>) =>
-              signed(collection, record).then(({ uri, cid }: { uri: string; cid: string }) => ({
-                $type: "com.atproto.repo.strongRef" as const,
-                uri,
-                cid,
-              })),
-            callService: (url: string, body: Record<string, unknown>) =>
-              callService(url, "", "", body).then((res: { status: number; body: unknown }) =>
-                new Response(JSON.stringify(res.body), { status: res.status })
-              ),
-          }),
-        });
-        await serve.beginServe();
-        return ref;
-      }
-      case "local": {
-        const { relay, serve } = await openProviderServe("local");
-        const local = createLocalComputeProvider({
-          logger, atproto: computeAtproto, serve,
-          getIssuerUrl: () => relay.ingressUrl,
-          oidcProvisioning: true,
-          rbacProvisioner: createRbacProvisioner(),
-          containerImage: p.containerImage,
-          oidcJwkStore: oidcJwkStore("local"),
-          ingressProxyHost: network.ingressProxyHost,
-          caCertPem: p.caCertPem,
-          guestTlsPort,
-          debugLogContainerOutput: isLocalMarketNetwork(network),
-          createSignedRepoRecord: signed,
-          callService,
-          acceptToContract,
-        });
-        ensureImages.push(() => (local as { ensureImage?(): Promise<void> }).ensureImage?.() ?? Promise.resolve());
-        await serve.beginServe();
-        return createComputeProviderHooks({ provider: local });
-      }
-      case "firecracker": {
-        const { relay, serve } = await openProviderServe("firecracker");
-        const fc = createFirecrackerComputeProvider({
-          logger,
-          atproto: computeAtproto,
-          serve,
-          getIssuerUrl: () => relay.ingressUrl,
-          microvm: createVmruntimeMicrovm({ command: p.vmruntimeCommand, handle: id.handle ?? at.did, logger }),
-          workRoot: p.workRoot,
-          oidcJwkStore: oidcJwkStore("firecracker"),
-          oidcProvisioning: true,
-          rbacProvisioner: createRbacProvisioner(),
-          guestTlsPort,
-          createSignedRepoRecord: signed,
-          callService,
-          acceptToContract,
-        });
-        await serve.beginServe();
-        return createComputeProviderHooks({ provider: fc.provider });
-      }
       case "kcp": {
         const guest = guestVault();
         const issuerUrl = ingressUrlOf((await ingressKeypair("kcp")).did(), network.ingressProxyHost);
@@ -756,11 +649,10 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
     const marketRelay = spec.market.ingressProxy ? await openIngress("market") : undefined;
     bidderServe = openMarketServe(marketRelay);
-    const fsStore = contractStoreDir ? createFsContractStore({ dir: contractStoreDir }) : undefined;
-    const contractStore = kcpContracts
-      ? createKcpContractStore({ ...kcpContracts, tombstones: fsStore ?? { load: () => Promise.resolve({ contracts: [], tombstones: [] }), saveTombstone: () => Promise.resolve() }, logger })
-      : fsStore;
-    if (contractStoreDir) logger.info("bidder_contract_store", { dir: contractStoreDir, contracts: kcpContracts ? "ComputeVM spec.contract" : "files", tombstones: "files" });
+    const contractStore = kcpContracts && bidLedger
+      ? createKcpContractStore({ ...kcpContracts, tombstones: createBidTombstoneStore({ ledger: bidLedger, logger }), logger })
+      : undefined;
+    if (contractStore) logger.info("bidder_contract_store", { contracts: "ComputeVM spec.contract", tombstones: "Bid status.terminated" });
     const refreshSec = spec.market.offeringRefreshSec ?? 300;
 
     bidder = await createMarketBidder({
@@ -791,11 +683,6 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
   async function announce(): Promise<void> {
     const at = atproto!;
-    for (const ensure of ensureImages) {
-      logger.info("ensuring container image", {});
-      await ensure();
-      logger.info("container image ready", {});
-    }
     const localPort = localPdsPort || bidderServe!.tcpPort;
     if (localRelayUrls.length > 0 && localPort > 0) {
       const hostname = `127.0.0.1:${localPort}`;
@@ -834,9 +721,8 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
   async function shutdown(): Promise<void> {
     bidder?.shutdown();
-    for (const s of serves) s.shutdown();
     await identityHandle?.stop().catch(() => {});
   }
 
-  return { start, announce, shutdown, serves, relays };
+  return { start, announce, shutdown, relays };
 }

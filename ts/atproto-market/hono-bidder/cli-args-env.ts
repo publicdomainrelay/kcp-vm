@@ -53,7 +53,7 @@ export default {
     },
     "state-dir": {
       type: "string" as const,
-      description: "This bidder instance's state directory; its identity store (keys and sessions) is <state-dir>/identity-vault.json unless an identity vault is named. Never $HOME",
+      description: "This bidder instance's state directory, the one the application gives it. Never $HOME",
       env: "STATE_DIR",
     },
     "qr-origin": {
@@ -134,11 +134,6 @@ export default {
       env: "IDENTITY_VAULT_MOUNT",
       default: "bidder",
     },
-    "identity-vault-file": {
-      type: "string" as const,
-      description: "Mode 600 JSON file used as the identity vault when no OpenBao is wired, keyed <mount>/<path>",
-      env: "IDENTITY_VAULT_FILE",
-    },
     "identity-vault-address": {
       type: "string" as const,
       description: "OpenBao address used as the identity vault (KV v2)",
@@ -200,39 +195,6 @@ export default {
       description: "OpenBao namespace of the identity vault",
       env: "IDENTITY_VAULT_NAMESPACE",
     },
-    "compute-provider-digitalocean-token": {
-      type: "string" as const,
-      description: "DigitalOcean API token",
-      env: "COMPUTE_PROVIDER_DO_TOKEN",
-    },
-    "compute-provider-digitalocean-base-url": {
-      type: "string" as const,
-      description: "DigitalOcean API base URL",
-      env: "COMPUTE_PROVIDER_DO_BASE_URL",
-    },
-    "compute-provider-local": {
-      type: "boolean" as const,
-      description: "Enable local compute provider",
-    },
-    "compute-provider-local-container-image": {
-      type: "string" as const,
-      description: "Local provider container image",
-      env: "COMPUTE_PROVIDER_LOCAL_CONTAINER_IMAGE",
-    },
-    "compute-provider-firecracker": {
-      type: "boolean" as const,
-      description: "Enable the Firecracker compute provider",
-    },
-    "compute-provider-firecracker-work-root": {
-      type: "string" as const,
-      description: "Directory each guest gets a work directory under",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_WORK_ROOT",
-    },
-    "compute-provider-firecracker-vmruntime-command": {
-      type: "string" as const,
-      description: "JSON argv of the VM runtime, socialweb-computer internal vm {verb} with its options; each guest is a transient VM unit (swc-userns-stage -> pasta -> firecracker) started from the pinned guest image",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_VMRUNTIME_COMMAND",
-    },
     "compute-provider-kcp": {
       type: "boolean" as const,
       description: "Enable the kcp compute provider: each guest is a ComputeVM in this bidder's own kcp, booted by its ComputeVM controller",
@@ -274,14 +236,9 @@ export default {
       description: "Address every guest dials to reach this host; unset, the constant guest host address of the ComputeVM API",
       env: "COMPUTE_PROVIDER_KCP_GUEST_HOST_ADDRESS",
     },
-    "contract-store-dir": {
-      type: "string" as const,
-      description: "Directory the bidder keeps its contracts and terminated-receipt tombstones in, so a restart keeps answering vm.delete (defaults to <firecracker work root>/contracts when the Firecracker provider is enabled)",
-      env: "CONTRACT_STORE_DIR",
-    },
     "ingress-key-dir": {
       type: "string" as const,
-      description: "Directory each of the bidder's dispatcher ingresses keeps its keypair in, so a restarted bidder registers the same subdomains its receipts and guests name (defaults to <contract store dir>/ingress when there is a contract store)",
+      description: "Directory each of the bidder's dispatcher ingresses keeps its keypair in, so a restarted bidder registers the same subdomains its receipts and guests name",
       env: "INGRESS_KEY_DIR",
     },
     "compute-provider-deno-worker": {
@@ -325,11 +282,6 @@ export default {
       description: "Firehose websocket URL (repeatable, or comma-separated list for multiple relays)",
       env: "FIREHOSE_URL",
     },
-    "oauth-session-file": {
-      type: "string" as const,
-      description: "File the QR OAuth (--atproto-oauth-qr) session is kept in, as session JSON; unset, it lives in the identity store at the MarketIdentity's sessionRef",
-      env: "OAUTH_SESSION_FILE",
-    },
     "oauth-session-client-id": {
       type: "string" as const,
       description: "OAuth client_id a QR or delegated session was issued to; a refresh must use it. Omit for sessions obtained through qr.fedfork.com",
@@ -349,11 +301,6 @@ export default {
       type: "number" as const,
       description: "TLS listener port of the local dispatcher. Guest OIDC URLs (HTTPS-only) are rewritten to this port; the bidder's own traffic stays on the plain ingress-proxy-host port.",
       env: "GUEST_TLS_PORT",
-    },
-    "ca-cert-pem": {
-      type: "string" as const,
-      description: "PEM CA certificate to inject into provisioned guest containers (trust store). Used with self-signed *.localhost certs.",
-      env: "CA_CERT_PEM",
     },
     "private-key-hex-path": {
       type: "string" as const,

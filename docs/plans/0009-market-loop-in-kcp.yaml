@@ -295,7 +295,7 @@ items:
     files: ["ts/atproto-market/lib/hono-factory-market-bidder-app", "ts/atproto-market/hono-bidder", "deno.json", "deno.lock"]
     done_when: "the hono-bidder closure contains none of those packages; a market network run with --secrets passes."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M4-LATENCY-READINGS
     milestone: M4

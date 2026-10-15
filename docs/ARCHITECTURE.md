@@ -3652,6 +3652,28 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **The bidder carries one compute provider, the kcp provider, and keeps its tombstones on the Bid, on
+  2026-10-15 (plan 0009 M4-LEGACY-BIDDER-CUT).** `hono-factory-market-bidder-app` and `hono-bidder` no
+  longer import `compute-provider-digitalocean`, `compute-provider-firecracker`,
+  `compute-provider-local`, `market-bidder-contract-store-fs` or `market-identity-vault-file`; the
+  options that fed them (`--compute-provider-digitalocean-*`, `--compute-provider-local*`,
+  `--compute-provider-firecracker*`, `--contract-store-dir`, `--identity-vault-file`,
+  `--oauth-session-file`, `--ca-cert-pem`) are gone from `cli-args-env.ts`, `deploy/apps/option-map.yaml`
+  and `deploy/apps/market-bidder/bidder.values.yaml`. The packages stay in the workspace as libraries and
+  the closure of `hono-bidder` no longer reaches them. The bidder's providers are `kcp` and
+  `denoWorker`; a bidder without an OpenBao identity vault keeps its sign-in in memory. The one thing
+  the file store did that nothing else did was the tombstone of an ended contract (a late `vm.delete`
+  answers 200 `alreadyTerminated` from it). It moved to `Bid` `status.terminated` (`BidTerminated`:
+  `receiptUri`, `receiptCid`, `acceptAuthor`, `reason`, `at`; Bid schema revision 3): the Bid whose
+  `status.accept` is the contract's accept holds it, `createBidTombstoneStore`
+  (`market-bidder-bids-kcp`) reads them back at start with the same 30 day TTL and 1024 capacity the
+  file store had, and `market-bidder-contract-store-kcp` takes that store as its `tombstones`. A
+  ComputeVM cannot hold the tombstone, because the contract store deletes the ComputeVM when the
+  contract ends. Readings (market network, one bidder, `TestRequestSecretsReachTheGuestThroughTheRFPFlow`
+  as the live run, test-0001, UTC): `dev up` Ready in 74.0 s and 77.7 s; `run request --secrets` exit 0
+  in 67.0 s and 97.8 s, the guest ran the command 56.2 s after it started and held the secret; release
+  answered `vm.delete` 200 and left no ComputeVM, VM unit or VM work dir; `dev down` left nothing.
+
 - **An apply waits for its objects to be served, and adopts a schema that is already there, on
   2026-10-13 (branch `task/install-bringup`).** The first cold
   bootstrap of a kcp printed `kcpapply ... APIResourceSchema ... already exists` and

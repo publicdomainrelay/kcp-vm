@@ -20,17 +20,6 @@ if (!o.denopodNamespace || !o.denopodServiceDomain || !o.marketIdentityKcpServer
 const logger = createLogger({ serviceName: (o.serviceName as string) ?? "bidder" });
 
 const providers: MarketBidderProviderSpec[] = [];
-if (o.computeProviderDigitaloceanToken) providers.push({ kind: "digitalocean", token: o.computeProviderDigitaloceanToken, baseUrl: o.computeProviderDigitaloceanBaseUrl });
-if (o.computeProviderLocal) providers.push({ kind: "local", containerImage: o.computeProviderLocalContainerImage, caCertPem: o.caCertPem });
-if (o.computeProviderFirecracker) {
-  providers.push({
-    kind: "firecracker",
-    workRoot: o.computeProviderFirecrackerWorkRoot,
-    vmruntimeCommand: o.computeProviderFirecrackerVmruntimeCommand
-      ? JSON.parse(o.computeProviderFirecrackerVmruntimeCommand)
-      : undefined,
-  });
-}
 if (o.computeProviderKcp) {
   providers.push({
     kind: "kcp",
@@ -69,7 +58,7 @@ const vaultServer = o.identityVaultOpenbaoServer
   : undefined;
 const vault = o.identityVaultAddress || vaultServer
   ? { kind: "openbao" as const, address: o.identityVaultAddress, tokenFile: o.identityVaultTokenFile, caCertFile: o.identityVaultCaCertFile, namespace: o.identityVaultNamespace, server: vaultServer }
-  : o.identityVaultFile ? { kind: "file" as const, path: o.identityVaultFile } : undefined;
+  : undefined;
 
 const spec: MarketBidderAppSpec = {
   network: marketBidderGuestTlsUrl(marketNetwork({
@@ -85,7 +74,6 @@ const spec: MarketBidderAppSpec = {
     vaultMount: o.identityVaultMount,
     prompt: { kind: "kcp", server: kcpIdentity, workspace: o.marketIdentityKcpWorkspace, tokenFile: o.marketIdentityKcpTokenFile, caCertFile: o.marketIdentityKcpCaCertFile },
     vault,
-    stateDir: o.stateDir,
     handle: o.atprotoHandle,
     pdsUrl: o.atprotoPdsUrl,
     password: o.atprotoPassword,
@@ -96,7 +84,6 @@ const spec: MarketBidderAppSpec = {
       clientId: o.oauthClientId,
       redirectUri: o.oauthRedirectUri,
       sessionPath: o.oauthSessionPath,
-      sessionFile: o.oauthSessionFile,
       sessionClientId: o.oauthSessionClientId,
     },
   },
@@ -112,7 +99,6 @@ const spec: MarketBidderAppSpec = {
     policyArgs: o.policyArgs,
     onlyRemotePolicyExec: o.onlyRemotePolicyExec,
     allowUntrustedPolicyExec: o.allowUntrustedPolicyExec,
-    contractStoreDir: o.contractStoreDir,
     ingressKeyDir: o.ingressKeyDir,
     ...(o.marketRootName ? { root: { name: o.marketRootName as string } } : {}),
   },
