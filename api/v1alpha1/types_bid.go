@@ -83,6 +83,18 @@ type BidTimings struct {
 	FinishedAt string `json:"finishedAt,omitempty"`
 }
 
+type BidTerminated struct {
+	ReceiptUri string `json:"receiptUri"`
+
+	ReceiptCid string `json:"receiptCid,omitempty"`
+
+	AcceptAuthor string `json:"acceptAuthor"`
+
+	Reason string `json:"reason"`
+
+	At string `json:"at"`
+}
+
 type BidStatus struct {
 	Phase BidPhase `json:"phase,omitempty"`
 
@@ -97,4 +109,6 @@ type BidStatus struct {
 	ComputeVM string `json:"computeVM,omitempty"`
 
 	Timings BidTimings `json:"timings,omitempty"`
+
+	Terminated *BidTerminated `json:"terminated,omitempty"`
 }

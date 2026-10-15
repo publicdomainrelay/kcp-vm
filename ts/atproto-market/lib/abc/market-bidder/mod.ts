@@ -173,6 +173,7 @@ export interface BidEntry {
   acceptedAt?: string;
   computeVM?: string;
   publishedAt?: string;
+  terminated?: Tombstone;
 }
 
 export interface BidAcceptClaim {
@@ -192,6 +193,7 @@ export interface BidLedger {
   won(rfpUri: string, accept: BidRef, at: string): Promise<void>;
   accepting(rfpUri: string, claim: BidAcceptClaim): Promise<BidClaim>;
   boundTo(rfpUri: string, computeVM: string): Promise<void>;
+  terminated(rfpUri: string, tombstone: Tombstone): Promise<void>;
   lost(rfpUri: string, reason: string, at: string): Promise<void>;
   expired(rfpUri: string, at: string): Promise<void>;
   release(rfpUri: string): Promise<boolean>;

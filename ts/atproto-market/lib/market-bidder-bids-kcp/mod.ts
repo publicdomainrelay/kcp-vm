@@ -1,12 +1,15 @@
 import {
   acceptClaimable,
   bidExpiresAt,
+  DEFAULT_TERMINATED_RECEIPTS_CAPACITY,
   type BidClaim,
   type BidDecision,
   type BidEntry,
   type BidLedger,
   type BidPhaseName,
   type BidRef,
+  type ContractStore,
+  type Tombstone,
 } from "@publicdomainrelay/market-bidder-abc";
 import { type Bid, BID_RESOURCE, type BidStatus, parseBid } from "@publicdomainrelay/compute-provider-kcp-common";
 import { type KcpClient, kcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
@@ -14,6 +17,7 @@ import { type KcpClient, kcpResourceClient } from "@publicdomainrelay/kcp-client
 export const BID_NAME_PREFIX = "bid-";
 export const BID_NAME_HEX = 20;
 export const BID_API_VERSION = `${BID_RESOURCE.group}/${BID_RESOURCE.version}`;
+export const DEFAULT_TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export async function bidNameOf(rfpUri: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rfpUri)));
@@ -40,6 +44,18 @@ export function bidEntryOf(bid: Bid): BidEntry {
     ...(s.timings?.acceptedAt ? { acceptedAt: s.timings.acceptedAt } : {}),
     ...(s.computeVM ? { computeVM: s.computeVM } : {}),
     ...(s.timings?.publishedAt ? { publishedAt: s.timings.publishedAt } : {}),
+    ...(s.terminated ? { terminated: tombstoneOf(s.terminated, s.accept) } : {}),
+  };
+}
+
+function tombstoneOf(t: NonNullable<BidStatus["terminated"]>, accept: BidStatus["accept"]): Tombstone {
+  return {
+    receiptUri: t.receiptUri,
+    ...(t.receiptCid ? { receiptCid: t.receiptCid } : {}),
+    ...(accept ? { acceptUri: accept.uri, ...(accept.cid ? { acceptCid: accept.cid } : {}) } : {}),
+    acceptAuthor: t.acceptAuthor,
+    reason: t.reason,
+    at: t.at,
   };
 }
 
@@ -156,6 +172,19 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
     async boundTo(rfpUri, computeVM) {
       await transition(rfpUri, ["Won"], (s) => s.computeVM === computeVM ? null : { ...s, computeVM });
     },
+    async terminated(rfpUri, tombstone) {
+      await transition(rfpUri, ["Won"], (s) => s.terminated?.receiptUri === tombstone.receiptUri ? null : {
+        ...s,
+        terminated: {
+          receiptUri: tombstone.receiptUri,
+          ...(tombstone.receiptCid ? { receiptCid: tombstone.receiptCid } : {}),
+          acceptAuthor: tombstone.acceptAuthor,
+          reason: tombstone.reason.slice(0, 1_000),
+          at: tombstone.at,
+        },
+        timings: { ...s.timings, finishedAt: tombstone.at },
+      });
+    },
     async lost(rfpUri, reason, at) {
       await transition(rfpUri, ["Deciding", "Published", "Expired"], (s) => ({
         ...s,
@@ -182,6 +211,46 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
     async list() {
       const out = await bids.list();
       return out.items.map(bidEntryOf);
+    },
+  };
+}
+
+export interface BidTombstoneStoreOptions {
+  ledger: BidLedger;
+  logger: { info(message: string, data?: Record<string, unknown>): void; warn(message: string, data?: Record<string, unknown>): void };
+  tombstoneTtlMs?: number;
+  tombstoneCapacity?: number;
+  now?: () => number;
+}
+
+export function createBidTombstoneStore(opts: BidTombstoneStoreOptions): Pick<ContractStore, "load" | "saveTombstone"> {
+  const ttlMs = opts.tombstoneTtlMs ?? DEFAULT_TOMBSTONE_TTL_MS;
+  const capacity = opts.tombstoneCapacity ?? DEFAULT_TERMINATED_RECEIPTS_CAPACITY;
+  const now = opts.now ?? Date.now;
+  return {
+    async load() {
+      const cutoff = now() - ttlMs;
+      const tombstones = (await opts.ledger.list())
+        .flatMap((e) => e.terminated ? [e.terminated] : [])
+        .filter((t) => Date.parse(t.at) >= cutoff)
+        .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+      return { contracts: [], tombstones: tombstones.slice(Math.max(0, tombstones.length - capacity)) };
+    },
+    async saveTombstone(tombstone) {
+      if (!tombstone.acceptUri) {
+        opts.logger.warn("bidder_tombstone_without_accept", { receiptUri: tombstone.receiptUri });
+        return;
+      }
+      const bid = (await opts.ledger.list()).find((e) =>
+        e.accept !== undefined && e.accept.uri === tombstone.acceptUri &&
+        (!tombstone.acceptCid || !e.accept.cid || e.accept.cid === tombstone.acceptCid)
+      );
+      if (!bid) {
+        opts.logger.warn("bidder_tombstone_without_bid", { receiptUri: tombstone.receiptUri, acceptUri: tombstone.acceptUri });
+        return;
+      }
+      await opts.ledger.terminated(bid.rfp.uri, tombstone);
+      opts.logger.info("bidder_tombstone_on_bid", { bid: bid.name, receiptUri: tombstone.receiptUri, reason: tombstone.reason });
     },
   };
 }

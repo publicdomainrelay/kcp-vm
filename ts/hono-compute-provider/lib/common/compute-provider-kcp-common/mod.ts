@@ -216,6 +216,7 @@ export interface BidStatus {
   claimedBy?: string;
   computeVM?: string;
   timings?: BidTimings;
+  terminated?: BidTerminated;
 }
 
 export interface BidTimings {
@@ -224,6 +225,14 @@ export interface BidTimings {
   publishedAt?: string;
   acceptedAt?: string;
   finishedAt?: string;
+}
+
+export interface BidTerminated {
+  receiptUri: string;
+  receiptCid?: string;
+  acceptAuthor: string;
+  reason: string;
+  at: string;
 }
 
 export interface HostProcess {
@@ -615,7 +624,7 @@ export const BID_RESOURCE: ApiResource = {
   listKind: "BidList",
   plural: "bids",
   singular: "bid",
-  schema: "v1alpha1-2.bids.socialweb.computer",
+  schema: "v1alpha1-3.bids.socialweb.computer",
   export: "computevms",
 };
 
@@ -662,6 +671,7 @@ export type ApiTypeName =
   | "BidRecordRef"
   | "BidSpec"
   | "BidStatus"
+  | "BidTerminated"
   | "BidTimings"
   | "ComputeVM"
   | "ComputeVMContract"
@@ -977,11 +987,40 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "phase": {
         "ref": "BidPhase"
       },
+      "terminated": {
+        "ref": "BidTerminated"
+      },
       "timings": {
         "ref": "BidTimings"
       }
     },
     "required": [],
+    "type": "object"
+  },
+  "BidTerminated": {
+    "properties": {
+      "acceptAuthor": {
+        "type": "string"
+      },
+      "at": {
+        "type": "string"
+      },
+      "reason": {
+        "type": "string"
+      },
+      "receiptCid": {
+        "type": "string"
+      },
+      "receiptUri": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "receiptUri",
+      "acceptAuthor",
+      "reason",
+      "at"
+    ],
     "type": "object"
   },
   "BidTimings": {
@@ -3041,6 +3080,24 @@ export function assertBidTimings(value: unknown): asserts value is BidTimings {
 
 export function parseBidTimings(value: unknown): BidTimings {
   assertBidTimings(value);
+  return value;
+}
+
+export function validateBidTerminated(value: unknown): ApiIssue[] {
+  return validate("BidTerminated", value);
+}
+
+export function isBidTerminated(value: unknown): value is BidTerminated {
+  return validate("BidTerminated", value).length === 0;
+}
+
+export function assertBidTerminated(value: unknown): asserts value is BidTerminated {
+  const issues = validate("BidTerminated", value);
+  if (issues.length > 0) throw new ApiValidationError("BidTerminated", issues);
+}
+
+export function parseBidTerminated(value: unknown): BidTerminated {
+  assertBidTerminated(value);
   return value;
 }
 
