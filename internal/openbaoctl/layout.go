@@ -285,8 +285,13 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 		d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + mount + "/certs/" + r.Name, Data: data})
 	}
 	for _, r := range decl.JWTRoles {
-		data := map[string]any{"role_type": or(r.RoleType, DefaultJWTRole), "bound_subject": r.BoundSubject,
+		data := map[string]any{"role_type": or(r.RoleType, DefaultJWTRole),
 			"bound_audiences": r.BoundAudiences, "user_claim": r.UserClaim, "token_policies": r.Policies}
+		if r.UserClaim == "" || r.UserClaim == "sub" {
+			data["bound_subject"] = r.BoundSubject
+		} else {
+			data["bound_claims"] = map[string]any{r.UserClaim: r.BoundSubject}
+		}
 		put(data, "token_ttl", r.TokenTTL)
 		d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + strings.Trim(r.Mount, "/") + "/role/" + r.Name, Data: data})
 	}

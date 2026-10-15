@@ -1295,9 +1295,9 @@ Decisions, made by Claude, user may veto:
   is an `EnsureLogin` error in the pass log, retried every pass.
 
 How a guest logs in, which is the door's and the guest's half (`claim.json` carries `jwtMount`,
-`role`, `audience`, `kvMount`, `kvPath`): exchange the workload token for one whose `aud` is the
-grant's audience (`socialweb.computer/node/<clusterKey>/<node>`) and whose `sub` is the grant's
-subject, then `POST /v1/auth/jwt-<12 hex>/login` with `{"role": "<node>", "jwt": "<token>"}`, then
+`role`, `audience`, `kvMount`, `kvPath`): ask `guest-login.sh token <audience>` for a token of the
+bidder's OpenBao identity/oidc whose `aud` is the grant's audience (`api://socialweb-node?actx=<clusterKey>/<node>`)
+and whose `wid_sub` claim is the grant's subject, then `POST /v1/auth/jwt-<12 hex>/login` with `{"role": "<node>", "jwt": "<token>"}`, then
 `GET /v1/socialweb-nodes/data/<node>` with the returned `client_token` in `X-Vault-Token`. The
 instrument is `TestANodeLogsInWithItsWorkloadTokenAndReadsOnlyItsOwnSecret`
 (`internal/clusterprovider/nodesecrets_test.go`) against a real OpenBao v2.6.2 (`bao server -dev`)
@@ -2005,9 +2005,14 @@ contract's status back onto the claim. The requester DenoPod of the same applica
   back, and reads `contracts/*` there; its own client `requester` has a KV mount of its own for the
   requester key and each contract's secrets-server key). The node-join profile adds the `k3s` and
   k3s-join user-data modules and wraps the secrets capability: on the grant it writes `status.grant`
-  = `{issuer, subject, audience: socialweb.computer/node/<clusterKey>/<node>, role: <node>}` and
+  = `{issuer, subject, audience: api://socialweb-node?actx=<clusterKey>/<node>, role: <node>}` and
   appends `claim.json` = `{node, cluster, jwtMount, role, audience, kvMount, kvPath}` to the bundle
-  (`jwtMount` = `jwt-<first 12 hex of sha256(issuer)>` needs the winning bid's issuer). A grant write
+  (`jwtMount` = `jwt-<first 12 hex of sha256(issuer)>` needs the winning bid's issuer). The wrapped
+  capability's RBAC record also names a role `<role>-node` whose `aud` is that audience, so the bidder
+  keeps a GuestIdentityGrant (api `socialweb-node`, actx `<clusterKey>/<node>`) and the guest can get the
+  token; an audience that is not `api://<api>?actx=<actx>` gets no grant. The cluster vault's JWT role
+  binds `wid_sub` (the user claim) with `bound_claims`, because the `sub` of an OpenBao identity token is
+  the entity id. A grant write
   that fails leaves the inner capability unauthorized and the contract `Failed`, releasable from its
   receipt. The controller waits up to `vmReadyTimeoutSec` from the accept for the guest to fetch its
   bundle (`status.secretsFetchedAt`), then writes phase `Held`; a guest that never fetches ends
@@ -2118,9 +2123,9 @@ runcmd; none is a dependency of the agent except the DNS link and the masquerade
 
 - `socialweb-node-secrets` is a oneshot with `Restart=on-failure`, because systemd refuses
   `Restart=always` on `Type=oneshot`; with no start limit it retries until it succeeds, which is what
-  "always" means for a oneshot. Its token exchange is the one cloud-init-common's `secrets` module
-  does (accept.json's `bid_config` `token_path`, `url_path`, `url_route`; the subject echoed back;
-  `ttl` 300) for `aud` = the claim's audience. It logs in at `/v1/auth/<jwtMount>/login` with
+  "always" means for a oneshot. Its token comes from the helper cloud-init-common's `secrets` module
+  uses, `guest-login.sh token <audience>`, for `aud` = the claim's audience (it retries until the
+  bidder's grant for that audience exists). It logs in at `/v1/auth/<jwtMount>/login` with
   `{role, jwt}` and `--cacert openbao-ca.pem`, reads `/v1/<kvMount>/data/<kvPath>`, and requires
   `token`, `nodePassword` and `serverCA`, because those three are credentials OpenBao alone holds.
   Both calls go through a bounded wait on the link, because the OpenBao link is started beside this
@@ -7939,12 +7944,8 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   SessionExpired with SignedIn False, and the other user's session stayed `active`. The ssh gateway: sign-in
   by DID, `/keys` listed none, added one (a record in the user's repo), listed it, deleted it (applyWrites
   with the union `$type`), sign-out revoked. The web app's DenoPod arguments and run logs hold neither the
-  cookie token nor `refresh_token`/`dpopPrivate`; the process memory was not scanned. Not read: nodes
-  joining the tenant cluster. The guest's `socialweb-node-secrets` loops "no workload identity issuer"
-  (`cloud-init-plugin-k3s-join` reads `bid_config.url_path`, a file the bao-issued guest identity of plan
-  0009 M3-GUEST-IDENTITY-OPENBAO no longer writes), so the claim stays Joining on a base that has nothing
-  to do with the sign-in; a gateway upgrade with the same cookie was not run (`dev restart` of the child core
-  is not available to a child of a network).
+  cookie token nor `refresh_token`/`dpopPrivate`; the process memory was not scanned. Nodes join the tenant cluster through the bao-issued guest identity (see the node
+  join profile above).
 
 ## 16. Vocabulary
 

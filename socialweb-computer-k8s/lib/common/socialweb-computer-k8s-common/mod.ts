@@ -92,7 +92,8 @@ export function nodeLinkEnv(
 
 export const NODE_KV_MOUNT = "socialweb-nodes";
 export const OPENBAO_LINK_LOCAL_ADDR = "127.0.0.1:18200";
-export const NODE_AUDIENCE_PREFIX = "socialweb.computer/node/";
+export const NODE_AUDIENCE_API = "socialweb-node";
+export const NODE_AUDIENCE_PREFIX = `api://${NODE_AUDIENCE_API}?actx=`;
 export const JWT_MOUNT_PREFIX = "jwt-";
 export const JWT_MOUNT_HASH_HEX_CHARS = 12;
 export const ACCOUNT_HASH_CHARS = 8;
@@ -109,8 +110,12 @@ export interface NodeClaimDocument {
   kvPath: string;
 }
 
+export function nodeAudienceContext(clusterKey: string, nodeName: string): string {
+  return `${clusterKey}/${nodeName}`;
+}
+
 export function nodeAudience(clusterKey: string, nodeName: string): string {
-  return `${NODE_AUDIENCE_PREFIX}${clusterKey}/${nodeName}`;
+  return `${NODE_AUDIENCE_PREFIX}${nodeAudienceContext(clusterKey, nodeName)}`;
 }
 
 export function jwtMountName(issuerSha256Hex: string): string {

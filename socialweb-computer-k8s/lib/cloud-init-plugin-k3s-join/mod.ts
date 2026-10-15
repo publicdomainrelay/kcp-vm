@@ -1,3 +1,4 @@
+import { GUEST_LOGIN_SCRIPT } from "@publicdomainrelay/cloud-init-common";
 import type { UserDataModule, UserDataPatch, WriteFileEntry } from "@publicdomainrelay/cloud-init-common";
 import {
   NODE_CLAIM_DOC_PATH,
@@ -247,7 +248,7 @@ set -euo pipefail
 ${STEP_PROBE}${LINK_ENV_GUARD}say() { echo "socialweb-node-secrets: $*" >&2; }
 step node-secrets start
 [ -f ${p.done} ] && [ -s ${p.linkEnv} ] && [ -s ${p.meshdEnv} ] && exit 0
-for f in ${p.claim} ${p.ca} ${p.acceptPath}; do
+for f in ${p.claim} ${p.ca}; do
   [ -s "\${f}" ] || { say "\${f} is missing"; exit 1; }
 done
 field() { jq -er --arg k "$1" '.[$k] | strings | select(length > 0)' ${p.claim}; }
@@ -261,26 +262,13 @@ for v in "\${NODE}" "\${JWT_MOUNT}" "\${ROLE}" "\${KV_MOUNT}" "\${KV_PATH}"; do
   printf '%s' "\${v}" | grep -Eqx '[a-z0-9]([a-z0-9.-]*[a-z0-9])?' || { say "claim.json carries an unsafe name"; exit 1; }
 done
 
-WIF="$(jq -c '.bid_config.value // .bid_config // {}' ${p.acceptPath})"
-TOKEN_PATH="$(printf '%s' "\${WIF}" | jq -r '.token_path // empty')"
-URL_PATH="$(printf '%s' "\${WIF}" | jq -r '.url_path // empty')"
-URL_ROUTE="$(printf '%s' "\${WIF}" | jq -r '.url_route // "/v1/oidc/issue"')"
-[ -n "\${TOKEN_PATH}" ] && [ -s "\${TOKEN_PATH}" ] || { say "no workload identity token"; exit 1; }
-[ -n "\${URL_PATH}" ] && [ -s "\${URL_PATH}" ] || { say "no workload identity issuer"; exit 1; }
-WID_TOKEN="$(cat "\${TOKEN_PATH}")"
-ISSUER_BASE="$(cat "\${URL_PATH}")"
-PAYLOAD="$(printf '%s' "\${WID_TOKEN}" | cut -d. -f2 | tr '_-' '/+')"
-case $(( \${#PAYLOAD} % 4 )) in
-  2) PAYLOAD="\${PAYLOAD}==" ;;
-  3) PAYLOAD="\${PAYLOAD}=" ;;
-esac
-SUBJECT="$(printf '%s' "\${PAYLOAD}" | base64 -d | jq -r .sub)" || true
-[ -n "\${SUBJECT}" ] && [ "\${SUBJECT}" != "null" ] || { say "could not read sub from the workload identity token"; exit 1; }
-
-EXCHANGED="$(curl -sf -H "Authorization: Bearer \${WID_TOKEN}" -H "Content-Type: application/json" \\
-  -d "$(jq -nc --arg aud "\${AUDIENCE}" --arg sub "\${SUBJECT}" '{aud: $aud, sub: $sub, ttl: 300}')" \\
-  "\${ISSUER_BASE}\${URL_ROUTE}" | jq -r '.token // empty')" || true
-[ -n "\${EXCHANGED}" ] || { say "token exchange for \${AUDIENCE} failed"; exit 1; }
+for _ in $(seq 1 60); do
+  [ -x ${GUEST_LOGIN_SCRIPT} ] && break
+  sleep 2
+done
+[ -x ${GUEST_LOGIN_SCRIPT} ] || { say "the guest login helper ${GUEST_LOGIN_SCRIPT} never appeared"; exit 1; }
+EXCHANGED="$(${GUEST_LOGIN_SCRIPT} token "\${AUDIENCE}")" || true
+[ -n "\${EXCHANGED}" ] || { say "no workload identity token from the bidder's OpenBao for \${AUDIENCE}"; exit 1; }
 
 BAO="https://${p.openbaoAddr}"
 link_call() {

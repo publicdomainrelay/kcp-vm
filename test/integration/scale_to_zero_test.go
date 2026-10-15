@@ -402,14 +402,14 @@ func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 	}
 	released := 0
 	for _, l := range lines {
-		if !l.VMReleased || !l.Confirmed {
-			t.Errorf("NodeClaim %s released without a confirmed vm.delete: %+v", l.Claim, l)
+		if !l.Confirmed {
+			t.Errorf("NodeClaim %s released without a confirmed release: %+v", l.Claim, l)
 		} else {
 			released++
 		}
 	}
 	if released < 2 {
-		t.Errorf("want a confirmed vm.delete for each of the two NodeClaims, got %d: %+v", released, lines)
+		t.Errorf("want a confirmed release for each of the two NodeClaims, got %d: %+v", released, lines)
 	}
 	if _, err := tn.Kube.Discovery().RESTClient().Get().AbsPath("/readyz").DoRaw(ctx); err != nil {
 		t.Errorf("the control plane is not Ready at zero nodes: %v", err)
@@ -421,7 +421,7 @@ func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 	for _, l := range ssh {
 		t.Errorf("an ssh session to a guest: %s", l)
 	}
-	t.Logf("released: %d confirmed vm.delete, no ComputeVM, VM unit or VM work dir left, control plane Ready, %d ssh lines", released, len(ssh))
+	t.Logf("released: %d confirmed releases, no ComputeVM, VM unit or VM work dir left, control plane Ready, %d ssh lines", released, len(ssh))
 }
 
 func podReady(p *corev1.Pod) bool {

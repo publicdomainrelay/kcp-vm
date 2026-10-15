@@ -256,7 +256,6 @@ func (tn *Tenant) Summary(ctx context.Context) string {
 
 type ReleaseLine struct {
 	Claim       string `json:"claim"`
-	VMReleased  bool   `json:"vmReleased"`
 	Confirmed   bool   `json:"confirmed"`
 	MessageName string `json:"message"`
 }

@@ -31,15 +31,41 @@ export function nodeGrantOf(cluster: string, nodeName: string, vars: Pick<GrantV
   };
 }
 
+export const NODE_RBAC_ROLE_SUFFIX = "-node";
+
+export function nodeRbacRecord(
+  record: Record<string, unknown> | undefined,
+  vars: GrantVars,
+  cluster: string,
+  nodeName: string,
+): Record<string, unknown> | undefined {
+  if (!record) return record;
+  const roles = (record.roles ?? {}) as Record<string, unknown>;
+  const roleName = `${vars.role}${NODE_RBAC_ROLE_SUFFIX}`;
+  return {
+    ...record,
+    roles: {
+      ...roles,
+      [roleName]: {
+        role_name: roleName,
+        definition: { iss: vars.issuerUri, aud: nodeAudience(cluster, nodeName), sub: vars.subject, policies: [] },
+      },
+    },
+  };
+}
+
 export function grantingCapability(
   inner: GuestCapability,
   beforeGrant: (vars: GrantVars) => Promise<void>,
+  nodeRole?: { cluster: string; nodeName: string },
 ): GuestCapability {
   return {
     id: inner.id,
     userDataModule: inner.userDataModule,
     prepare: inner.prepare ? (ctx) => inner.prepare!(ctx) : undefined,
-    rbacRecord: inner.rbacRecord ? (vars) => inner.rbacRecord!(vars) : undefined,
+    rbacRecord: inner.rbacRecord
+      ? (vars) => nodeRole ? nodeRbacRecord(inner.rbacRecord!(vars), vars, nodeRole.cluster, nodeRole.nodeName) : inner.rbacRecord!(vars)
+      : undefined,
     async onContract(vars) {
       await beforeGrant(vars);
       await inner.onContract?.(vars);
@@ -87,7 +113,7 @@ export function createNodeJoinProfile(): ContractProfile {
             const doc = nodeClaimDocument(nodeJoin.cluster, nodeName, await sha256Hex(vars.issuerUri));
             input.secrets.push({ path: NODE_CLAIM_DOC_PATH, value: `${JSON.stringify(doc)}\n` });
             input.logger.info("node_contract_grant_written", { issuer: grant.issuer, audience: grant.audience, jwtMount: doc.jwtMount });
-          }),
+          }, { cluster: nodeJoin.cluster, nodeName }),
         explainEnd,
       });
     },
