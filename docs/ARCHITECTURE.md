@@ -3201,7 +3201,7 @@ internal/sweepkcp/     the kcp side of that sweep: build the account worklist fr
 internal/foldmain/     the Invocation a verb body runs with (args, env, stdio, the resolved bin/<sha>/ path, the verb words) and the re-exec argv it builds
 internal/${binary}main/ the body of a host verb (gatewaymain, providermain, vaultmain, checkhostmain, ccmmain, tenantcredentialmain) behind Main(ctx, Invocation) int; socialweb-computer dispatches its verb to it with the raw args, and the clusterprovider re-execs the CCM as `<bin/sha path> internal cloud-controller-manager` with the CCM's three-variable env rebuilt explicitly
 cmd/socialweb-computer/ the multi-call CLI; every host verb lives here
-cmd/${binary}/         standalone binaries only: socialweb-vmexec (VM-unit asset), socialweb-credential (download asset), socialweb-tsbundle and socialweb-apigen (build tools), openbao-plugin-auth-sshsig (its own module); socialweb-nodeboot, socialweb-nodeimage and socialweb-nodeinit no longer exist
+cmd/${binary}/         standalone binaries only: socialweb-vmexec (VM-unit asset), socialweb-credential (download asset), socialweb-tsbundle and socialweb-apigen (build tools), openbao-plugin-auth-sshsig and openbao-plugin-auth-atproto (each its own module); socialweb-nodeboot, socialweb-nodeimage and socialweb-nodeinit no longer exist
 deploy/                manifests and manifest sets, the audit policy, check.sh, ts-entries.yaml
 rust/                  a cargo workspace; rust/socialweb-meshd is the per-node pod mesh daemon that runs INSIDE a market guest (section 9), rust/build.sh its static musl build
 ```
@@ -7328,6 +7328,53 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `/v1/sshsig/`: 404. The ComputeVM deleted at 22:33:47, gone at 22:33:55 with its role (404). Not read
   in this run: the gateway child's kcp never became ready under that load (kcp-start-informers), so its
   vaults were not listed live; no code path but the bidder's vault.yaml declares a plugin.
+
+- **An OpenBao auth plugin `atproto`: OpenBao does the atproto OAuth sign-in as a confidential client
+  (plan 0014 M1-ATPROTO-AUTH-PLUGIN, 2026-10-15).** `cmd/openbao-plugin-auth-atproto` is its own Go
+  module on the OpenBao SDK, an asset like `openbao-plugin-auth-sshsig` (`openbaoctl.PluginAssets`,
+  the `openbao-plugin-auth-atproto` entry of versions.json, built per platform by stage-assets.sh with
+  the same flags, binary sha256 = the catalog sha256). One auth plugin, mounted by an OpenBaoServer
+  `spec.plugins` entry. Paths: `config` (client_id, redirect_uris, scope, client_name,
+  plc_directory_url, call_timeout 5 s, login_timeout 15 s, refresh_leeway 60 s, trusted_hosts,
+  trusted_ca_pem; the ES256 client key is made at the first write and no path returns it),
+  `config/rotate-client-key` (the old public key stays in the metadata 24 h), `client-metadata`
+  (unauthenticated read: the metadata document with the public keys inline as jwks), `role/<name>`
+  (bound_dids, bound_handles, the tokenutil token fields), `login/start` and `login` (unauthenticated).
+  `login/start` resolves the handle (DNS TXT `_atproto` and the https well-known file, which must
+  agree) or the DID (did:plc through plc_directory_url, did:web), reads the PDS from the DID document,
+  its authorization server from the protected resource metadata, refuses a server that lacks PAR,
+  PKCE S256, DPoP ES256, private_key_jwt ES256 or the atproto scope, pushes the authorization request
+  (PKCE S256, a client assertion, a DPoP proof from a key made for this sign-in, the server nonce on a
+  `use_dpop_nonce` answer) and keeps the pending state under a random `state`: single use, gone after
+  10 minutes, at most 256 outstanding. `login` takes the state at once (a failed attempt burns it),
+  checks `iss` against the issuer the sign-in started with (required when the server announces the iss
+  parameter), exchanges the code, checks the token response (DPoP type, `sub` equal to the DID the
+  sign-in started for, scope includes atproto), resolves `sub` again and checks that its PDS names the
+  same authorization server, checks the role, stores the session in the mount (the DPoP key, the access
+  and refresh tokens never leave it) and returns a bao token whose entity alias name is the DID
+  (metadata did, handle, pds). A failure after the code exchange revokes the refresh token when the
+  server publishes a revocation endpoint. Network rules for every fetch the plugin makes for a user-
+  controlled name: https only; the resolved addresses must all be public (checked on the connected
+  address, so a rebinding answer cannot slip through); no redirect is followed; one call has 5 s, a
+  whole login 15 s; a response over 1 MiB is refused. `trusted_hosts` (host, host:port, or either with
+  `=address` to say where to connect) and `trusted_ca_pem` lift the https and public-address rules for
+  those hosts only; the openbao controller will copy a market network's PLC directory and PDS names
+  there (plan 0014 M2-GATEWAY-SCOPE), and nothing else is exempt. hono-pds's test OAuth server now puts
+  `sub` in the token response and `iss` in the authorize redirect, and `/oauth/authorize` accepts
+  `identifier` and `password` for a scripted sign-in. Readings (market network atp1,
+  `dev up --profile market-network --bidders 1`, the plugin declared on the bidder's OpenBaoServer for
+  the run, UTC 17:49-18:05): `status.plugins` shows `atproto` with sha256 = runningSha256 =
+  2674a685...499cc0, the linux/amd64 pin; `GET auth/atproto/client-metadata` with no token returns
+  the client document with one jwk (kty, crv, x, y, kid, use, alg: no `d`); a login for the DID of an
+  account on alice's PDS DenoPod, after the PAR, a scripted authorize and the callback, returns a token
+  with policies `atproto-admin` and `default`, ttl 600 s, metadata did and pds, and the identity entity
+  holds one alias, name = the DID, mount_type `atproto`; the same state again: 403 "unknown or already
+  used state"; an unknown state: the same 403; iss `https://evil.example`: 403 naming both issuers;
+  a state 627 s old: 403 "the state expired"; `did:web:127.0.0.1%3A1`, `did:web:169.254.169.254` and `did:web:localhost%3A8080`:
+  400 "network rule: ... not a public address"; a role that does not admit the DID: 403; both handle
+  and did, an unregistered redirect_uri: 400. Not read in this run: a handle sign-in (the network's
+  handles resolve in no DNS), a gateway root vault (plan 0014 M2-GATEWAY-SCOPE declares the plugin
+  there).
 
 - **Tenant cluster ports are kernel-picked and held by the front; no lease range, no probe (task
   port0-cp, 2026-10-12).** Defect: each gateway leased tenant ports from its own lease file over

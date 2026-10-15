@@ -53,12 +53,12 @@
     "linux/amd64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "openbao-plugin-auth-sshsig", "pasta", "postgres", "socialweb-computer-k8s-downloads", "socialweb-vmexec", "swc-userns-stage"]
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "openbao-plugin-auth-atproto", "openbao-plugin-auth-sshsig", "pasta", "postgres", "socialweb-computer-k8s-downloads", "socialweb-vmexec", "swc-userns-stage"]
     },
     "linux/arm64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "openbao-plugin-auth-sshsig", "pasta", "postgres", "socialweb-computer-k8s-downloads", "socialweb-vmexec"]
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "openbao-plugin-auth-atproto", "openbao-plugin-auth-sshsig", "pasta", "postgres", "socialweb-computer-k8s-downloads", "socialweb-vmexec"]
     },
     "darwin/arm64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
     "darwin/amd64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
@@ -296,6 +296,20 @@
       "platforms": {
         "linux/amd64": {"treeSha256": "0f7b4bad18b29539bcdcee8fd76180441d0c66bea1bdb2f0d5c595d4f99dff25", "rawBytes": 2326654, "zstdBytes": 880276},
         "linux/arm64": {"treeSha256": "ca840d4843577978a2adae5ff964bbecef1f40b8f0d87d6b64c2d60a11bc5621", "rawBytes": 2293886, "zstdBytes": 788101}
+      }
+    },
+    "openbao-plugin-auth-atproto": {
+      "version": "this repository, on github.com/openbao/openbao/sdk/v2 v2.6.2 (the SDK release of the pinned bao v2.6.2)",
+      "source": "cmd/openbao-plugin-auth-atproto, its own Go module: CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' per platform, with the go.mod toolchain",
+      "verify": "rebuilt from this commit; the binary must equal the fetch sha256 pin (the sha256 the OpenBao plugin catalog registers) and the unpacked tree the treeSha256 pin, so a change to cmd/openbao-plugin-auth-atproto re-pins it; moves together with the bao asset",
+      "executables": {"openbao-plugin-auth-atproto": "openbao-plugin-auth-atproto"},
+      "fetch": {
+        "linux/amd64": {"kind": "go", "module": "cmd/openbao-plugin-auth-atproto", "package": ".", "sha256": "2674a685e9e63e92a4034f37e99c8a96e76971fba27cd3d9a997e27c87499cc0", "members": {"openbao-plugin-auth-atproto": "openbao-plugin-auth-atproto"}},
+        "linux/arm64": {"kind": "go", "module": "cmd/openbao-plugin-auth-atproto", "package": ".", "sha256": "67ae11ed06871e02e1f0fa32e74f6e94315f5c8fb8f78818a4c44c74616f6f43", "members": {"openbao-plugin-auth-atproto": "openbao-plugin-auth-atproto"}}
+      },
+      "platforms": {
+        "linux/amd64": {"treeSha256": "36fec6f0f5a26cd5a5afbfdda2c7914f121e85a65da27dd6f74d6cd7e2a515dc", "rawBytes": 16400510, "zstdBytes": 5148702},
+        "linux/arm64": {"treeSha256": "88ef21126b392f13583f0bf2a0439ee7f3f4f6b08d5f342bcfad7e851fb41977", "rawBytes": 15335550, "zstdBytes": 4582485}
       }
     },
     "openbao-plugin-auth-sshsig": {

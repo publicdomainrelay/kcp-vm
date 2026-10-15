@@ -645,21 +645,32 @@ export function createRepoFactory(opts: RepoFactoryOptions): RepoFactory {
 
     // POST /oauth/authorize — authorization code flow (DPoP-bound)
     app.post("/oauth/authorize", async (c) => {
-      const authHeader = c.req.header("authorization") ?? "";
-      if (!authHeader.startsWith(`${DPoP_AUTH_SCHEME} `)) {
-        return c.json({ error: "invalid_request", error_description: "DPoP authorization required" }, 401);
-      }
-      const token = authHeader.slice(DPoP_AUTH_SCHEME.length + 1).trim();
-      const tokenValid = await tokenStore.validate(token);
-      if (!tokenValid) {
-        return c.json({ error: "invalid_token" }, 401);
-      }
-
       let body: URLSearchParams;
       try {
         body = new URLSearchParams(await c.req.text());
       } catch {
         return c.json({ error: "invalid_request" }, 400);
+      }
+
+      const identifier = body.get("identifier");
+      const password = body.get("password");
+      let tokenValid: { sub: string; handle?: string } | null;
+      if (identifier && password) {
+        if (!(await accountStore.validatePassword(identifier, password))) {
+          return c.json({ error: "invalid_grant", error_description: "invalid identifier or password" }, 401);
+        }
+        const account = accountStore.getAccount(identifier)!;
+        tokenValid = { sub: account.did, handle: account.handle };
+      } else {
+        const authHeader = c.req.header("authorization") ?? "";
+        if (!authHeader.startsWith(`${DPoP_AUTH_SCHEME} `)) {
+          return c.json({ error: "invalid_request", error_description: "DPoP authorization required" }, 401);
+        }
+        const token = authHeader.slice(DPoP_AUTH_SCHEME.length + 1).trim();
+        tokenValid = await tokenStore.validate(token);
+        if (!tokenValid) {
+          return c.json({ error: "invalid_token" }, 401);
+        }
       }
 
       // PAR flow: resolve request_uri
@@ -708,6 +719,7 @@ export function createRepoFactory(opts: RepoFactoryOptions): RepoFactory {
 
       const redirectParams = new URLSearchParams({ code });
       if (state) redirectParams.set("state", state);
+      redirectParams.set("iss", resolveIssuer(c));
       return c.json({ redirect_uri: `${redirectUri}?${redirectParams.toString()}`, code });
     });
 
@@ -800,6 +812,7 @@ export function createRepoFactory(opts: RepoFactoryOptions): RepoFactory {
           refresh_token: result.refreshToken,
           expires_in: result.expiresIn,
           scope: validated.scope,
+          sub: validated.userDid,
         }, 200, headers);
       }
 

@@ -100,7 +100,7 @@ items:
     risks:
       - "The plugin fetches URLs that a user controls (handle, DID document, PDS, authorization server): the network rules and the short timeouts are the guard against SSRF and slow-loris; every refusal names the rule."
       - "bao runs as a HostProcess; the plugin process needs outbound https. The HostProcess network rules of the vault must allow it, and only for this plugin's server."
-    status: todo
+    status: done
     evidence:
   - id: M1-SESSION-CUSTODY
     milestone: M1

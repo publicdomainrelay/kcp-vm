@@ -23,7 +23,7 @@ const (
 )
 
 var (
-	PluginAssets = []string{"openbao-plugin-auth-sshsig"}
+	PluginAssets = []string{"openbao-plugin-auth-atproto", "openbao-plugin-auth-sshsig"}
 
 	pluginNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 )
