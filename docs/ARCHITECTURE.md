@@ -3739,6 +3739,15 @@ because it bounds a mechanism the rest of this document leans on.
   templates set `continue`. `bootstrap.ProcSpecs` for the quick and prodlike tables lists a nonzero
   `MemoryMax` on every unit except the core. Open: a breach inside an installed bidder or gateway core
   (the templates are rendered by `install`, which no agent runs here) is read at the prod deploy.
+- **The object-count quota defaults are provisional until the soak (plan 0013 M2-QUOTAS, closes with
+  M4-SOAK-READING, on 2026-10-15).** `appctl.QuotaDefaults` sizes the quotas from the plan's numbers, not
+  from a reading: Bids 20000 (the soak sends 50000 RFPs in about 24 h and a finished Bid lives 24 h, so a
+  bidder that bids on every RFP would reach 20000 in about 10 h at that rate and then declines), ComputeVMs
+  64 (four times the 16 VM slots of one account, so finished VMs awaiting release never fill it), ComputeContracts
+  1024 on a gateway and 64 on a requester, NodeClaims 64 per home workspace, DenoRuns 200 and
+  PolicyWorkflowRuns 500 per application workspace. The root's `spec.quota` overrides each (`-1` removes the
+  limit). M4-SOAK-READING retunes them from the plateau it reads; until then a quota hit is a finding, not
+  a fault.
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,
@@ -7949,6 +7958,146 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   with the union `$type`), sign-out revoked. The web app's DenoPod arguments and run logs hold neither the
   cookie token nor `refresh_token`/`dpopPrivate`; the process memory was not scanned. Nodes join the tenant cluster through the bao-issued guest identity (see the node
   join profile above).
+
+- **Every child object hangs from an owner that ends, and each root reports what does not (plan 0013
+  M2-OWNERSHIP-TREE, 2026-10-15).** kcp's garbage collector cascades `ownerReferences` inside one
+  workspace and never across workspaces, and it cascades bound resources (read: a Bid owned by a Bid went
+  with its owner within 2 s). So the rule has two forms. Inside one workspace the child carries an
+  `ownerReferences` entry: `appctl.adoptChildren` (every 2 s pass, per root object) hangs an
+  `OpenBaoServer`, a `MarketIdentity`, a non-bootstrap `HostProcess` and the `app` `Workspace` of the root
+  from it (they carry the `apps.socialweb.computer/root` label the profile apply stamps), a `Bid` from a
+  `MarketBidder`, a `ComputeContract` of the CLI from a `MarketRequester` (one with the
+  `socialweb.computer/nodeclaim` annotation is a gateway contract and is skipped), and the
+  `socialweb-bounded` ResourceQuota of the root workspace from the root; the computevm controller hangs a
+  `ComputeVM` from the Bid whose `status.computeVM` names it (`linkBids`, every 10 s while one is loose; the
+  VM's own finalizer still stops its unit before the object goes); `nodemarket.clusterOwner` puts the
+  `Cluster` on a `NodeClaim` at creation and `kcpclient.WriteNodeClaimTo` adds it to a claim that has none.
+  Across workspaces the owner link is a label or annotation that a named controller acts on: a DenoPod and
+  the other profile components in `root:app` carry the root label and the `apps.socialweb.computer/components`
+  finalizer of the root removes them (`deletePods`, `deleteVaults`, `deleteComputeVMs`); a gateway's
+  cluster members and Postgres carry `socialweb.computer/cluster` and the cluster provider removes them on
+  teardown; a gateway contract carries `socialweb.computer/nodeclaim` and the claim mapper deletes it with
+  the claim. A `PolicyWorkflowRun` has no creator in this tree (the provider only reconciles one), so it has
+  no owner to hang from; one that appears with neither owner nor TTL is counted. The bootstrap mirrors
+  (`bootstrap-*` HostProcess objects) belong to the instance, not to a root, and are not counted. Every
+  root's `status.gc` lists, by kind with up to 5 examples, the objects in the root workspace and in each
+  ready child workspace that have no `ownerReferences`, no TTL annotation and no owner label or annotation
+  that resolves (the label counts only while its root exists), and the objects terminating for more than 10
+  minutes by kind and finalizer with the controller that removes it (`appctl.FinalizerControllers`, the
+  inventory: the root finalizer is appctl, `computevm.socialweb.computer/release` the computevm controller,
+  `socialweb.computer/postgres` postgresctl, `socialweb.computer/cluster-member`,
+  `cluster.socialweb.computer/teardown` and `node.socialweb.computer/teardown` the cluster provider,
+  `nodeclaim.socialweb.computer/release` the node-market claim mapper of the web app,
+  `atprotoidentity.socialweb.computer/revocation` the web app's revocation sweep, and the five
+  `*.deno.computer` finalizers the deno provider). The sample runs every 30 s; a sample whose content did
+  not change keeps its `sampledAt` for 5 minutes so the root is not rewritten for nothing. Readings (hat-8,
+  test-0001, market network b13a, `dev up --profile market-network --bidders 1`, UTC 20:38-20:40): the
+  MarketBidder `app` was deleted with its children in place (old uids: root 4dc89a0c, OpenBaoServer
+  53cd9026, MarketIdentity 1e1b6102, Workspace app 6c65a9ee, HostProcess bao-bidder f60fc3ba, DenoPods
+  bidder 323183ae, guest-kcp d3ecd239 and policy-engine 7c52cc7e); the network applied a new root 9 s later
+  and, when the bidder was Ready again, every one of those objects had a new uid (root a8120f00,
+  OpenBaoServer f9cd1d2d, MarketIdentity 05623793, Workspace app ed12e089, HostProcess 2f9719ab, DenoPods
+  11180802, 8c9ba326, a84f48e6), the old Workspace being the last to go (NotFound 20 s after the delete).
+  `status.gc` of that bidder read `objects 20, orphanTotal 0, stuckTotal 0` with 10 Bids, four finished
+  ones included, and of the network `objects 13, orphanTotal 0`. The gc scan also covers the home workspaces under each `account`
+  workspace (up to 200 workspaces), where NodeClaims and Clusters live. Cluster delete (market network b13g,
+  `dev up --profile market-network --bidders 0 --with-gateway`, the bootstrap Cluster `tenant` Ready with its
+  members, its Postgres and its OpenBao): a NodeClaim `probe-node1` made by hand with an
+  `ownerReferences` entry naming the Cluster's uid (the door gave it its finalizer and marked it Failed
+  for lack of an apiserver ticket) and `kubectl delete cluster tenant`: 1 s after the delete 10 cluster
+  HostProcess objects, the Postgres, the NodeClaim and the Cluster were all still present, at 7 s six
+  members were left, at 12 s none, and at 17 s the Cluster, the NodeClaim and the Postgres were gone, with
+  no ComputeContract left in `root:app`; the gateway's `status.gc` read `objects 21, orphanTotal 0,
+  stuckTotal 0` afterwards. A real claim: in a gateway network with two bidders (the integration test
+  TestTenantClusterScalesFromZeroOnMarketVMsAndBack, run by hand) the two NodeClaims the scale-out wrote
+  read `ownerReferences[0] Cluster tenant uid 1d7216f7-ae71-461d-93db-ff89615a4f59`, the uid of the Cluster
+  in the same home workspace. That test fails at the claims' join (`a VM was provisioned but it never
+  fetched its join secrets`; the guests' `identity/oidc/token/guest-...` reads answer 403) on this tree and
+  on commit bc6ed7d5, before these changes, so the Cluster-delete reading above is the one that stands for
+  claims with a VM.
+- **One TTL controller in the core deletes every finished object (plan 0013 M2-TTL-CONTROLLER,
+  2026-10-15).** `internal/ttlctl` runs in every core (`devcore.Run`) beside appctl. It watches `Bid`,
+  `ComputeContract`, `DenoRun`, `DenoJob` and `PolicyWorkflowRun` in the root workspace of the core's kcp and
+  in every child workspace that is Ready except `socialweb-provider` and `deno-provider` (a watch of the
+  Workspace objects starts and stops the per-workspace watches; a resource that is not bound in a workspace is
+  retried each minute). An object whose `socialweb.computer/ttl-after-finished` (Go duration or days, `8d`)
+  has passed since the `lastTransitionTime` of its `Complete` or `Failed` condition with status True is
+  deleted with a UID precondition; the watch schedules one timer per object, no poll, and a timer firing
+  re-reads the object before it deletes. `status.ttl` of the root reports the tracked count and the
+  deletions by kind. Defaults come from the creators: a Bid gets `24h` from the bidder (`--bid-ttl-sec`
+  overrides, the bidder's record retention uses the same number) and the computevm controller marks it
+  finished (Lost and Expired: `Complete` at `status.timings.finishedAt`, Failed: `Failed`, Won: `Complete`
+  with reason `ComputeVMGone` once its ComputeVM no longer exists, or `NeverBound` after an hour with none,
+  checked once a minute); this replaces the controller's old poll-and-delete of Bids. A ComputeContract gets
+  `8d` from `run request` and from the node-market claim mapper (one day more than the 7 d record retention
+  of M3-PDS-RECORD-RETENTION, so the requester's sweep always finds the contract) and its status carries
+  `Complete` or `Failed` from the requester controller once the phase is Released or Failed. A DenoRun and a
+  DenoJob get `1h` from the deno provider's creators (`newRunForJob`, `newJobForTrigger`); their own
+  `ttlSecondsAfterFinished` stays and wins when shorter. Readings (market network b13a, a bidder kcp,
+  TTL `20s` on objects made finished by hand): three Bids (phase Lost, `finishedAt` now), one DenoRun
+  (`console.log(1)`) and one DenoJob were all gone 20 s after creation, the DenoJob's run with its owner;
+  the core logged one `an object finished more than its TTL ago is deleted` line each. A real contract: a
+  Bid with `--bid-ttl-sec 120` got `Complete ComputeVMGone` at 20:31:07, 25 s after its VM was released,
+  and was deleted at 20:33:07. A `run request` ComputeContract read, while Held, `conditions: []`,
+  owner MarketRequester `app`, annotation `8d`, and right after the release `conditions: [Complete,
+  reason Released, lastTransitionTime 20:48:48]`. Under load (the bidder kcp, TTL `10s`): 300 Bids made in
+  three batches of 100 and marked finished by hand were all gone 10 s after the last batch (`load bids`
+  300, 200, 0 at 0, 5 and 10 s), a PolicyWorkflowRun marked Failed with TTL `20s` was gone at 15 s, and a
+  ComputeContract marked Complete with TTL `15s` in a requester kcp was gone;
+  no load Bid was left.
+- **Object counts are capped per workspace, and a cap hit declines or waits with a reason (plan 0013
+  M2-QUOTAS, 2026-10-15; the defaults stay provisional, section 14).** kcp enforces `ResourceQuota` for
+  resources bound through an APIBinding, cluster-scoped ones included: a quota `count/bids.socialweb.computer:
+  1` refused the second Bid with `exceeded quota`, and `count/denoruns.deno.computer: 1` refused the second
+  DenoRun. The quota's `used` is not trustworthy, though: it is raised at admission and lowered only by a
+  periodic recount, and the recount read lower than the real count (10 with 7 Bids present for 4 minutes,
+  then 0 and 1 with 7 and 8 present). So each cap has two layers. The exact one is in the creator: the
+  bidder takes `--bid-quota` and `--computevm-quota` from `spec.quota` (appctl passes them; `-1` leaves
+  one out), counts its Bids and ComputeVMs with a list of `limit=1` and `remainingItemCount`, and its RFP
+  gate answers 503 `{error: "capacity"}` and records `declinedByReason capacity` when either is at its
+  limit; the Bid claim does the same count again and throws `BidCapacityError` for a push that raced it.
+  The backstop is the kcp ResourceQuota `socialweb-bounded` in namespace `default` of the workspace
+  (`appctl.ensureQuotas`, field manager appctl, owner reference to the root where the workspace is the
+  root's): ComputeContracts (requester root, gateway `root:app`), DenoRuns and PolicyWorkflowRuns
+  (`root:app`), and NodeClaims in each home workspace (`kcpclient.ensureNodeClaimQuota`, written when the
+  home is made; `SOCIALWEB_GATEWAY_NODECLAIM_QUOTA` from `spec.quota.nodeClaims`). A creator that the
+  backstop refuses reports it: the claim mapper leaves the NodeClaim `Pending` with an `AtCapacity` message
+  and asks again, `kcpclient` returns an `AtCapacity` error for a NodeClaim, the deno provider logs the
+  refused DenoRun and retries. The requester's side: when every bidder that answered the RFP answered
+  `capacity`, the contract stays `Pending` with the `AtCapacity` condition and message `every bidder (N)
+  declined the RFP with reason capacity; the contract asks again in 60s` and posts a new RFP after 60 s; the
+  controller's own admission wait (64 contracts, 16 per account) sets the same condition. `status.quotas`
+  of every root lists hard and the real count (a list count, not the ResourceQuota's `used`) per resource
+  and workspace. Readings (market network b13a, bidder quota 10, ten Bids made by hand, kcp RSS from
+  `ps`): a `run request` was declined (`status.market.declinedByReason [{capacity 1}]`), the Bid count stayed
+  10 and `status.quotas` read `bids 10/10`; kcp RSS read 659520 KiB before and 606692 KiB after. The
+  requester's contract went `Pending: every bidder (1) declined the RFP with reason capacity; the contract
+  asks again in 60s` 30 s after the RFP and posted its second RFP 60 s later; in the earlier run, with a
+  stale ResourceQuota and 9 Bids after a TTL deletion, that retry was declined again (the third `capacity`
+  decline) because the stale `used` still read 10, which is why the exact count moved into the bidder.
+- **A bidder and a requester remove their own market records when no object needs them (plan 0013
+  M3-PDS-RECORD-RETENTION, 2026-10-15).** The bidder (`bid-retention.ts`, started by the bid loop after its
+  restore) lists its own `market.bid` records page by page 30 s after it starts and then every 10 minutes
+  (up to 50 pages and 200 removals a pass). A record is removed, with the `bids.free` payload and the bid
+  config it points at, when the Bid object of its RFP is settled (`Complete` or `Failed` condition) and its
+  TTL has passed, or when no Bid names the RFP and the record is older than the TTL; a record whose Bid is
+  unsettled is kept, and only records of the bidder's own DID are touched. The requester
+  (`requester-controller-kcp/retention.ts`, a timer of `--record-retention-scan-ms`, default 10 minutes)
+  removes its own rfp, payload and accept records, those whose DID is the requester's, `--record-retention-sec`
+  (default 604800, 7 d) after a contract is Released or Failed, then annotates the contract
+  `socialweb.computer/records-removed`; it never touches the receipt or the vm.hostKeys and vm.delete
+  records, so a later receipt check or vm.delete answer is served from the bidder's receipt and the
+  ComputeVM tombstone. No application deletes a record of another DID. The deletes had never worked: the
+  password, OAuth and custody agents sent `{action, collection, rkey}` to `com.atproto.repo.applyWrites`,
+  which wants `$type: com.atproto.repo.applyWrites#delete`, and hono-pds answered 200 with an empty
+  write list (a real PDS refuses it); all three now send `$type` (the same fix makes `update` writes land).
+  Readings (market network b13a, bidder `--bid-ttl-sec 120`, five `run request` contracts released): after
+  the first sweep with the fix the bidder's repo held `market.bid 0`, `bids.free 0` (before: 5 and 5) and
+  `market.receipt 5`; the sweep logged `bid_records_removed scanned 5 deleted 5` (the first three sweeps,
+  before the fix, logged `deleted 3`, `4` and `5` and left all five records). A requester run with
+  `--record-retention-sec 1 --record-retention-scan-ms 500` logged `requester_records_removed` for its
+  contract while the invocation still stood (the CLI saw the contract Released at 20:50:12 and the line is stamped 20:50:12.787). Not read: a 1000-contract run, which the
+  soak (M4-SOAK-READING) reads.
 
 ## 16. Vocabulary
 

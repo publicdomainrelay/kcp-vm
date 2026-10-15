@@ -31,6 +31,10 @@ const (
 	NodeClaimNote  = "socialweb.computer/nodeclaim"
 	providerWS     = "socialweb-provider"
 	denoProviderWS = "deno-provider"
+
+	accountWorkspaceType = "account"
+
+	GCWorkspaceCap = 200
 )
 
 func gvr(group, resource string) schema.GroupVersionResource {
@@ -106,6 +110,21 @@ func (ctl *Controller) gcWorkspaces(ctx context.Context) []string {
 			continue
 		}
 		out = append(out, root+":"+name)
+		if typeName, _, _ := unstructured.NestedString(w.Object, "spec", "type", "name"); typeName == accountWorkspaceType && len(out) < GCWorkspaceCap {
+			sub, err := ctl.client(root+":"+name, WorkspaceGVR)
+			if err != nil {
+				continue
+			}
+			homes, err := sub.List(ctx, metav1.ListOptions{})
+			if err != nil {
+				continue
+			}
+			for _, h := range homes.Items {
+				if h.GetDeletionTimestamp() == nil && len(out) < GCWorkspaceCap {
+					out = append(out, root+":"+name+":"+h.GetName())
+				}
+			}
+		}
 	}
 	return out
 }

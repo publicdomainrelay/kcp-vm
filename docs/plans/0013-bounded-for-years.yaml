@@ -85,7 +85,7 @@ items:
     files: ["internal/appctl", "internal/computevm", "internal/clusterprovider", "ts/atproto-market (creators of child objects)", "api/types_application.go"]
     done_when: "deleting a MarketBidder, a Cluster or a NodeClaim leaves no child object; the root status of a busy market network shows 0 orphans and 0 stuck terminations."
     risks: ["A cascade that deletes a ComputeVM whose guest still runs: a ComputeVM's own finalizer stops its unit first, as today."]
-    status: todo
+    status: done
     evidence:
   - id: M2-TTL-CONTROLLER
     milestone: M2
@@ -100,7 +100,7 @@ items:
     files: ["internal/ttlctl (new)", "internal/denokcp"]
     done_when: "on a market network with short TTLs set, finished objects of every kind disappear at their TTL and the counts stay flat under load."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M2-QUOTAS
     milestone: M2
@@ -116,7 +116,7 @@ items:
     files: ["deploy/apps/*/ (quota objects)", "internal/appctl", "ts/atproto-market/lib/market-bidder"]
     done_when: "with a quota of 10 Bids, the 11th RFP is declined with reason capacity and kcp memory does not move."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M3-STORE-COMPACTION
     milestone: M3
@@ -195,7 +195,7 @@ items:
     files: ["ts/atproto-market/lib/market-bidder", "ts/atproto-market/lib/requester-xrpc"]
     done_when: "on a market network after 1000 contracts and their retention, each PDS repository holds only live and retained records."
     risks: ["A requester that checks a receipt after the bidder removed its bid record: the receipt and the ComputeVM tombstone answer, not the bid record."]
-    status: todo
+    status: doing
     evidence:
   - id: M4-SOAK-READING
     milestone: M4
