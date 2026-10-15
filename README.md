@@ -334,14 +334,12 @@ GW=https://k8s.socialweb.computer AUD=did:web:k8s.socialweb.computer N=com.publi
 call() { local m=$1 nsid=$N.$2; shift 2; goat xrpc $m $GW $nsid "$@" "Authorization:Bearer $(goat account service-auth --aud $AUD --lxm $nsid)"; }
 call procedure createCluster name=demo                       # create if missing and start the control plane (idempotent)
 call query listClusters | jq '.clusters[] | {name, phase, running}'
-call procedure getKubeconfig name=demo | jq -r .kubeconfig > demo.kubeconfig; chmod 600 demo.kubeconfig
-# the kubeconfig exec plugin is socialweb-credential; the web app lists its builds at /api/config
-curl -sfo socialweb-credential "$GW$(curl -s $GW/api/config | jq -r '.credentialHelpers[] | select(.os=="linux" and .arch=="amd64") | .path')" && chmod +x socialweb-credential
-PATH=$PWD:$PATH KUBECONFIG=demo.kubeconfig kubectl get ns
+call procedure getKubeconfig name=demo ttlSeconds=28800 | jq -r .kubeconfig > demo.kubeconfig; chmod 600 demo.kubeconfig
+KUBECONFIG=demo.kubeconfig kubectl get ns
 call procedure controlPlaneDown name=demo; call procedure deleteCluster name=demo
 ```
 
-The kubeconfig carries a device key: keep it `0600` and never commit it. `getKubeconfig` alone creates a cluster but leaves it stopped (`running=false`); call `controlPlaneUp` or `createCluster` to start it. Cluster phases are `Unavailable`, `Initializing`, `Ready`, and `Draining`.
+The kubeconfig holds a client key and an x509 client certificate from the cluster's own OpenBao PKI (CN your DID, O `socialweb.computer:cluster-owners`, default 8 h, at most 24 h via `ttlSeconds`). Plain `kubectl`, no helper. Keep it `0600`, never commit it. `getKubeconfig` on a stopped cluster answers `ClusterNotRunning`: call `createCluster` or `controlPlaneUp` first. `revokeIdentity` and `deleteCluster` end every certificate at once. For a certificate that never expires, call `getKubeconfig name=demo noExpiry:=true`: it lives until you revoke it, delete the cluster, or the cluster CA expires. Cluster phases are `Unavailable`, `Initializing`, `Ready`, and `Draining`.
 
 ### Watch cluster state with subscribeClusters
 

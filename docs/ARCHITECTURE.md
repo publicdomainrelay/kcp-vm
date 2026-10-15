@@ -1114,8 +1114,12 @@ a request-header identity is forgeable.
 
 ## 7. Identity and auth
 
-- **Bearer only through the mount.** The credential crosses the kcp mount as a bearer header and
-  nothing else. No JWKS, no `--authentication-config`.
+- **Bearer through the mount, certificates through the client certificate front.** A bearer crosses the
+  kcp mount as a header and nothing else. A client certificate never reaches kcp: Caddy (prod) or the
+  client certificate front itself (market network) ends TLS, the front (`internal/clientcertfront`)
+  checks the certificate against the cluster's client CA, the PKI CRL and the deny record, and forwards
+  to k3s by request-header authentication (client-auth-proxy, X-Remote-User = the CN, X-Remote-Group =
+  `socialweb.computer:cluster-owners`). No JWKS, no `--authentication-config`.
 - **ServiceAccount tokens via TokenRequest** for the machine class.
 - **The DID to ServiceAccount mapping** is the tenancy boundary, and it has exactly ONE spelling: a
   DID's ServiceAccount is `did-` plus the lowercased unpadded base32 of the DID
@@ -1198,7 +1202,9 @@ gateway reads back carries a token only - `WriteMintKubeconfig` refuses a creden
 token. The user's path renders an exec credential, and `kubeconfig.AssertClean` refuses any document
 carrying `client-certificate-data` or `client-key-data`. That is a test, not a convention: the minted
 credential is run through a faithful kubeconfig writer and `AssertClean` must refuse it, while the
-document `kubeconfig.Build` hands a device must pass.
+document `kubeconfig.Build` hands a device must pass. The user path of plan 0015 is the exception it
+names: the kubeconfig of getKubeconfig carries a client key made by the cluster's OpenBao PKI (role
+`kubeconfig-user`, at most 24 h). The provider's own credentials still never reach a user.
 
 **A workspace ServiceAccount does not leave its workspace.** Its token carries
 `authentication.kcp.io/scopes: [cluster:<origin>]` and kcp refuses it in every other logical cluster
@@ -3642,6 +3648,15 @@ because it bounds a mechanism the rest of this document leans on.
   `deploy/control-plane-container/validate.sh` does. Two runs inside ONE container see each other,
   because they share one `/var/tmp`. Two containers must share that path or be serialized, and nothing
   outside the test suite turns on which.
+- **Plan 0015, kubectl client certificates: open until the prod reading of M3-PROD-READING.** Caddy and
+  kcp's mount proxy both end TLS, so a client certificate never reaches k3s, and k3s checks no CRL; the
+  gateway therefore runs a client certificate front (`internal/clientcertfront`) that requires a TLS
+  client certificate, verifies it against the cluster's client CA, the PKI CRL and the deny record, and
+  reverse-proxies to the cluster's apiserver front with the proxy client pair and X-Remote-User and
+  X-Remote-Group headers that it alone writes. Certificates come from the role `kubeconfig-user` of the
+  cluster's own OpenBao PKI, issued with a gateway-only vault client that may issue and revoke nothing
+  else; a certificate with the organizational unit `socialweb.computer:no-expiry` may outlive 24 h and is
+  ended only by revocation, cluster delete or CA expiry.
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,

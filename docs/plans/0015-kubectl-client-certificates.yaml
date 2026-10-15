@@ -861,7 +861,7 @@ items:
       - The README section has other content that depends on the helper (stop and ask; do not remove it).
     done_when: "the README goat section shows kubectl without a helper and ARCHITECTURE section 7 and 14 name the new path."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M3-PROD-READING
     milestone: M3
