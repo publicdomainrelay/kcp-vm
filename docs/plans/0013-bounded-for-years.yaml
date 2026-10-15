@@ -135,7 +135,7 @@ items:
     files: ["internal/bootstrap", "internal/kcpserver", "internal/pgunit", "internal/postgresctl"]
     done_when: "under M4-SOAK-READING load the sqlite file size and the kine row count plateau on a bidder, and the kine table size plateaus on the gateway."
     risks: ["An sqlite store created before auto_vacuum was set needs one full VACUUM; the core runs it once at the next start, during the slot roll."]
-    status: todo
+    status: done
     evidence:
   - id: M3-DENOPOD-LIMITS
     milestone: M3
@@ -211,7 +211,7 @@ items:
     files: ["docs/ARCHITECTURE.md"]
     done_when: "the readings are recorded and every series plateaus."
     risks: ["24 h on hat-8 holds VM slots; it runs in its own stand-in account with its own subuid range."]
-    status: done
+    status: todo
     evidence:
 acceptance:
   where: hat-8
