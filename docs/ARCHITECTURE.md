@@ -8300,7 +8300,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   RSS, 17 GB MemAvailable left, CPU 73 % mean and 95 % peak, and each flow took 99 to 118 s (one alone: 86
   s). Seven networks fit in 32 GB; CPU, not RAM, is the limit, at about five full flows per 16 threads
   before the flows stretch. A modified `image.json` (boot args) is refused by the bidder ("the image is
-  refused"), so the idle-vCPU defect needs a rebuilt, re-pinned guest image: not done. Decision: the
+  refused"), so the idle-vCPU defect needed a rebuilt, re-pinned guest image (closed in the next entry). Decision: the
   default of `SWC_LIVE_SLOTS` is 5, and `acquire` also waits while MemAvailable is under 12000 MB
   (`SWC_LIVE_MIN_AVAIL_MB`) or cpu pressure avg10 is over 90 (`SWC_LIVE_MAX_CPU_PSI`); a droplet is a
   separate pool with no slot. The VM account test-0001 has 16 VM slots (a 1048576-id range in /etc/subuid, 16 x
@@ -8313,6 +8313,28 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   from another packager is not enough; only the same distribution packages reproduce the bytes. The other
   release assets and the Go closure were not built on the droplet, so no second release runner is proposed
   or registered; a Fedora 44 host would be the candidate and needs the full `--verify-reproducible` run first.
+- **A firecracker guest burned one host core while idle (2026-10-15).** Cause: the guest kernel config had
+  `# CONFIG_X86_MPPARSE is not set` and the boot args carry `acpi=off`. With ACPI off and no MP table parser
+  the kernel found no APIC: the guest console read `ACPI: MPS support code is not built-in`, `No local APIC
+  present`, `APIC: Keep in PIC mode(8259)`, `smpboot: SMP disabled`; `/proc/cpuinfo` had no `apic` flag, the
+  guest saw 1 CPU although the manifest gives it 2 vCPUs, every irq in `/proc/interrupts` was `XT-PIC`, `LOC`
+  stayed 0 and the tick device was the PIT (`pit_next_event`). The guest was truly idle (about 100 timer
+  interrupts and 50 interrupts per second in total, `vmstat` 99 % idle), yet the host vCPU thread `fc_vcpu 0`
+  had utime 0 and stime at 100 %, 4 voluntary context switches per second, so it never blocked in the host. The
+  KVM exit path was not read (kvm debugfs needs root, which hat-8 does not give); the A/B below
+  demonstrates the cause. Reading on hat-8 (Ryzen 7 7700X, host
+  kernel 7.2.9, firecracker v1.13.1, one held guest of a 1 bidder market network, a 60 s window of
+  `/proc/<pid>/task/*/stat` after the guest booted): 59.86 CPU seconds in 60 s and 59.85 for a second guest;
+  with `lapic` added to the boot args 58.56 (the kernel ignores it: the CPUID APIC bit is already gone).
+  Fix: `CONFIG_X86_MPPARSE=y` in `deploy/guest-kernel/socialweb.config`, resolved into
+  `firecracker-x86_64.config` (one line), with the boot args unchanged. The kernel now logs `found SMP
+  MP-table`, `IOAPIC[0]`, `x2apic enabled`, `Brought up 1 node, 2 CPUs`, irqs are `IO-APIC`, and a held idle
+  guest read 0.12 CPU seconds in 60 s (`fc_vcpu 0` 0.06, `fc_vcpu 1` 0.05, 15 voluntary switches per second per
+  vCPU thread). The guest joined through `run request --network` (the cloud-init `user_data` ran the probe over
+  ssh through the relay) and `run request release` ended it. Only `vmlinux` and `image.json` changed; the
+  rootfs pin is the same. The aarch64 config is not touched (MP tables are x86 only). A guest now sees its 2 vCPUs, where it saw 1 before. The bidder refuses a modified image, so the
+  published `main/<commit>/guest-image` of the first CI build with this commit carries the fix; a bidder that
+  pins an older `versions.json` keeps the old image and the old cost.
 
 ## 16. Vocabulary
 

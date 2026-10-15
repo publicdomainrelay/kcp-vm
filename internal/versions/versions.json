@@ -398,7 +398,7 @@
         "arch": "x86_64",
         "platform": "linux/amd64",
         "kernelConfig": "deploy/guest-kernel/firecracker-x86_64.config",
-        "bootArgsWhy": "acpi=off: firecracker v1.13 describes its devices in an ACPI DSDT that upstream 6.1 fails to load (ACPI Error AE_BAD_PARAMETER During Region initialization, measured on this image), after which the virtio-mmio devices from the command line register but fail to probe (-22) and the guest waits for /dev/vda forever; with ACPI off the kernel takes firecracker's MP table and the virtio_mmio.device= arguments firecracker appends (CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES)",
+        "bootArgsWhy": "acpi=off: firecracker v1.13 describes its devices in an ACPI DSDT that upstream 6.1 fails to load (ACPI Error AE_BAD_PARAMETER During Region initialization, measured on this image), after which the virtio-mmio devices from the command line register but fail to probe (-22) and the guest waits for /dev/vda forever; with ACPI off the kernel takes firecracker's MP table (CONFIG_X86_MPPARSE=y; without it acpi=off leaves the guest with no local APIC, one CPU, the 8259 PIC and the PIT, and its vCPU thread burns a host core while the guest is idle) and the virtio_mmio.device= arguments firecracker appends (CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES)",
         "bootArgs": ["console=ttyS0", "reboot=k", "panic=1", "pci=off", "acpi=off", "i8042.noaux", "i8042.nomux", "i8042.dumbkbd", "root=/dev/vda", "rw", "rootfstype=ext4", "rootwait"],
         "base": {
           "url": "https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-amd64-root.tar.xz",
@@ -406,9 +406,9 @@
         },
         "sourceDateEpoch": 1790380800,
         "outputs": {
-          "vmlinux": {"sha256": "f868af0fcc53e3034323ae53bb66979d5810e71ffe9692333993b77990fca2d7", "bytes": 43726920},
+          "vmlinux": {"sha256": "a7ba816b712c4dc4f52c943f8b51460bc0bd799fe50762dd44f605afd82eace8", "bytes": 43742872},
           "rootfs.ext4": {"sha256": "f2096748f2f7de32f56dd90c2ba85a5e0688a5918ca86fa6ea9c1040c7922584", "bytes": 1543503872},
-          "image.json": {"sha256": "f2f39859672a803fcc975bb285ba60e81ebae284027d6fc29e771c8394f58638", "bytes": 5822}
+          "image.json": {"sha256": "bddc484c610e956fb7e198281cf4a19dc8c95fc441c0575f49d2a33de0c74021", "bytes": 5822}
         }
       },
       "firecracker-aarch64": {
