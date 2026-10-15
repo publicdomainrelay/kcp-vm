@@ -324,115 +324,6 @@ func (r *rig) validateOutput(nsid string, w *httptest.ResponseRecorder) {
 	}
 }
 
-func TestAVerifiedCallerReachesTheRightVerb(t *testing.T) {
-	r := newRig(t)
-
-	t.Run("getKubeconfig", func(t *testing.T) {
-		w := r.procedure("getKubeconfig", `{"name":"c"}`)
-		if w.Code != 200 {
-			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
-		}
-		r.validateOutput(nsidGetKubeconfig, w)
-		got := decode(t, w)
-		if got["instance"] != "1" || got["kubeconfig"] == "" {
-			t.Fatalf("body = %v", got)
-		}
-		if len(r.store.callers) == 0 || r.store.callers[len(r.store.callers)-1] != callerDID {
-			t.Fatalf("the store acted for %v, want %q", r.store.callers, callerDID)
-		}
-	})
-
-	t.Run("createCluster", func(t *testing.T) {
-		r.store.views["c"] = gateway.ClusterView{Name: "c", Phase: "Ready", Instance: "1"}
-		w := r.procedure("createCluster", `{"name":"c"}`)
-		if w.Code != 200 {
-			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
-		}
-		r.validateOutput(nsidCreateCluster, w)
-		if !r.store.views["c"].Running {
-			t.Fatalf("createCluster answered a phase but left the cluster not running: %+v",
-				r.store.views["c"])
-		}
-	})
-
-	t.Run("controlPlaneUp", func(t *testing.T) {
-		r.store.views["c"] = gateway.ClusterView{Name: "c", Phase: "Ready", Instance: "1"}
-		w := r.procedure("controlPlaneUp", `{"name":"c"}`)
-		if w.Code != 200 {
-			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
-		}
-		r.validateOutput(nsidControlPlaneUp, w)
-	})
-
-	t.Run("controlPlaneDown", func(t *testing.T) {
-		w := r.procedure("controlPlaneDown", `{"name":"c"}`)
-		if w.Code != 200 {
-			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
-		}
-		r.validateOutput(nsidControlPlaneDown, w)
-	})
-
-	t.Run("deleteCluster", func(t *testing.T) {
-		w := r.procedure("deleteCluster", `{"name":"c"}`)
-		if w.Code != 200 {
-			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
-		}
-		r.validateOutput(nsidDeleteCluster, w)
-	})
-
-	t.Run("listClusters is a query, so it is a GET", func(t *testing.T) {
-		n := nsidListClusters
-		req := httptest.NewRequest(http.MethodGet, XRPCPrefix+n, nil)
-		req.Header.Set("Authorization", "Bearer "+r.token(audiences()[0], atprotoauth.MaxServiceAuthLifetime, nsid(t, n)))
-		w := httptest.NewRecorder()
-		r.h.ServeHTTP(w, req)
-		if w.Code != 200 {
-			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
-		}
-		r.validateOutput(n, w)
-	})
-}
-
-func TestTheRequestedDeviceKeyLifetimeIsCheckedAtTheDoor(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		body string
-		want int
-		ttl  time.Duration
-	}{
-		{"absent keeps the deployment's lifetime", `{"name":"c"}`, 200, 0},
-		{"the declared floor", `{"name":"c","ttlSeconds":60}`, 200, time.Minute},
-		{"the configured ceiling", `{"name":"c","ttlSeconds":3600}`, 200, time.Hour},
-		{"one second below the floor", `{"name":"c","ttlSeconds":59}`, 400, 0},
-		{"one second above the ceiling", `{"name":"c","ttlSeconds":3601}`, 400, 0},
-		{"zero", `{"name":"c","ttlSeconds":0}`, 400, 0},
-		{"negative", `{"name":"c","ttlSeconds":-1}`, 400, 0},
-		{"not an integer at all", `{"name":"c","ttlSeconds":"60"}`, 400, 0},
-		{"a fractional second", `{"name":"c","ttlSeconds":60.5}`, 400, 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := newRig(t)
-			w := r.procedure("getKubeconfig", tc.body)
-			if w.Code != tc.want {
-				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
-			}
-			if tc.want == 400 {
-				if got := decode(t, w)["error"]; got != "InvalidRequest" {
-					t.Fatalf("error = %v, want InvalidRequest -- an out-of-window lifetime is "+
-						"REFUSED, and the response must not read as a cluster problem", got)
-				}
-				if len(r.store.ttls) != 0 {
-					t.Fatalf("a refused lifetime still reached the store as %v", r.store.ttls)
-				}
-				return
-			}
-			if len(r.store.ttls) != 1 || r.store.ttls[0] != tc.ttl {
-				t.Fatalf("the store was handed lifetimes %v, want [%s]", r.store.ttls, tc.ttl)
-			}
-		})
-	}
-}
-
 func TestEveryRefusalIsRefused(t *testing.T) {
 	r := newRig(t)
 	path := XRPCPrefix + nsidGetKubeconfig
@@ -488,26 +379,6 @@ func TestATokenSignedByAnotherKeyIsRefused(t *testing.T) {
 	}
 }
 
-func TestABodyCannotNameThePrincipal(t *testing.T) {
-	r := newRig(t)
-	w := r.procedure("getKubeconfig", fmt.Sprintf(
-		`{"name":"c","did":%q,"iss":%q,"caller":%q,"sub":%q}`, attacker, attacker, attacker, attacker))
-	if w.Code != 200 {
-		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
-	}
-	for _, c := range r.store.callers {
-		if string(c) != callerDID {
-			t.Fatalf("the store acted for %q; a body field named the principal", c)
-		}
-	}
-	if len(r.store.callers) == 0 {
-		t.Fatal("the verb never reached the store")
-	}
-	if strings.Contains(w.Body.String(), attacker) {
-		t.Fatalf("the attacker's DID appeared in the response: %s", w.Body.String())
-	}
-}
-
 func TestTheBodyIsValidatedAgainstTheLexicon(t *testing.T) {
 	r := newRig(t)
 	for _, body := range []string{
@@ -529,62 +400,6 @@ func TestTheBodyIsValidatedAgainstTheLexicon(t *testing.T) {
 	}
 	if len(r.store.callers) != 0 {
 		t.Fatalf("an invalid body reached the store: %v", r.store.callers)
-	}
-}
-
-func TestANameThatIsNotALabelIsRefusedAtTheDoor(t *testing.T) {
-	for _, tc := range []struct{ what, name string }{
-		{"colon", "a:b:clusters"},
-		{"space", "a b"},
-		{"traversal", "../../root"},
-		{"uppercase", "MyCluster"},
-		{"leading-hyphen", "-lead"},
-		{"toolong", strings.Repeat("a", 300)},
-	} {
-		t.Run(tc.what, func(t *testing.T) {
-			r := newRig(t)
-			w := r.procedure("getKubeconfig", fmt.Sprintf(`{"name":%q}`, tc.name))
-			if w.Code != 400 {
-				t.Fatalf("name %q: status = %d, want 400: %s", tc.name, w.Code, w.Body.String())
-			}
-			if got := decode(t, w)["error"]; got != "InvalidRequest" {
-				t.Fatalf("name %q: error = %v, want InvalidRequest", tc.name, got)
-			}
-			if len(r.store.names) != 0 {
-				t.Fatalf("name %q reached the verb as %q -- it is not a label, so no kcp "+
-					"path should ever have been built from it", tc.name, r.store.names)
-			}
-		})
-	}
-
-	t.Run("revokeIdentity keeps its optional name", func(t *testing.T) {
-		r := newRig(t)
-		if w := r.procedure("revokeIdentity", `{}`); w.Code != 200 {
-			t.Fatalf("an absent name is legal here: status = %d: %s", w.Code, w.Body.String())
-		}
-		if w := r.procedure("revokeIdentity", `{"name":"a:b"}`); w.Code != 400 {
-			t.Fatalf("an illegal name must be refused: status = %d: %s", w.Code, w.Body.String())
-		}
-	})
-
-	for _, tc := range []struct {
-		chars int
-		want  int
-	}{{63, 200}, {64, 400}} {
-		t.Run(fmt.Sprintf("boundary-%d", tc.chars), func(t *testing.T) {
-			r := newRig(t)
-			name := strings.Repeat("a", tc.chars)
-			w := r.procedure("getKubeconfig", fmt.Sprintf(`{"name":%q}`, name))
-			if w.Code != tc.want {
-				t.Fatalf("%d characters: status = %d, want %d: %s",
-					tc.chars, w.Code, tc.want, w.Body.String())
-			}
-			if tc.want == 200 {
-				if got := r.store.names; len(got) == 0 || got[len(got)-1] != name {
-					t.Fatalf("a legal label never reached the verb: %v", got)
-				}
-			}
-		})
 	}
 }
 

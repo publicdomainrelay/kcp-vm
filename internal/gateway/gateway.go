@@ -13,6 +13,13 @@ import (
 
 const MinDeviceKeyTTL = 60 * time.Second
 
+const (
+	DefaultClientCertTTL = 8 * time.Hour
+	MaxClientCertTTL     = 24 * time.Hour
+)
+
+var ErrIssuerUnavailable = errors.New("gateway: the certificate issuer cannot issue now")
+
 type Caller string
 
 type XRPCError struct {
@@ -146,7 +153,7 @@ type GetKubeconfigResponse struct {
 }
 
 func (s *Server) GetKubeconfig(ctx context.Context, caller Caller, req KubeconfigRequest) (*GetKubeconfigResponse, error) {
-	ttl, err := s.deviceKeyTTL(req.TTLSeconds)
+	ttl, err := clientCertTTL(req.TTLSeconds)
 	if err != nil {
 		return nil, err
 	}
@@ -161,8 +168,15 @@ func (s *Server) GetKubeconfig(ctx context.Context, caller Caller, req Kubeconfi
 	if !ok {
 		return nil, ErrClusterNotFound
 	}
+	if !view.Running {
+		return nil, ErrClusterNotRunning
+	}
 	kubeconfig, err := s.Store.Kubeconfig(ctx, caller, req.Name, ttl)
 	if err != nil {
+		if errors.Is(err, ErrIssuerUnavailable) {
+			slog.Warn("getKubeconfig: the certificate issuer is not ready", "caller", string(caller), "name", req.Name, "err", err)
+			return nil, ErrClusterInitializing
+		}
 		return nil, fmt.Errorf("getKubeconfig: %w", err)
 	}
 
@@ -183,13 +197,11 @@ func (s *Server) CreateCluster(ctx context.Context, caller Caller, req NameReque
 	return view, nil
 }
 
-func (s *Server) deviceKeyTTL(seconds *int64) (time.Duration, error) {
+func clientCertTTL(seconds *int64) (time.Duration, error) {
 	if seconds == nil {
-		return 0, nil
+		return DefaultClientCertTTL, nil
 	}
-	floor := int64(MinDeviceKeyTTL / time.Second)
-	if s.MaxDeviceKeyTTL < MinDeviceKeyTTL || *seconds < floor ||
-		*seconds > int64(s.MaxDeviceKeyTTL/time.Second) {
+	if *seconds < int64(MinDeviceKeyTTL/time.Second) || *seconds > int64(MaxClientCertTTL/time.Second) {
 		return 0, ErrInvalidRequest
 	}
 	return time.Duration(*seconds) * time.Second, nil

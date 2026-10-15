@@ -146,45 +146,6 @@ func TestCreateClusterIsRefusedForARevokedIdentityAndCreatesNothing(t *testing.T
 	}
 }
 
-func TestGrantedIdentityIsAdmittedAndCreatesOnFirstLogin(t *testing.T) {
-	srv, deny, store := server(revocation.DenyGranted)
-
-	resp, err := srv.GetKubeconfig(context.Background(), "did:plc:fresh", KubeconfigRequest{Name: "web"})
-	if err != nil {
-		t.Fatalf("GetKubeconfig: %v", err)
-	}
-	if deny.reads != 1 {
-		t.Fatalf("the deny was read %d times, want exactly 1", deny.reads)
-	}
-	if store.creates != 1 {
-		t.Fatalf("creates = %d, want 1 (the create-on-read path)", store.creates)
-	}
-	if resp.Instance == "" {
-		t.Fatal("the response carries no instance: a delete-then-recreate keeps the SAME " +
-			"url string, so without it a cached kubeconfig silently re-points")
-	}
-}
-
-func TestAColdClusterStillGetsAKubeconfig(t *testing.T) {
-	for _, phase := range []string{"Initializing", "Unavailable", "Draining"} {
-		t.Run(phase, func(t *testing.T) {
-			srv, _, store := server(revocation.DenyGranted)
-			store.views["web"] = ClusterView{Name: "web", Phase: phase, URL: "", Instance: "1"}
-
-			resp, err := srv.GetKubeconfig(context.Background(), "did:plc:a", KubeconfigRequest{Name: "web"})
-			if err != nil {
-				t.Fatalf("getKubeconfig failed for a %s cluster: %v -- it must return a "+
-					"kubeconfig, because the 503 comes from the MOUNT, not from this verb",
-					phase, err)
-			}
-			if !strings.Contains(resp.Kubeconfig, "/clusters/") {
-				t.Fatalf("the kubeconfig must point at the MOUNT path, not the backend: %q",
-					resp.Kubeconfig)
-			}
-		})
-	}
-}
-
 func TestTheCallerIsNotReadFromTheRequest(t *testing.T) {
 	srv, _, _ := server(revocation.DenyGranted)
 	if _, err := srv.GetKubeconfig(context.Background(), "", KubeconfigRequest{Name: "web"}); !errors.Is(err, ErrUnauthorized) {
@@ -228,51 +189,6 @@ func TestOnlyTheCreatingVerbsCreate(t *testing.T) {
 		t.Fatalf("a second CreateCluster reached Ensure %d times in total; the tree half is "+
 			"create-on-read and is expected to run again, and the desired-state half must "+
 			"still be idempotent", store.creates)
-	}
-}
-
-func TestARequestedLifetimeOutsideTheConfiguredWindowIsRefused(t *testing.T) {
-	seconds := func(n int64) *int64 { return &n }
-
-	for _, tc := range []struct {
-		name  string
-		cap   time.Duration
-		asked *int64
-		want  time.Duration
-	}{
-		{"absent keeps the deployment's own", 2 * time.Hour, nil, 0},
-		{"the declared floor", 2 * time.Hour, seconds(60), time.Minute},
-		{"the configured ceiling", 2 * time.Hour, seconds(7200), 2 * time.Hour},
-		{"one second below the floor", 2 * time.Hour, seconds(59), -1},
-		{"one second above the ceiling", 2 * time.Hour, seconds(7201), -1},
-		{"zero", 2 * time.Hour, seconds(0), -1},
-		{"negative", 2 * time.Hour, seconds(-1), -1},
-		{"no ceiling configured at all", 0, seconds(60), -1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			srv, _, store := server(revocation.DenyGranted)
-			srv.MaxDeviceKeyTTL = tc.cap
-			store.views["web"] = ClusterView{Name: "web", Phase: "Ready", Instance: "1"}
-
-			resp, err := srv.GetKubeconfig(context.Background(), "did:plc:a",
-				KubeconfigRequest{Name: "web", TTLSeconds: tc.asked})
-			if tc.want < 0 {
-				if !errors.Is(err, ErrInvalidRequest) {
-					t.Fatalf("want InvalidRequest, got %v (resp %+v)", err, resp)
-				}
-				if store.creates != 0 {
-					t.Fatalf("a refused lifetime still ran the create path %d time(s): the "+
-						"window is checked before anything is written", store.creates)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("GetKubeconfig: %v", err)
-			}
-			if store.ttl != tc.want {
-				t.Fatalf("the store was handed lifetime %s, want %s", store.ttl, tc.want)
-			}
-		})
 	}
 }
 

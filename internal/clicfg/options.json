@@ -297,6 +297,11 @@
       "description": "Accepted service-auth audiences (comma separated)",
       "env": "SOCIALWEB_GATEWAY_AUDIENCES"
     },
+    "gateway-cluster-state-dir": {
+      "type": "string",
+      "description": "Directory of the cluster data dirs the gateway reads to issue and check kubeconfig client certificates",
+      "env": "SOCIALWEB_GATEWAY_CLUSTER_STATE_DIR"
+    },
     "gateway-device-key-audience": {
       "type": "string",
       "description": "Audience of device-key tokens",
@@ -331,6 +336,11 @@
       "type": "string",
       "description": "Public host name of kcp",
       "env": "SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST"
+    },
+    "gateway-kcp-public-ca-file": {
+      "type": "string",
+      "description": "PEM file of the CA the kubeconfig carries for its public server (unset when the server has a public certificate)",
+      "env": "SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE"
     },
     "gateway-mint-kubeconfigs": {
       "type": "string",

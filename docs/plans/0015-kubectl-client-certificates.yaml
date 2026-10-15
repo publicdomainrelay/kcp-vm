@@ -352,7 +352,7 @@ items:
       - kcpclient.DeviceKeyGranter has a different signature than Grant(ctx, kcpclient.GrantInput) (string, error).
     done_when: "the package builds and vets; nothing calls it yet."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M1-GETKUBECONFIG-HANDLER
     milestone: M1
@@ -419,7 +419,7 @@ items:
       - Any KEY LOG CHECK match.
     done_when: "getKubeconfig on a market network returns a certificate kubeconfig with the right CN, O and lifetime, refuses bad ttlSeconds, and nothing logs the key."
     risks: ["Old exec-plugin kubeconfigs keep working through /v1/credential until M5; no new ones are handed out."]
-    status: todo
+    status: done
     evidence:
   - id: M1-WEB-APP-TTL
     milestone: M1

@@ -34,8 +34,10 @@ const (
 	envDeviceKeyExecCommand = "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_COMMAND"
 	envDeviceKeyExecEnvName = "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME"
 
-	envKCPPublicHost = "SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST"
-	envPublicMintURL = "SOCIALWEB_GATEWAY_PUBLIC_MINT_URL"
+	envKCPPublicHost   = "SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST"
+	envKCPPublicCAFile = "SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE"
+	envClusterStateDir = "SOCIALWEB_GATEWAY_CLUSTER_STATE_DIR"
+	envPublicMintURL   = "SOCIALWEB_GATEWAY_PUBLIC_MINT_URL"
 
 	envNodeClaimAgent = "SOCIALWEB_GATEWAY_NODECLAIM_AGENT"
 
@@ -80,6 +82,10 @@ type Config struct {
 
 	KCPPublicHost string
 
+	KCPPublicCAFile string
+
+	ClusterStateDir string
+
 	PublicMintURL string
 
 	NodeClaimAgent *kcpclient.ServiceAccountRef
@@ -97,6 +103,9 @@ func load(get func(string) string) (Config, error) {
 		PLCURL:          strings.TrimSpace(get(envPLCURL)),
 		MintKubeconfigs: strings.TrimSpace(get(envMintKubeconfigs)),
 		DevkeyRegistry:  strings.TrimSpace(get(envDevkeyRegistry)),
+
+		KCPPublicCAFile: strings.TrimSpace(get(envKCPPublicCAFile)),
+		ClusterStateDir: strings.TrimSpace(get(envClusterStateDir)),
 
 		DeviceKeyAudience:    strings.TrimSpace(get(envDeviceKeyAudience)),
 		DeviceKeyExecCommand: strings.TrimSpace(get(envDeviceKeyExecCommand)),
@@ -117,6 +126,7 @@ func load(get func(string) string) (Config, error) {
 		{envPLCURL, cfg.PLCURL},
 		{envMintKubeconfigs, cfg.MintKubeconfigs},
 		{envDevkeyRegistry, cfg.DevkeyRegistry},
+		{envClusterStateDir, cfg.ClusterStateDir},
 		{envDeviceKeyAudience, cfg.DeviceKeyAudience},
 		{envDeviceKeyExecCommand, cfg.DeviceKeyExecCommand},
 		{envDeviceKeyExecEnvName, cfg.DeviceKeyExecEnvName},

@@ -19,7 +19,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/devicekey"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/clientcert"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
@@ -113,23 +113,13 @@ func buildDeps(cfg Config) (Deps, error) {
 			"gateway handed out would mint nothing and be refused as Unauthorized",
 			envDeviceKeyAudience, cfg.DeviceKeyAudience, envAudiences, cfg.Audiences[0])
 	}
-	deviceKeys, err := devicekey.New(devicekey.Options{
-		Binder:      mintStore,
-		Audience:    cfg.DeviceKeyAudience,
-		TTL:         cfg.DeviceKeyTTL,
-		ExecCommand: cfg.DeviceKeyExecCommand,
-		ExecEnvName: cfg.DeviceKeyExecEnvName,
-		MintURL:     cfg.PublicMintURL,
-	})
-	if err != nil {
-		return Deps{}, fmt.Errorf("the device-key granter: %w", err)
-	}
+	certs := &clientcert.Issuer{StateDir: cfg.ClusterStateDir, CAFile: cfg.KCPPublicCAFile, Log: slog.Default()}
 
 	client, err := kcpclient.New(kcpclient.Options{
 		Host:           cfg.KCPHost,
 		PublicHost:     cfg.KCPPublicHost,
 		RestConfig:     kcpRestConfig,
-		DeviceKeys:     deviceKeys,
+		DeviceKeys:     certs,
 		NodeClaimAgent: cfg.NodeClaimAgent,
 
 		HostProcessWorkspace: cfg.HostProcessWorkspace,

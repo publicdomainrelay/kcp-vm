@@ -270,6 +270,9 @@ func (s *Server) xrpc(r route) http.HandlerFunc {
 		}
 
 		out, err := r.call(req.Context(), caller, in)
+		if r.nsid == nsidGetKubeconfig {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		if err != nil {
 			writeError(w, r.nsid, s.opts.RetryAfter, err)
 			return

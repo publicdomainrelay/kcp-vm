@@ -335,6 +335,8 @@ type CertRequest struct {
 	CommonName string
 	AltNames   []string
 	TTL        string
+
+	ExcludeCNFromSANs bool
 }
 
 type Cert struct {
@@ -357,6 +359,9 @@ func (c *Client) IssueCert(ctx context.Context, pkiPath, role string, req CertRe
 	}
 	if req.TTL != "" {
 		body["ttl"] = req.TTL
+	}
+	if req.ExcludeCNFromSANs {
+		body["exclude_cn_from_sans"] = true
 	}
 	raw, err := c.do(ctx, http.MethodPost, strings.Trim(pkiPath, "/")+"/issue/"+strings.Trim(role, "/"), body)
 	if err != nil {

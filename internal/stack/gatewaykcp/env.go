@@ -113,6 +113,7 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) err
 	e.set("SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE", hostprocess.DefaultWorkspace)
 	e.set("SOCIALWEB_CLUSTERPROVIDER_MOUNT_CONTEXT", kcpclient.ShardAdminContext)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_STATE_DIR", filepath.Join(state, "clusterprovider"))
+	e.dflt("SOCIALWEB_GATEWAY_CLUSTER_STATE_DIR", e.get("SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"))
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH", filepath.Join(state, "leases.json"))
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_JOIN", DefaultJoin)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW", "false")

@@ -1,0 +1,195 @@
+package clientcert
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"slices"
+	"strconv"
+	"time"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/gateway"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kubeconfig"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
+)
+
+var ErrVaultUnavailable = gateway.ErrIssuerUnavailable
+
+const (
+	issueTimeout  = 10 * time.Second
+	revokeTimeout = 30 * time.Second
+	crlTimeout    = 5 * time.Second
+	lifetimeSlack = 5 * time.Minute
+)
+
+type Issuer struct {
+	StateDir string
+	CAFile   string
+	Log      *slog.Logger
+}
+
+func DataDir(stateDir, did, cluster string) (string, error) {
+	key, err := kcpclient.ClusterKey(kcpclient.HomePath(did, cluster))
+	if err != nil {
+		return "", err
+	}
+	return clusterprovider.ClusterDataDir(stateDir, key)
+}
+
+func (i *Issuer) log() *slog.Logger {
+	if i.Log != nil {
+		return i.Log
+	}
+	return slog.Default()
+}
+
+func (i *Issuer) Grant(ctx context.Context, in kcpclient.GrantInput) (string, error) {
+	if in.Caller == "" || in.Cluster == "" || in.Server == "" {
+		return "", errors.New("clientcert: a caller, a cluster and a server are required")
+	}
+	ttl := in.TTL
+	if ttl == 0 {
+		ttl = gateway.DefaultClientCertTTL
+	}
+	if ttl < gateway.MinDeviceKeyTTL || ttl > gateway.MaxClientCertTTL {
+		return "", errors.New("clientcert: the lifetime is outside the allowed window")
+	}
+	dir, err := DataDir(i.StateDir, string(in.Caller), in.Cluster)
+	if err != nil {
+		return "", err
+	}
+	client, _, err := clusterprovider.GatewayVaultClient(ctx, dir)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrVaultUnavailable, err)
+	}
+	cctx, cancel := context.WithTimeout(ctx, issueTimeout)
+	defer cancel()
+	cert, err := client.IssueCert(cctx, clusterprovider.VaultPKIPath, clusterprovider.VaultPKIRoleKubeconfig, openbao.CertRequest{
+		CommonName:        string(in.Caller),
+		TTL:               strconv.FormatInt(int64(ttl/time.Second), 10) + "s",
+		ExcludeCNFromSANs: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("%w: issue: %v", ErrVaultUnavailable, err)
+	}
+	leaf, err := parseCertificate(cert.Certificate)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case leaf.Subject.CommonName != string(in.Caller):
+		return "", errors.New("clientcert: the issued certificate has the wrong common name")
+	case !slices.Equal(leaf.Subject.Organization, []string{kcpclient.OwnersGroup}):
+		return "", errors.New("clientcert: the issued certificate has the wrong organization")
+	case leaf.NotAfter.Sub(leaf.NotBefore) > gateway.MaxClientCertTTL+lifetimeSlack:
+		return "", errors.New("clientcert: the issued certificate lives too long")
+	case !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageClientAuth):
+		return "", errors.New("clientcert: the issued certificate is not a client certificate")
+	case cert.PrivateKey == "":
+		return "", errors.New("clientcert: the issuer returned no private key")
+	}
+	var caPEM []byte
+	if i.CAFile != "" {
+		if caPEM, err = os.ReadFile(i.CAFile); err != nil {
+			return "", fmt.Errorf("clientcert: reading the CA file: %w", err)
+		}
+	}
+	out, err := kubeconfig.BuildClientCert(kubeconfig.ClientCertInput{ClusterName: in.Cluster, Server: in.Server,
+		CACertPEM: caPEM, CertPEM: []byte(cert.Certificate), KeyPEM: []byte(cert.PrivateKey)})
+	if err != nil {
+		return "", err
+	}
+	i.log().Info("clientcert: issued a kubeconfig certificate", "did", string(in.Caller), "cluster", in.Cluster,
+		"serial", cert.Serial, "notAfter", leaf.NotAfter.UTC().Format(time.RFC3339))
+	return out, nil
+}
+
+func parseCertificate(pemText string) (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(pemText))
+	if block == nil {
+		return nil, errors.New("clientcert: the issuer returned no certificate")
+	}
+	return x509.ParseCertificate(block.Bytes)
+}
+
+func (i *Issuer) Revoke(ctx context.Context, did, cluster string) (int, error) {
+	dir, err := DataDir(i.StateDir, did, cluster)
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, revokeTimeout)
+	defer cancel()
+	client, _, err := clusterprovider.GatewayVaultClient(ctx, dir)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrVaultUnavailable, err)
+	}
+	serials, err := client.List(ctx, "pki/certs")
+	if err != nil {
+		return 0, fmt.Errorf("clientcert: listing certificates: %w", err)
+	}
+	count := 0
+	now := time.Now()
+	for _, serial := range serials {
+		data, err := client.Read(ctx, "pki/cert/"+serial)
+		if err != nil {
+			return count, fmt.Errorf("clientcert: reading a certificate: %w", err)
+		}
+		text, _ := data["certificate"].(string)
+		leaf, err := parseCertificate(text)
+		if err != nil {
+			continue
+		}
+		if leaf.Subject.CommonName != did || !slices.Equal(leaf.Subject.Organization, []string{kcpclient.OwnersGroup}) || !leaf.NotAfter.After(now) {
+			continue
+		}
+		if err := client.Write(ctx, "pki/revoke", map[string]any{"serial_number": serial}); err != nil {
+			return count, fmt.Errorf("clientcert: revoking a certificate: %w", err)
+		}
+		count++
+	}
+	i.log().Info("clientcert: revoked kubeconfig certificates", "did", did, "cluster", cluster, "count", count)
+	return count, nil
+}
+
+func FetchCRL(ctx context.Context, dataDir string) (*x509.RevocationList, error) {
+	a, err := clusterprovider.ReadVaultAccess(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(a.CAFile)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := openbao.CertPoolFromPEM(raw)
+	if err != nil {
+		return nil, err
+	}
+	hc := &http.Client{Timeout: crlTimeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}
+	defer hc.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.Address+"/v1/pki/crl", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("clientcert: the CRL answered %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return nil, err
+	}
+	return x509.ParseRevocationList(body)
+}
