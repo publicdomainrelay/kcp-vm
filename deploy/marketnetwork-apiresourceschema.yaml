@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-8.marketnetworks.socialweb.computer
+  name: v1alpha1-9.marketnetworks.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -87,6 +87,27 @@ spec:
                             type: string
                         required:
                           - name
+                    quota:
+                      type: object
+                      properties:
+                        bids:
+                          type: integer
+                          format: int32
+                        computeVMs:
+                          type: integer
+                          format: int32
+                        computeContracts:
+                          type: integer
+                          format: int32
+                        nodeClaims:
+                          type: integer
+                          format: int32
+                        policyWorkflowRuns:
+                          type: integer
+                          format: int32
+                        denoRuns:
+                          type: integer
+                          format: int32
                     ownerSessionsFile:
                       type: string
                     clusterProvider:
@@ -294,6 +315,95 @@ spec:
                   - bytes
                   - files
                   - sampledAt
+              gc:
+                type: object
+                properties:
+                  sampledAt:
+                    type: string
+                  objects:
+                    type: integer
+                    format: int64
+                  orphanTotal:
+                    type: integer
+                    format: int64
+                  orphans:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                        count:
+                          type: integer
+                          format: int64
+                        examples:
+                          type: array
+                          items:
+                            type: string
+                      required:
+                        - kind
+                        - count
+                  stuckTotal:
+                    type: integer
+                    format: int64
+                  terminating:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                        finalizer:
+                          type: string
+                        controller:
+                          type: string
+                        count:
+                          type: integer
+                          format: int64
+                        examples:
+                          type: array
+                          items:
+                            type: string
+                      required:
+                        - kind
+                        - finalizer
+                        - controller
+                        - count
+                required:
+                  - sampledAt
+                  - objects
+                  - orphanTotal
+                  - stuckTotal
+              ttl:
+                type: object
+                properties:
+                  sampledAt:
+                    type: string
+                  tracked:
+                    type: integer
+                    format: int64
+                  deletedTotal:
+                    type: integer
+                    format: int64
+                  deleted:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                        count:
+                          type: integer
+                          format: int64
+                        lastAt:
+                          type: string
+                      required:
+                        - kind
+                        - count
+                required:
+                  - sampledAt
+                  - tracked
+                  - deletedTotal
               conditions:
                 type: array
                 items:

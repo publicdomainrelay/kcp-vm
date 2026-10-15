@@ -1,5 +1,6 @@
 export const GROUP_NAME = "socialweb.computer";
 export const VERSION = "v1alpha1";
+export const ANNOTATION_TTL_AFTER_FINISHED = "socialweb.computer/ttl-after-finished";
 export const FINALIZER_ATPROTO_IDENTITY = "atprotoidentity.socialweb.computer/revocation";
 export const CONDITION_TEARDOWN_BLOCKED = "TeardownBlocked";
 export const CONDITION_TENANT_PATH_SHUT = "TenantPathShut";
@@ -362,6 +363,7 @@ export interface NetworkApp {
   firecracker?: FirecrackerProvider;
   kcp?: KcpProvider;
   options?: ApplicationOption[];
+  quota?: ApplicationQuota;
   ownerSessionsFile?: string;
   clusterProvider?: GatewayClusterProvider;
   stopped?: boolean;
@@ -384,6 +386,15 @@ export interface ApplicationOption {
   value?: string;
 }
 
+export interface ApplicationQuota {
+  bids?: number;
+  computeVMs?: number;
+  computeContracts?: number;
+  nodeClaims?: number;
+  policyWorkflowRuns?: number;
+  denoRuns?: number;
+}
+
 export interface GatewayClusterProvider {
   scaleHold?: string;
   scaleMaxNodes?: number;
@@ -400,6 +411,8 @@ export interface MarketNetworkStatus {
   listeners?: ApplicationListener[];
   apps?: NetworkAppStatus[];
   stateDir?: StateDirUsage;
+  gc?: GCStatus;
+  ttl?: TTLStatus;
   conditions?: Condition[];
 }
 
@@ -454,6 +467,42 @@ export interface StateDirUsage {
   sampledAt: string;
 }
 
+export interface GCStatus {
+  sampledAt: string;
+  objects: number;
+  orphanTotal: number;
+  orphans?: GCKindCount[];
+  stuckTotal: number;
+  terminating?: GCStuck[];
+}
+
+export interface GCKindCount {
+  kind: string;
+  count: number;
+  examples?: string[];
+}
+
+export interface GCStuck {
+  kind: string;
+  finalizer: string;
+  controller: string;
+  count: number;
+  examples?: string[];
+}
+
+export interface TTLStatus {
+  sampledAt: string;
+  tracked: number;
+  deletedTotal: number;
+  deleted?: TTLDeleted[];
+}
+
+export interface TTLDeleted {
+  kind: string;
+  count: number;
+  lastAt?: string;
+}
+
 export interface MarketBidder {
   apiVersion?: string;
   kind?: string;
@@ -471,6 +520,7 @@ export interface MarketBidderSpec {
   kcp?: KcpProvider;
   signingKeyRotation?: number;
   options?: ApplicationOption[];
+  quota?: ApplicationQuota;
 }
 
 export interface ApplicationIdentity {
@@ -490,6 +540,9 @@ export interface ApplicationStatus {
   listeners?: ApplicationListener[];
   stateDir?: StateDirUsage;
   store?: StoreUsage;
+  gc?: GCStatus;
+  ttl?: TTLStatus;
+  quotas?: QuotaUsage[];
   conditions?: Condition[];
   market?: MarketLoopStatus;
 }
@@ -506,6 +559,13 @@ export interface StoreUsage {
   reclaimedBytes?: number;
   lastVacuumAt?: string;
   sampledAt: string;
+}
+
+export interface QuotaUsage {
+  workspace: string;
+  resource: string;
+  hard: number;
+  used: number;
 }
 
 export interface MarketLoopStatus {
@@ -552,6 +612,7 @@ export interface MarketRequesterSpec {
   identity: ApplicationIdentity;
   bidderDids?: string[];
   options?: ApplicationOption[];
+  quota?: ApplicationQuota;
 }
 
 export interface ComputeContract {
@@ -644,6 +705,7 @@ export interface GatewaySpec {
   network?: MarketNetworkValue;
   bidderDids?: string[];
   options?: ApplicationOption[];
+  quota?: ApplicationQuota;
   marketNetwork?: GatewayMarketNetwork;
   webAppFront?: string;
   clusterProvider?: GatewayClusterProvider;
@@ -668,6 +730,7 @@ export interface SshGatewaySpec {
   network?: MarketNetworkValue;
   bidderDids?: string[];
   options?: ApplicationOption[];
+  quota?: ApplicationQuota;
   ownerSessionsFile?: string;
 }
 
@@ -755,7 +818,7 @@ export const MARKET_NETWORK_RESOURCE: ApiResource = {
   listKind: "MarketNetworkList",
   plural: "marketnetworks",
   singular: "marketnetwork",
-  schema: "v1alpha1-8.marketnetworks.socialweb.computer",
+  schema: "v1alpha1-9.marketnetworks.socialweb.computer",
   export: "applications",
 };
 
@@ -766,7 +829,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-8.marketbidders.socialweb.computer",
+  schema: "v1alpha1-9.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -777,7 +840,7 @@ export const MARKET_REQUESTER_RESOURCE: ApiResource = {
   listKind: "MarketRequesterList",
   plural: "marketrequesters",
   singular: "marketrequester",
-  schema: "v1alpha1-6.marketrequesters.socialweb.computer",
+  schema: "v1alpha1-7.marketrequesters.socialweb.computer",
   export: "applications",
 };
 
@@ -799,7 +862,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-9.gateways.socialweb.computer",
+  schema: "v1alpha1-10.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -810,7 +873,7 @@ export const SSH_GATEWAY_RESOURCE: ApiResource = {
   listKind: "SshGatewayList",
   plural: "sshgateways",
   singular: "sshgateway",
-  schema: "v1alpha1-4.sshgateways.socialweb.computer",
+  schema: "v1alpha1-5.sshgateways.socialweb.computer",
   export: "applications",
 };
 
@@ -823,6 +886,7 @@ export type ApiTypeName =
   | "ApplicationListener"
   | "ApplicationOption"
   | "ApplicationPhase"
+  | "ApplicationQuota"
   | "ApplicationStatus"
   | "AssociationMode"
   | "AtprotoIdentity"
@@ -860,6 +924,9 @@ export type ApiTypeName =
   | "ContractWinner"
   | "ExecutionStatus"
   | "FirecrackerProvider"
+  | "GCKindCount"
+  | "GCStatus"
+  | "GCStuck"
   | "Gateway"
   | "GatewayClusterProvider"
   | "GatewayMarketNetwork"
@@ -901,11 +968,14 @@ export type ApiTypeName =
   | "NodeStatus"
   | "ObjectMeta"
   | "PendingActionKind"
+  | "QuotaUsage"
   | "RecordRef"
   | "SshGateway"
   | "SshGatewaySpec"
   | "StateDirUsage"
   | "StoreUsage"
+  | "TTLDeleted"
+  | "TTLStatus"
   | "VaultRef";
 
 type Shape =
@@ -1123,6 +1193,30 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "string"
   },
+  "ApplicationQuota": {
+    "properties": {
+      "bids": {
+        "type": "integer"
+      },
+      "computeContracts": {
+        "type": "integer"
+      },
+      "computeVMs": {
+        "type": "integer"
+      },
+      "denoRuns": {
+        "type": "integer"
+      },
+      "nodeClaims": {
+        "type": "integer"
+      },
+      "policyWorkflowRuns": {
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "ApplicationStatus": {
     "properties": {
       "components": {
@@ -1139,6 +1233,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "did": {
         "type": "string"
+      },
+      "gc": {
+        "ref": "GCStatus"
       },
       "listeners": {
         "items": {
@@ -1161,11 +1258,20 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "profile": {
         "type": "string"
       },
+      "quotas": {
+        "items": {
+          "ref": "QuotaUsage"
+        },
+        "type": "array"
+      },
       "stateDir": {
         "ref": "StateDirUsage"
       },
       "store": {
         "ref": "StoreUsage"
+      },
+      "ttl": {
+        "ref": "TTLStatus"
       }
     },
     "required": [],
@@ -1843,6 +1949,91 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "GCKindCount": {
+    "properties": {
+      "count": {
+        "type": "integer"
+      },
+      "examples": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "kind": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "count"
+    ],
+    "type": "object"
+  },
+  "GCStatus": {
+    "properties": {
+      "objects": {
+        "type": "integer"
+      },
+      "orphanTotal": {
+        "type": "integer"
+      },
+      "orphans": {
+        "items": {
+          "ref": "GCKindCount"
+        },
+        "type": "array"
+      },
+      "sampledAt": {
+        "type": "string"
+      },
+      "stuckTotal": {
+        "type": "integer"
+      },
+      "terminating": {
+        "items": {
+          "ref": "GCStuck"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "sampledAt",
+      "objects",
+      "orphanTotal",
+      "stuckTotal"
+    ],
+    "type": "object"
+  },
+  "GCStuck": {
+    "properties": {
+      "controller": {
+        "type": "string"
+      },
+      "count": {
+        "type": "integer"
+      },
+      "examples": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "finalizer": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "finalizer",
+      "controller",
+      "count"
+    ],
+    "type": "object"
+  },
   "Gateway": {
     "properties": {
       "apiVersion": {
@@ -1922,6 +2113,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "profile": {
         "type": "string"
+      },
+      "quota": {
+        "ref": "ApplicationQuota"
       },
       "webAppFront": {
         "type": "string"
@@ -2014,6 +2208,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "profile": {
         "type": "string"
+      },
+      "quota": {
+        "ref": "ApplicationQuota"
       },
       "signingKeyRotation": {
         "type": "integer"
@@ -2317,6 +2514,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
         },
         "type": "array"
       },
+      "gc": {
+        "ref": "GCStatus"
+      },
       "listeners": {
         "items": {
           "ref": "ApplicationListener"
@@ -2337,6 +2537,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "stateDir": {
         "ref": "StateDirUsage"
+      },
+      "ttl": {
+        "ref": "TTLStatus"
       }
     },
     "required": [],
@@ -2430,6 +2633,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "profile": {
         "type": "string"
+      },
+      "quota": {
+        "ref": "ApplicationQuota"
       }
     },
     "required": [
@@ -2489,6 +2695,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "profile": {
         "type": "string"
+      },
+      "quota": {
+        "ref": "ApplicationQuota"
       },
       "stopped": {
         "type": "boolean"
@@ -2870,6 +3079,29 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "string"
   },
+  "QuotaUsage": {
+    "properties": {
+      "hard": {
+        "type": "integer"
+      },
+      "resource": {
+        "type": "string"
+      },
+      "used": {
+        "type": "integer"
+      },
+      "workspace": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "workspace",
+      "resource",
+      "hard",
+      "used"
+    ],
+    "type": "object"
+  },
   "RecordRef": {
     "properties": {
       "cid": {
@@ -2928,6 +3160,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "profile": {
         "type": "string"
+      },
+      "quota": {
+        "ref": "ApplicationQuota"
       }
     },
     "required": [
@@ -2998,6 +3233,49 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "kind",
       "bytes",
       "sampledAt"
+    ],
+    "type": "object"
+  },
+  "TTLDeleted": {
+    "properties": {
+      "count": {
+        "type": "integer"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "lastAt": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "count"
+    ],
+    "type": "object"
+  },
+  "TTLStatus": {
+    "properties": {
+      "deleted": {
+        "items": {
+          "ref": "TTLDeleted"
+        },
+        "type": "array"
+      },
+      "deletedTotal": {
+        "type": "integer"
+      },
+      "sampledAt": {
+        "type": "string"
+      },
+      "tracked": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "sampledAt",
+      "tracked",
+      "deletedTotal"
     ],
     "type": "object"
   },
@@ -3936,6 +4214,24 @@ export function parseApplicationOption(value: unknown): ApplicationOption {
   return value;
 }
 
+export function validateApplicationQuota(value: unknown): ApiIssue[] {
+  return validate("ApplicationQuota", value);
+}
+
+export function isApplicationQuota(value: unknown): value is ApplicationQuota {
+  return validate("ApplicationQuota", value).length === 0;
+}
+
+export function assertApplicationQuota(value: unknown): asserts value is ApplicationQuota {
+  const issues = validate("ApplicationQuota", value);
+  if (issues.length > 0) throw new ApiValidationError("ApplicationQuota", issues);
+}
+
+export function parseApplicationQuota(value: unknown): ApplicationQuota {
+  assertApplicationQuota(value);
+  return value;
+}
+
 export function validateGatewayClusterProvider(value: unknown): ApiIssue[] {
   return validate("GatewayClusterProvider", value);
 }
@@ -4098,6 +4394,96 @@ export function parseStateDirUsage(value: unknown): StateDirUsage {
   return value;
 }
 
+export function validateGCStatus(value: unknown): ApiIssue[] {
+  return validate("GCStatus", value);
+}
+
+export function isGCStatus(value: unknown): value is GCStatus {
+  return validate("GCStatus", value).length === 0;
+}
+
+export function assertGCStatus(value: unknown): asserts value is GCStatus {
+  const issues = validate("GCStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("GCStatus", issues);
+}
+
+export function parseGCStatus(value: unknown): GCStatus {
+  assertGCStatus(value);
+  return value;
+}
+
+export function validateGCKindCount(value: unknown): ApiIssue[] {
+  return validate("GCKindCount", value);
+}
+
+export function isGCKindCount(value: unknown): value is GCKindCount {
+  return validate("GCKindCount", value).length === 0;
+}
+
+export function assertGCKindCount(value: unknown): asserts value is GCKindCount {
+  const issues = validate("GCKindCount", value);
+  if (issues.length > 0) throw new ApiValidationError("GCKindCount", issues);
+}
+
+export function parseGCKindCount(value: unknown): GCKindCount {
+  assertGCKindCount(value);
+  return value;
+}
+
+export function validateGCStuck(value: unknown): ApiIssue[] {
+  return validate("GCStuck", value);
+}
+
+export function isGCStuck(value: unknown): value is GCStuck {
+  return validate("GCStuck", value).length === 0;
+}
+
+export function assertGCStuck(value: unknown): asserts value is GCStuck {
+  const issues = validate("GCStuck", value);
+  if (issues.length > 0) throw new ApiValidationError("GCStuck", issues);
+}
+
+export function parseGCStuck(value: unknown): GCStuck {
+  assertGCStuck(value);
+  return value;
+}
+
+export function validateTTLStatus(value: unknown): ApiIssue[] {
+  return validate("TTLStatus", value);
+}
+
+export function isTTLStatus(value: unknown): value is TTLStatus {
+  return validate("TTLStatus", value).length === 0;
+}
+
+export function assertTTLStatus(value: unknown): asserts value is TTLStatus {
+  const issues = validate("TTLStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("TTLStatus", issues);
+}
+
+export function parseTTLStatus(value: unknown): TTLStatus {
+  assertTTLStatus(value);
+  return value;
+}
+
+export function validateTTLDeleted(value: unknown): ApiIssue[] {
+  return validate("TTLDeleted", value);
+}
+
+export function isTTLDeleted(value: unknown): value is TTLDeleted {
+  return validate("TTLDeleted", value).length === 0;
+}
+
+export function assertTTLDeleted(value: unknown): asserts value is TTLDeleted {
+  const issues = validate("TTLDeleted", value);
+  if (issues.length > 0) throw new ApiValidationError("TTLDeleted", issues);
+}
+
+export function parseTTLDeleted(value: unknown): TTLDeleted {
+  assertTTLDeleted(value);
+  return value;
+}
+
 export function validateMarketBidder(value: unknown): ApiIssue[] {
   return validate("MarketBidder", value);
 }
@@ -4185,6 +4571,24 @@ export function assertStoreUsage(value: unknown): asserts value is StoreUsage {
 
 export function parseStoreUsage(value: unknown): StoreUsage {
   assertStoreUsage(value);
+  return value;
+}
+
+export function validateQuotaUsage(value: unknown): ApiIssue[] {
+  return validate("QuotaUsage", value);
+}
+
+export function isQuotaUsage(value: unknown): value is QuotaUsage {
+  return validate("QuotaUsage", value).length === 0;
+}
+
+export function assertQuotaUsage(value: unknown): asserts value is QuotaUsage {
+  const issues = validate("QuotaUsage", value);
+  if (issues.length > 0) throw new ApiValidationError("QuotaUsage", issues);
+}
+
+export function parseQuotaUsage(value: unknown): QuotaUsage {
+  assertQuotaUsage(value);
   return value;
 }
 

@@ -127,9 +127,93 @@ type ApplicationStatus struct {
 
 	Store *StoreUsage `json:"store,omitempty"`
 
+	GC *GCStatus `json:"gc,omitempty"`
+
+	TTL *TTLStatus `json:"ttl,omitempty"`
+
+	Quotas []QuotaUsage `json:"quotas,omitempty"`
+
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	Market *MarketLoopStatus `json:"market,omitempty"`
+}
+
+const AnnotationTTLAfterFinished = "socialweb.computer/ttl-after-finished"
+
+type TTLDeleted struct {
+	Kind string `json:"kind"`
+
+	Count int64 `json:"count"`
+
+	LastAt string `json:"lastAt,omitempty"`
+}
+
+type TTLStatus struct {
+	SampledAt string `json:"sampledAt"`
+
+	Tracked int64 `json:"tracked"`
+
+	DeletedTotal int64 `json:"deletedTotal"`
+
+	Deleted []TTLDeleted `json:"deleted,omitempty"`
+}
+
+type ApplicationQuota struct {
+	Bids int32 `json:"bids,omitempty"`
+
+	ComputeVMs int32 `json:"computeVMs,omitempty"`
+
+	ComputeContracts int32 `json:"computeContracts,omitempty"`
+
+	NodeClaims int32 `json:"nodeClaims,omitempty"`
+
+	PolicyWorkflowRuns int32 `json:"policyWorkflowRuns,omitempty"`
+
+	DenoRuns int32 `json:"denoRuns,omitempty"`
+}
+
+type QuotaUsage struct {
+	Workspace string `json:"workspace"`
+
+	Resource string `json:"resource"`
+
+	Hard int64 `json:"hard"`
+
+	Used int64 `json:"used"`
+}
+
+type GCKindCount struct {
+	Kind string `json:"kind"`
+
+	Count int64 `json:"count"`
+
+	Examples []string `json:"examples,omitempty"`
+}
+
+type GCStuck struct {
+	Kind string `json:"kind"`
+
+	Finalizer string `json:"finalizer"`
+
+	Controller string `json:"controller"`
+
+	Count int64 `json:"count"`
+
+	Examples []string `json:"examples,omitempty"`
+}
+
+type GCStatus struct {
+	SampledAt string `json:"sampledAt"`
+
+	Objects int64 `json:"objects"`
+
+	OrphanTotal int64 `json:"orphanTotal"`
+
+	Orphans []GCKindCount `json:"orphans,omitempty"`
+
+	StuckTotal int64 `json:"stuckTotal"`
+
+	Terminating []GCStuck `json:"terminating,omitempty"`
 }
 
 type MarketLoopStatus struct {
@@ -253,6 +337,8 @@ type MarketBidderSpec struct {
 	SigningKeyRotation int32 `json:"signingKeyRotation,omitempty"`
 
 	Options []ApplicationOption `json:"options,omitempty"`
+
+	Quota *ApplicationQuota `json:"quota,omitempty"`
 }
 
 type MarketRequester struct {
@@ -280,6 +366,8 @@ type MarketRequesterSpec struct {
 	BidderDids []string `json:"bidderDids,omitempty"`
 
 	Options []ApplicationOption `json:"options,omitempty"`
+
+	Quota *ApplicationQuota `json:"quota,omitempty"`
 }
 
 type Gateway struct {
@@ -305,6 +393,8 @@ type GatewaySpec struct {
 	BidderDids []string `json:"bidderDids,omitempty"`
 
 	Options []ApplicationOption `json:"options,omitempty"`
+
+	Quota *ApplicationQuota `json:"quota,omitempty"`
 
 	MarketNetwork *GatewayMarketNetwork `json:"marketNetwork,omitempty"`
 
@@ -353,6 +443,8 @@ type SshGatewaySpec struct {
 
 	Options []ApplicationOption `json:"options,omitempty"`
 
+	Quota *ApplicationQuota `json:"quota,omitempty"`
+
 	OwnerSessionsFile string `json:"ownerSessionsFile,omitempty"`
 }
 
@@ -393,6 +485,8 @@ type NetworkApp struct {
 	Kcp *KcpProvider `json:"kcp,omitempty"`
 
 	Options []ApplicationOption `json:"options,omitempty"`
+
+	Quota *ApplicationQuota `json:"quota,omitempty"`
 
 	OwnerSessionsFile string `json:"ownerSessionsFile,omitempty"`
 
@@ -441,6 +535,10 @@ type MarketNetworkStatus struct {
 	Apps []NetworkAppStatus `json:"apps,omitempty"`
 
 	StateDir *StateDirUsage `json:"stateDir,omitempty"`
+
+	GC *GCStatus `json:"gc,omitempty"`
+
+	TTL *TTLStatus `json:"ttl,omitempty"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }

@@ -1,5 +1,7 @@
 export const GROUP_NAME = "socialweb.computer";
 export const VERSION = "v1alpha1";
+export const BID_CONDITION_COMPLETE = "Complete";
+export const BID_CONDITION_FAILED = "Failed";
 export const CONDITION_PREPARED = "Prepared";
 export const CONDITION_STARTED = "Started";
 export const CONDITION_RUNTIME_OBSERVED = "RuntimeObserved";
@@ -217,6 +219,7 @@ export interface BidStatus {
   computeVM?: string;
   timings?: BidTimings;
   terminated?: BidTerminated;
+  conditions?: Condition[];
 }
 
 export interface BidTimings {
@@ -711,7 +714,7 @@ export const BID_RESOURCE: ApiResource = {
   listKind: "BidList",
   plural: "bids",
   singular: "bid",
-  schema: "v1alpha1-3.bids.socialweb.computer",
+  schema: "v1alpha1-4.bids.socialweb.computer",
   export: "computevms",
 };
 
@@ -1089,6 +1092,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "computeVM": {
         "type": "string"
+      },
+      "conditions": {
+        "items": {
+          "ref": "Condition"
+        },
+        "type": "array"
       },
       "message": {
         "type": "string"
