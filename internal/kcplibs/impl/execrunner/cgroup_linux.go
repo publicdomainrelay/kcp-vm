@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const (
@@ -20,12 +21,15 @@ const (
 	supervisorLeaf = "supervisor"
 
 	podCgroupPrefix = "pod-"
+
+	subtreeAttempts = 20
+
+	subtreeRetryDelay = 50 * time.Millisecond
 )
 
 type cgroupBase struct {
-	once sync.Once
+	mu   sync.Mutex
 	path string
-	err  error
 }
 
 var podBase cgroupBase
@@ -50,13 +54,30 @@ func ownCgroupDir() (string, error) {
 }
 
 func podCgroupBase() (string, error) {
-	podBase.once.Do(func() {
-		podBase.path, podBase.err = prepareBase()
-		if podBase.err != nil {
-			podBase.err = fmt.Errorf("execrunner: a pod memory limit needs a cgroup this process may subdivide (run the core under a unit with Delegate=yes): %w", podBase.err)
+	podBase.mu.Lock()
+	defer podBase.mu.Unlock()
+	if podBase.path != "" {
+		return podBase.path, nil
+	}
+	path, err := prepareBase()
+	if err != nil {
+		return "", fmt.Errorf("execrunner: a pod memory limit needs a cgroup this process may subdivide (run the core under a unit with Delegate=yes): %w", err)
+	}
+	podBase.path = path
+	return path, nil
+}
+
+func movePids(from, to string) error {
+	body, err := os.ReadFile(filepath.Join(from, "cgroup.procs"))
+	if err != nil {
+		return err
+	}
+	for _, field := range strings.Fields(string(body)) {
+		if err := os.WriteFile(filepath.Join(to, "cgroup.procs"), []byte(field), 0o644); err != nil && !errors.Is(err, syscall.ESRCH) && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
-	})
-	return podBase.path, podBase.err
+	}
+	return nil
 }
 
 func prepareBase() (string, error) {
@@ -71,8 +92,18 @@ func prepareBase() (string, error) {
 	if err := os.WriteFile(filepath.Join(leaf, "cgroup.procs"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "cgroup.subtree_control"), []byte("+memory"), 0o644); err != nil {
-		return "", err
+	for attempt := 0; ; attempt++ {
+		if err := movePids(dir, leaf); err != nil {
+			return "", err
+		}
+		err := os.WriteFile(filepath.Join(dir, "cgroup.subtree_control"), []byte("+memory"), 0o644)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EBUSY) || attempt >= subtreeAttempts {
+			return "", err
+		}
+		time.Sleep(subtreeRetryDelay)
 	}
 	removeStalePodCgroups(dir)
 	return dir, nil

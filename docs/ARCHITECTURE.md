@@ -3709,8 +3709,11 @@ because it bounds a mechanism the rest of this document leans on.
   unit's cgroup, with `memory.max` = the limit, `memory.swap.max` = 0 and `memory.oom.group` = 1. The
   core unit needs `Delegate=yes` and `OOMPolicy=continue`: the installed core templates and the dev
   core spec carry both; without `OOMPolicy=continue` systemd stops the whole core when the kernel kills
-  one pod. At first use the core moves itself into a `supervisor` leaf of its unit cgroup and enables
-  the memory controller for the unit's subtree (no-internal-process rule). A pod that cannot get its
+  one pod. At first use the core moves every process of its unit cgroup (itself and any helper it forked
+  earlier) into a `supervisor` leaf, and only then enables the memory controller for the unit's subtree
+  (no-internal-process rule: the enable write returns EBUSY while any process is left in the unit cgroup,
+  so it is retried after another move). A failure is not remembered: the next pod start tries again.
+  systemd removes the stopped unit's cgroup tree, so a restarted core starts with the controller off. A pod that cannot get its
   cgroup under an enforcing host does not start. The `dev` backend (devsup, `proc`) enforces no limit by
   design (the same as for units), so a pod there runs with the V8 heap flag alone. The breach is
   classified at exit and written into `status.restartReasons` (a count per reason): `OOMKilled` (the
