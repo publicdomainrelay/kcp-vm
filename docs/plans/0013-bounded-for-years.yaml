@@ -166,7 +166,7 @@ items:
     files: ["internal/openbao", "internal/openbaoctl", "internal/baosync", "api (OpenBaoServer spec)"]
     done_when: "after 500 DenoPod restarts the OpenBao storage size of the instance is within 5% of its start."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M3-DISK-RETENTION
     milestone: M3

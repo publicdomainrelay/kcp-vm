@@ -7694,6 +7694,80 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   against the engine started alone with the same permissions. Latency of the local hop is read by plan
   0009 M4-LATENCY-READINGS.
 
+- **Vault storage stays bounded: no_store leaf roles, pki auto-tidy, kv max_versions, token and lease
+  tidy (plan 0013 M3-VAULT-TIDY, 2026-10-15).** The OpenBaoServer spec declares the bounds and the
+  controller keeps them in sync like its mounts. `declared.pkiRoles[].noStore` writes `no_store`; every
+  role of the cluster vault and of the root vault sets it (the DenoPod leaf role that
+  `kcplibs/pkiprovisioner` writes in each namespace of the network vault too) except the two kubeconfig
+  roles, whose certificates must stay stored: `pki/revoke` by serial and the `pki/certs/revoked` list
+  that the client certificate front reads need them. `declared.pkiTidy[]` (mount, interval default 6 h,
+  safetyBuffer default 72 h) writes `<mount>/config/auto-tidy` with `enabled`, `tidy_cert_store`,
+  `tidy_revoked_certs` and `tidy_expired_issuers` false, so OpenBao runs the tidy itself; it removes a
+  certificate only after its notAfter plus the buffer, which is why a revoked certificate that has not
+  expired and a no-expiry certificate (notAfter at the CA's, 2036) stay, and the issuer settings that
+  `ImportClientCA` rewrites on each harvest (`leaf_not_after_behavior`, `usage`) are never written by
+  the tidy. `declared.secretMounts[].maxVersions` (default 3 for every kv-v2 mount the controller
+  declares, the clients' mounts included) writes `<mount>/config`. `spec.tidy.interval` (default 6 h,
+  at least 1 m) is the interval of the controller's own `auth/token/tidy` and `sys/leases/tidy` calls,
+  recorded in `status.tidy` (lastRunAt, interval, message). The core's policy gained
+  `+/config` write, `+/config/auto-tidy`, `auth/token/tidy` and `sys/leases/tidy`. Readings (market
+  network vtidy1, `dev up --profile market-network --bidders 0`, UTC 18:31-19:00): the network vault
+  declared 2 secret mounts, 1 auth mount, 2 policies and 3 roles and configs on the first pass with
+  `status.tidy` set; `secret/config` read `max_versions` 3; with pkiTidy patched to interval 1 m and
+  safetyBuffer 5 s, `pki/config/auto-tidy` read enabled, interval 60, safety_buffer 5. Five
+  certificates were issued from throwaway roles with no_store false (ttl 3 s expired, a revoked one with
+  ttl 1 h, a live one with ttl 24 h, a revoked one that then expired, one with ttl 700 h): after the
+  automatic tidy (`tidy-status` Finished, cert_store_deleted_count 4, revoked_cert_deleted_count 2)
+  the two expired certificates and their revocation entries were gone and the revoked unexpired
+  certificate (still on `pki/certs/revoked`), the 24 h and the 700 h certificates stayed. Storage
+  of the network vault (file backend, bytes under `openbao/storage`): with the namespace leaf roles
+  still storing certificates, 60 restarts of one DenoPod (`dev restart vtidy1 relay:relay`) took it
+  from 130698 bytes in 134 files to 176446 bytes in 194 files (+35.0 %, one certificate per
+  restart); after the core ran this code (no_store on the namespace roles), 500 restarts of the same
+  DenoPod left it at 180613 bytes in 197 files at restarts 0, 25, 50 and every 25 up to 500
+  (+0.00 %). A tenant cluster vault of a gateway network shows `noStore: true` on its kcp-client,
+  tenant-superuser and node-client roles, `pkiTidy` on `pki`, and `status.tidy`.
+
+- **The atproto auth plugin is declared on the gateway root vault and the ssh-gateway vault, with its
+  config, roles and policies from the spec (plan 0014 M2-GATEWAY-SCOPE, 2026-10-15).** `OpenBaoServer
+  spec.plugins[].atproto` carries `config` (clientID, redirectURIs, clientName, scope, plcDirectoryURL,
+  trustedHosts, trustedCAPEM) and `roles` (name, boundDIDs, boundHandles, policies, tokenTTL,
+  tokenMaxTTL). The controller writes `auth/<mount>/config` and `auth/<mount>/role/<name>` like any
+  declared object, and keeps the `role/` collection of that mount exactly to the declaration (the
+  sshsig mount is not managed: its roles are written at run time by the ComputeVM controller). The CA
+  and the client key are write-only: the plugin returns `trusted_ca_set` and the key id, so drift is
+  read from those. `spec.declared.policies` may name `%accessor:<mount>%` in a path; the controller
+  replaces it with the accessor of that auth mount and applies the policy in the same pass that
+  enabled the mount (a second read of `sys/auth` and a second sync), so `atproto-self` reads
+  `auth/atproto/session/{{identity.entity.aliases.<accessor>.name}}`, deletes it and updates its
+  `/proof`, and nothing else. Decided here, user may veto: `client_id` is the application's
+  `public-origin` option plus `/oauth-client-metadata.json` and the redirect URI is `/oauth/callback`
+  (the path M2-WEB-APP-SIGNIN serves); without that option the mount is declared with roles and no
+  config. In a market network `plc_directory_url` is `https://<the plc host name>` and `trusted_hosts`
+  is `<name>=<address>` for the `plc.` and `pds.` hosts of the network value, with the network CA
+  bundle as `trusted_ca_pem`; a prod gateway has no network value and uses plc.directory. Role `user`
+  admits every DID (policy atproto-self, token ttl 1 h, max 30 d). The gateway requester client has
+  `atproto-session-proxy` (read and proof on any session); the web app client has only its own kv
+  mount. The root vault spec is now built from the Gateway spec (`appctl.RootVaultSpec`), the
+  ssh-gateway vault from the SshGateway spec through `{{.VaultExtra}}` in
+  `deploy/apps/ssh-gateway/vault.yaml`. Bidder, requester and tenant cluster vaults declare no
+  plugin of this kind. Readings (market networks on hat-8, UTC 18:43-18:50, `dev up --profile
+  market-network --bidders 0 --with-gateway`, gateway option public-origin
+  `https://127.0.0.1:41873`, `run gateway ssh` with public-origin `https://127.0.0.1:41874`): the
+  gateway's `root-vault` lists `approle`, `atproto`, `cert`, `token` and its `status.plugins` runs
+  sha256 011a1ae6...33f363a, the pin; Synced InSync on the first pass with 13 policies and 14
+  roles and configs; the rendered `atproto-self` names `auth_atproto_8716bd94`, the mount's
+  accessor. The `ssh-gateway` vault lists `atproto`, `cert`, `token` with the same running sha256;
+  the tenant cluster vault of the gateway declares no plugin. A login by DID through the network's
+  alice PDS DenoPod (an account made on it, login/start, a scripted authorize, the callback to
+  `auth/atproto/login`): 200, policies `atproto-self` and `default`, ttl 3600 s, metadata did and
+  pds; with that token the own session read 200 (ten keys, none secret) and the own proof 200; the
+  session and the proof of another DID 403; `auth/atproto/config` and a kv list 403. With the
+  `requester` client's cert token: session read 200, proof 200, delete 403; with the web app
+  client's: all three 403. The web app client's policy `client-socialweb-computer-k8s` lists only
+  its own `data` and `metadata` paths. Not closed: the web app still writes `oauth-sessions/<did>`
+  into its own kv until M2-WEB-APP-SIGNIN removes that path.
+
 ## 16. Vocabulary
 
 | | |

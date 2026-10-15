@@ -155,7 +155,7 @@ items:
     files: ["api (OpenBaoServer spec.plugins config, atproto roles)", "internal/openbao", "internal/openbaoctl", "internal/appctl/gateway.go", "internal/appctl/sshgateway.go", "deploy/apps/gateway"]
     done_when: "on a market network with a gateway: root-vault and ssh-gateway list an auth/atproto mount; no bidder, requester or tenant cluster vault does; `bao policy read` of the web app client shows no path outside auth/atproto session paths and its own kv; no kv path of the web app holds a session."
     risks: []
-    status: todo
+    status: doing
     evidence:
   - id: M2-WEB-APP-SIGNIN
     milestone: M2
