@@ -91,7 +91,6 @@ try {
     await step(`consent-${i}`);
   }
   if (new URL(page.url()).origin !== origin) throw new Error(`still on ${new URL(page.url()).origin} after consent`);
-  if (args.done) await page.waitForFunction((t: string) => document.body.innerText.includes(t), { timeout: 60_000 }, args.done);
   await pause(3000);
   const cookies = (await page.cookies()).map((c) => ({ name: c.name, httpOnly: c.httpOnly, secure: c.secure, sameSite: c.sameSite, path: c.path }));
   console.log(JSON.stringify({ cookies }));
@@ -99,6 +98,7 @@ try {
     const jar = await page.cookies();
     await Deno.writeTextFile(args["cookie-file"] as string, JSON.stringify(jar), { mode: 0o600 });
   }
+  if (args.done) await page.waitForFunction((t: string) => document.body.innerText.includes(t), { timeout: 60_000 }, args.done);
   await step("done");
   console.log(JSON.stringify({ ok: true, screenshots: out }));
 } catch (err) {

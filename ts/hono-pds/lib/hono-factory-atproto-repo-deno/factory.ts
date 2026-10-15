@@ -553,9 +553,22 @@ export function createRepoFactory(opts: RepoFactoryOptions): RepoFactory {
     sessionInjector = createSessionInjector(tokenStore, opts.oauthServer.issuer);
 
     // Resolve issuer from request Host header (handles port: 0 dynamic assignment)
-    function resolveIssuer(c: { req: { header: (n: string) => string | undefined } }): string {
-      const host = c.req.header("host") ?? "127.0.0.1";
-      const scheme = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
+    function resolveIssuer(c: { req: { header: (n: string) => string | undefined; url: string } }): string {
+      let authority: string | undefined;
+      let requestScheme: string | undefined;
+      try {
+        const u = new URL(c.req.url);
+        authority = u.host;
+        requestScheme = u.protocol.replace(/:$/, "");
+      } catch {
+        authority = undefined;
+      }
+      const reached = c.req.header("host") ?? authority ?? "127.0.0.1";
+      const reachedLoopback = reached.startsWith("localhost") || reached.startsWith("127.");
+      if (reachedLoopback && opts.publicHostname) return `https://${opts.publicHostname}`;
+      const host = reached;
+      const loopback = reachedLoopback;
+      const scheme = loopback ? requestScheme ?? "http" : "https";
       return `${scheme}://${host}`;
     }
 
@@ -576,6 +589,7 @@ export function createRepoFactory(opts: RepoFactoryOptions): RepoFactory {
         authorization_endpoint: `${issuer}/oauth/authorize`,
         token_endpoint: `${issuer}/oauth/token`,
         pushed_authorization_request_endpoint: `${issuer}/oauth/par`,
+        revocation_endpoint: `${issuer}/oauth/revoke`,
         require_pushed_authorization_requests: true,
         token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
         token_endpoint_auth_signing_alg_values_supported: ["ES256"],
@@ -721,6 +735,14 @@ export function createRepoFactory(opts: RepoFactoryOptions): RepoFactory {
       if (state) redirectParams.set("state", state);
       redirectParams.set("iss", resolveIssuer(c));
       return c.json({ redirect_uri: `${redirectUri}?${redirectParams.toString()}`, code });
+    });
+
+    app.post("/oauth/revoke", async (c) => {
+      const body = new URLSearchParams(await c.req.text().catch(() => ""));
+      const token = body.get("token");
+      if (!token) return c.json({ error: "invalid_request", error_description: "token required" }, 400);
+      await tokenStore.revoke(token);
+      return c.json({});
     });
 
     app.get("/oauth/authorize", (c) => {
