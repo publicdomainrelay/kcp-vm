@@ -44,6 +44,10 @@ type process struct {
 	exitCode int32
 
 	env map[string]string
+
+	memoryLimit uint64
+
+	oomKilled bool
 }
 
 type processSpec struct {
@@ -60,6 +64,10 @@ type processSpec struct {
 	envMap map[string]string
 
 	envForDir func(dir string, caller []string) []string
+
+	memoryMax uint64
+
+	memoryLimit uint64
 }
 
 const retainedRunsLimit = 128
@@ -140,9 +148,17 @@ func (s *supervisor) start(entry processSpec) (string, error) {
 	if err := host.prepare(cmd, s.unit); err != nil {
 		return abandon(err)
 	}
+	var lim *limiter
+	if entry.memoryMax > 0 {
+		if lim, err = newLimiter(cmd, id, entry.memoryMax); err != nil {
+			return abandon(err)
+		}
+	}
 	if err := cmd.Start(); err != nil {
+		lim.release()
 		return abandon(fmt.Errorf("execrunner: start %s process: %w", s.prefix, err))
 	}
+	lim.started()
 
 	run := &process{
 		dir:     dir,
@@ -152,9 +168,12 @@ func (s *supervisor) start(entry processSpec) (string, error) {
 		ticks:   startTicks(cmd.Process.Pid),
 		started: time.Now(),
 		env:     entry.envMap,
+
+		memoryLimit: entry.memoryLimit,
 	}
 	if err := writeState(run); err != nil {
 		host.killGroup(run.pid)
+		lim.release()
 		return abandon(err)
 	}
 	s.mu.Lock()
@@ -167,6 +186,8 @@ func (s *supervisor) start(entry processSpec) (string, error) {
 		if cmd.ProcessState != nil {
 			run.exitCode = int32(cmd.ProcessState.ExitCode())
 		}
+		run.oomKilled = lim.oomKilled()
+		lim.release()
 		writeDone(run, s.doneFile)
 		close(run.done)
 		if s.doneFile != "" {
@@ -227,7 +248,7 @@ func writeDone(run *process, doneFile string) {
 	if doneFile == "" {
 		return
 	}
-	body, err := json.Marshal(podDone{ExitCode: run.exitCode})
+	body, err := json.Marshal(podDone{ExitCode: run.exitCode, OOMKilled: run.oomKilled, MemoryLimit: run.memoryLimit})
 	if err != nil {
 		return
 	}

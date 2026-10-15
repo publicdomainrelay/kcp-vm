@@ -1,6 +1,7 @@
 name: dispatcher
 entry: hono-did-key-ingress-proxy
 stateDir: "{{.StateDir}}/relay-dispatcher"
+memory: 512Mi
 serviceAccount: deno-runner
 tls: trust
 args: ["--hostname", "relay.localhost", "--port", "0", "--additional-hosts", "dispatcher.default.relay.svc.kcp.local,*", "--plc-directory-url", "https://plc.default.global.svc.kcp.local"]

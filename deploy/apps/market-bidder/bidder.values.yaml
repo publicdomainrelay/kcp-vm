@@ -1,6 +1,7 @@
 name: bidder
 entry: hono-bidder
 stateDir: "{{.StateDir}}"
+memory: 1536Mi
 serviceAccount: deno-runner
 tls: trust
 trust: [{{.Trust}}]

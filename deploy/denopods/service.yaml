@@ -6,7 +6,7 @@ metadata:
   finalizers:
     - denopod.deno.computer/run
 spec:
-  restartPolicy: Always{{.ServiceAccount}}{{.Projected}}
+  restartPolicy: Always{{.ServiceAccount}}{{.Projected}}{{.Resources}}
   env:
     SERVICE_ENTRY: {{.Entry}}
     SERVICE_STATE_DIR: {{.StateDir}}
@@ -69,6 +69,7 @@ spec:
       "KCP_NAMESPACE",
       "KCP_SERVICE_NAME",
       "KCP_SERVICE_DOMAIN",
+      "DENO_V8_FLAGS",
       "SWC_UNIT",
       "SWC_DEVSUP",
       "INVOCATION_ID",
@@ -194,6 +195,7 @@ spec:
         - SERVICE_TRUST_FILES
         - DENO_DIR
         - DENO_CERT
+        - DENO_V8_FLAGS
         - PATH
         - XDG_RUNTIME_DIR
         - KCP_SHIM

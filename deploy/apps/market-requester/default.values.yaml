@@ -1,6 +1,7 @@
 name: requester
 entry: request-vm-ssh
 stateDir: "{{.StateDir}}"
+memory: 1Gi
 serviceAccount: deno-runner
 tls: none
 args: ["--port", "0", "--pds-state-path", "{{.StateDir}}/pds", "--market-identity-kcp-workspace", "{{.Kcp.Workspace}}", "--compute-contract-kcp-workspace", "{{.Kcp.Workspace}}", "--identity-vault-openbao-server", "{{.Vault.Server}}", "--identity-vault-openbao-client", "{{.Vault.Client}}", "--identity-vault-kcp-workspace", "{{.Kcp.Workspace}}"{{.ExtraArgs}}]

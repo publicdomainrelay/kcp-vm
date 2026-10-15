@@ -1,6 +1,7 @@
 name: relay
 entry: hono-atproto-relay
 stateDir: "{{.StateDir}}/relay-relay"
+memory: 512Mi
 serviceAccount: deno-runner
 tls: serve
 args: ["--port", "0", "--hostname", "127.0.0.1", "--kv-path", "{{.StateDir}}/relay-relay/kv.sqlite3"]

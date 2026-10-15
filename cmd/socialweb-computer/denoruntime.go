@@ -12,6 +12,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denorun"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devsup"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
@@ -65,5 +66,6 @@ func (a *app) coreDenoRuntime(vals clicfg.Values, rec devinstance.Record, applyT
 	}
 	unit, _ := a.env.LookupEnv(devsup.EnvUnit)
 	return denoruntime.Config{StateDir: rec.Layout.StateDir, Deno: deno.Path, Kubeconfig: rec.Layout.FrontKubeconfig(),
-		Closure: prepared, Unit: unit, ApplyTimeout: applyTimeout, OpenBao: bao, Log: a.log}, nil
+		Closure: prepared, Unit: unit, ApplyTimeout: applyTimeout, OpenBao: bao, Log: a.log,
+		EnforceMemory: rec.Backend == hostsvc.BackendSystemdUser}, nil
 }

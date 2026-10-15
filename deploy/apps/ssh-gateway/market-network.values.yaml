@@ -1,6 +1,7 @@
 name: ssh-gateway
 entry: hono-socialweb-computer-ssh
 stateDir: "{{.StateDir}}"
+memory: 512Mi
 serviceAccount: deno-runner
 tls: trust
 trust: ["{{.CABundle}}"]

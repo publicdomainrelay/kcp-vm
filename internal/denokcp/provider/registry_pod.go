@@ -75,5 +75,10 @@ func podStatusPatch(st v1alpha1.DenoPodStatus) ([]byte, error) {
 	} else {
 		status["projected"] = nil
 	}
+	if st.RestartReasons != nil {
+		status["restartReasons"] = st.RestartReasons
+	} else {
+		status["restartReasons"] = nil
+	}
 	return json.Marshal(map[string]any{"status": status})
 }

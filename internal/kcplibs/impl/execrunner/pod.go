@@ -40,6 +40,8 @@ type PodOptions struct {
 	TrustBundle func() []byte
 
 	Unit string
+
+	EnforceMemory bool
 }
 
 type Pod struct {
@@ -52,6 +54,10 @@ var _ runner.PodRunner = (*Pod)(nil)
 
 type podDone struct {
 	ExitCode int32 `json:"exitCode"`
+
+	OOMKilled bool `json:"oomKilled,omitempty"`
+
+	MemoryLimit uint64 `json:"memoryLimit,omitempty"`
 }
 
 func NewPod(opts PodOptions) (*Pod, error) {
@@ -86,15 +92,25 @@ func (p *Pod) Start(_ context.Context, req runner.PodRequest) (string, error) {
 	if bundle := p.trustBundle(); len(bundle) > 0 {
 		files["ca.pem"] = bundle
 	}
-	args := append([]string{"run"}, req.PermissionArgs...)
+	args := []string{"run"}
+	env := p.env(req)
+	if req.MemoryMax > 0 {
+		heap := "--max-old-space-size=" + strconv.FormatUint(heapMiB(req.MemoryMax), 10)
+		args = append(args, "--v8-flags="+heap)
+		env = append(env, "DENO_V8_FLAGS="+heap)
+	}
+	args = append(args, req.PermissionArgs...)
 	args = append(args, "main.ts")
 	return p.sup.start(processSpec{
 		binary:    p.opts.DenoBin,
 		args:      args,
 		files:     files,
-		env:       p.env(req),
+		env:       env,
 		envMap:    req.Env,
 		envForDir: p.dirEnv,
+		memoryMax: p.enforced(req.MemoryMax),
+
+		memoryLimit: req.MemoryMax,
 	})
 }
 
@@ -114,7 +130,58 @@ func (p *Pod) Observe(_ context.Context, runID string) (runner.PodStatus, error)
 	if run.stopped.Load() {
 		return runner.PodStatus{State: runner.StateFailed, Message: "the deno process was stopped"}, nil
 	}
-	return p.result(run)
+	status, err := p.result(run)
+	if err == nil {
+		p.classify(run, &status)
+	}
+	return status, err
+}
+
+func (p *Pod) enforced(memoryMax uint64) uint64 {
+	if p.opts.EnforceMemory {
+		return memoryMax
+	}
+	return 0
+}
+
+func heapMiB(memoryMax uint64) uint64 {
+	return memoryMax / 100 * 80 >> 20
+}
+
+func (p *Pod) classify(run *process, status *runner.PodStatus) {
+	if status.State != runner.StateFailed {
+		return
+	}
+	var done podDone
+	body, err := os.ReadFile(filepath.Join(run.dir, p.sup.doneFile))
+	if err != nil || json.Unmarshal(body, &done) != nil || done.MemoryLimit == 0 {
+		return
+	}
+	if done.OOMKilled {
+		status.Reason = runner.ReasonOOMKilled
+		status.Message = fmt.Sprintf("the deno process was killed for exceeding its memory limit of %d bytes", done.MemoryLimit)
+		return
+	}
+	if strings.Contains(stderrTail(run.dir), "out of memory") {
+		status.Reason = runner.ReasonHeapLimitExceeded
+		status.Message = fmt.Sprintf("the deno process exceeded its V8 heap limit of %d MiB (80%% of its memory limit)", heapMiB(done.MemoryLimit))
+	}
+}
+
+func stderrTail(dir string) string {
+	f, err := os.Open(filepath.Join(dir, StderrFile))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	const tail = 64 << 10
+	buf := make([]byte, min(info.Size(), tail))
+	n, _ := f.ReadAt(buf, info.Size()-int64(len(buf)))
+	return string(buf[:n])
 }
 
 func (p *Pod) Stop(_ context.Context, runID string) error {

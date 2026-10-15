@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-6.denopods.deno.computer
+  name: v1alpha1-7.denopods.deno.computer
 spec:
   group: deno.computer
   names:
@@ -71,6 +71,11 @@ spec:
               ttlSecondsAfterFinished:
                 type: integer
                 format: int64
+              resources:
+                type: object
+                properties:
+                  memory:
+                    type: string
               projected:
                 type: array
                 items:
@@ -132,6 +137,11 @@ spec:
               restarts:
                 type: integer
                 format: int32
+              restartReasons:
+                type: object
+                additionalProperties:
+                  type: integer
+                  format: int32
               startTime:
                 type: string
                 format: date-time

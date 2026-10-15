@@ -185,6 +185,10 @@ func (in *DenoPodSpec) DeepCopyInto(out *DenoPodSpec) {
 			in.Projected[i].DeepCopyInto(&out.Projected[i])
 		}
 	}
+	if in.Resources != nil {
+		v := *in.Resources
+		out.Resources = &v
+	}
 }
 
 func (in *ProjectedCredential) DeepCopyInto(out *ProjectedCredential) {
@@ -303,6 +307,12 @@ func (in *DenoPermissions) DeepCopyInto(out *DenoPermissions) {
 
 func (in *DenoPodStatus) DeepCopyInto(out *DenoPodStatus) {
 	*out = *in
+	if in.RestartReasons != nil {
+		out.RestartReasons = make(map[string]int32, len(in.RestartReasons))
+		for k, v := range in.RestartReasons {
+			out.RestartReasons[k] = v
+		}
+	}
 	if in.StartTime != nil {
 		out.StartTime = in.StartTime.DeepCopy()
 	}

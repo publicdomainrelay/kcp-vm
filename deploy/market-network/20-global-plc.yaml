@@ -1,6 +1,7 @@
 name: plc
 entry: hono-plc
 stateDir: "{{.StateDir}}/global-plc"
+memory: 256Mi
 serviceAccount: deno-runner
 tls: serve
 args: ["--port", "0", "--hostname", "127.0.0.1"]

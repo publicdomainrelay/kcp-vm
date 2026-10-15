@@ -1,6 +1,7 @@
 name: guest-kcp
 entry: hono-bidder-guest
 stateDir: "{{.Guest.StateDir}}"
+memory: 1Gi
 serviceAccount: deno-runner
 tls: trust
 trust: [{{.Trust}}]

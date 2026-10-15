@@ -33,6 +33,12 @@ type DenoPodSpec struct {
 	TTLSecondsAfterFinished *int64 `json:"ttlSecondsAfterFinished,omitempty"`
 
 	Projected []ProjectedCredential `json:"projected,omitempty"`
+
+	Resources *DenoPodResources `json:"resources,omitempty"`
+}
+
+type DenoPodResources struct {
+	Memory string `json:"memory,omitempty"`
 }
 
 type ProjectedCredential struct {
@@ -107,6 +113,8 @@ type DenoPodStatus struct {
 	RunID string `json:"runID,omitempty"`
 
 	Restarts int32 `json:"restarts,omitempty"`
+
+	RestartReasons map[string]int32 `json:"restartReasons,omitempty"`
 
 	StartTime *metav1.Time `json:"startTime,omitempty"`
 

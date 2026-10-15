@@ -7,6 +7,8 @@ metadata:
     - denopod.deno.computer/run
 spec:
   restartPolicy: Always
+  resources:
+    memory: 256Mi
   serviceAccount:
     name: deno-runner
     namespace: default

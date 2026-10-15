@@ -17,6 +17,12 @@ const (
 	StateFailed State = "failed"
 )
 
+const (
+	ReasonOOMKilled = "OOMKilled"
+
+	ReasonHeapLimitExceeded = "HeapLimitExceeded"
+)
+
 type PodRequest struct {
 	Name string
 
@@ -37,6 +43,8 @@ type PodRequest struct {
 	Server string
 
 	Workspace string
+
+	MemoryMax uint64
 }
 
 type PodStatus struct {
@@ -45,6 +53,8 @@ type PodStatus struct {
 	ExitCode int32
 
 	Message string
+
+	Reason string
 
 	Outputs map[string]string
 

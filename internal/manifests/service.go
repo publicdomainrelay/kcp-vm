@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/yaml"
 
 	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
@@ -39,6 +40,7 @@ type Service struct {
 	Entry          string                             `json:"entry"`
 	StateDir       string                             `json:"stateDir"`
 	ServiceAccount string                             `json:"serviceAccount"`
+	Memory         string                             `json:"memory"`
 	TLS            string                             `json:"tls"`
 	Trust          []string                           `json:"trust,omitempty"`
 	Args           []string                           `json:"args"`
@@ -139,6 +141,9 @@ func (s Service) Check(entries map[string]tsbundle.EntrySpec) error {
 		if slices.Contains(templateOwnedEnv, k) {
 			add("env %s is set by the template and never by a service", k)
 		}
+	}
+	if _, err := resource.ParseQuantity(s.Memory); err != nil || s.Memory == "" {
+		add("memory %q is not a quantity such as 512Mi; every service has a memory limit", s.Memory)
 	}
 	if s.Probe.Host == "" || !strings.HasPrefix(s.Probe.Path, "/") {
 		add("probe needs a host and a path starting with /")
@@ -260,6 +265,7 @@ func (s Service) TemplateData(entries map[string]tsbundle.EntrySpec) (map[string
 		}
 		data["ServiceAccount"] = "\n  serviceAccount: " + text
 	}
+	data["Resources"] = "\n  resources:\n    memory: " + s.Memory
 	data["Projected"] = ""
 	if len(s.Projected) > 0 {
 		text, err := jsonText(s.Projected)

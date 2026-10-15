@@ -39,6 +39,8 @@ type Config struct {
 	OpenBao      OpenBao
 	OpenBaoFrom  func(context.Context) (OpenBao, error)
 	Log          *slog.Logger
+
+	EnforceMemory bool
 }
 
 type OpenBao struct {
@@ -76,6 +78,8 @@ func (c Config) PodOptions(trust func() []byte) execrunner.PodOptions {
 		Timeout:      RunnerTimeout,
 		TrustBundle:  trust,
 		Unit:         c.Unit,
+
+		EnforceMemory: c.EnforceMemory,
 	}
 }
 

@@ -43,6 +43,7 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 			State:    state,
 			ExitCode: exitCodePtr(st.ExitCode),
 			Message:  st.Message,
+			Reason:   st.Reason,
 			Outputs:  st.Outputs,
 		}
 		p.observeProbes(ctx, ref, pod, &o)
@@ -84,7 +85,7 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 				res.Message = projectErr.Error()
 				continue
 			}
-			req, err := p.podRequest(ctx, ref, &pod.Spec.DenoPodTemplate, pr)
+			req, err := p.podRequest(ctx, ref, &pod.Spec.DenoPodTemplate, podMemory(pod.Spec.Resources), pr)
 			if err != nil {
 				return 0, false, err
 			}
@@ -98,6 +99,7 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 	status := v1alpha1.DenoPodStatus{
 		RunID:          runID,
 		Restarts:       res.Restarts,
+		RestartReasons: res.RestartReasons,
 		StartTime:      res.StartTime,
 		CompletionTime: res.CompletionTime,
 		ExitCode:       res.ExitCode,
@@ -215,7 +217,18 @@ func (p *Provider) runProbe(ctx context.Context, runID string, probe *v1alpha1.E
 	return passed
 }
 
-func (p *Provider) podRequest(ctx context.Context, ref Ref, tmpl *v1alpha1.DenoPodTemplate, pr projection) (runner.PodRequest, error) {
+func podMemory(r *v1alpha1.DenoPodResources) string {
+	if r == nil {
+		return ""
+	}
+	return r.Memory
+}
+
+func (p *Provider) podRequest(ctx context.Context, ref Ref, tmpl *v1alpha1.DenoPodTemplate, memory string, pr projection) (runner.PodRequest, error) {
+	memoryMax, err := parseMemory(memory)
+	if err != nil {
+		return runner.PodRequest{}, fmt.Errorf("provider: %s resources.memory: %w", ref.Name, err)
+	}
 	args, err := denospec.Args(withProjected(tmpl.Permissions.DenoSpec(), pr))
 	if err != nil {
 		return runner.PodRequest{}, fmt.Errorf("provider: %s permissions: %w", ref.Name, err)
@@ -238,6 +251,7 @@ func (p *Provider) podRequest(ctx context.Context, ref Ref, tmpl *v1alpha1.DenoP
 		Env:            env,
 		Server:         p.serverFor(tmpl, ref),
 		Workspace:      ref.LogicalCluster,
+		MemoryMax:      memoryMax,
 	}
 	if tmpl.ServiceAccount != nil {
 		if p.opts.Minter == nil {

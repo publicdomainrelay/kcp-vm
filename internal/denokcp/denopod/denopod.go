@@ -3,6 +3,7 @@ package denopod
 import (
 	"context"
 	"errors"
+	"maps"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -29,6 +30,8 @@ type ExecutionObservation struct {
 	ExitCode *int32
 
 	Message string
+
+	Reason string
 
 	Outputs map[string]string
 }
@@ -65,6 +68,8 @@ type Result struct {
 	RunID string
 
 	Restarts int32
+
+	RestartReasons map[string]int32
 
 	StartTime *metav1.Time
 
@@ -149,6 +154,7 @@ func carry(st v1alpha1.DenoPodStatus) Result {
 		Phase:          st.Phase,
 		RunID:          st.RunID,
 		Restarts:       st.Restarts,
+		RestartReasons: maps.Clone(st.RestartReasons),
 		StartTime:      st.StartTime,
 		CompletionTime: st.CompletionTime,
 		ExitCode:       st.ExitCode,
@@ -296,6 +302,10 @@ func (r *Reconciler) restart(o Observed, res Result, reason, message string) Res
 	res.Phase = v1alpha1.DenoPodRunning
 	res.RunID = ""
 	res.Restarts = o.Pod.Status.Restarts + 1
+	if res.RestartReasons == nil {
+		res.RestartReasons = map[string]int32{}
+	}
+	res.RestartReasons[reason]++
 	res.Ready = false
 	res.Message = message
 	setCondition(&res, o.Pod.Generation, metav1.ConditionFalse, v1alpha1.ConditionReady,
@@ -314,18 +324,27 @@ func (r *Reconciler) exited(o Observed, res Result) Result {
 
 	switch policy {
 	case v1alpha1.RestartAlways:
-		return r.restart(o, res, "Restarting", "the deno process exited; the restart policy is Always")
+		reason, message := exitReason(o, "the deno process exited; the restart policy is Always")
+		return r.restart(o, res, reason, message)
 	case v1alpha1.RestartOnFailure:
 		if success {
 			return r.complete(o, res, true, "Complete", "the deno process exited successfully")
 		}
-		return r.restart(o, res, "Restarting", "the deno process failed; the restart policy is OnFailure")
+		reason, message := exitReason(o, "the deno process failed; the restart policy is OnFailure")
+		return r.restart(o, res, reason, message)
 	default:
 		if success {
 			return r.complete(o, res, true, "Complete", "the deno process exited successfully")
 		}
 		return r.complete(o, res, false, "ProcessFailed", "the deno process failed and the restart policy is Never")
 	}
+}
+
+func exitReason(o Observed, message string) (string, string) {
+	if o.Execution.Reason == "" {
+		return "Restarting", message
+	}
+	return o.Execution.Reason, o.Execution.Message
 }
 
 func (r *Reconciler) complete(o Observed, res Result, ok bool, reason, message string) Result {

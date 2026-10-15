@@ -113,7 +113,7 @@ func RunCore(ctx context.Context, c CoreConfig, m hostsvc.Manager) error {
 	log.Info("the bidder application instance starts: kcp store, kine, front, its slot, then its MarketBidder root object",
 		"state", l.StateDir, "units", app.Names().UnitPrefix(), "profile", c.Spec.Profile)
 	deno := denoruntime.Config{StateDir: l.StateDir, Deno: c.Executables[ExeDeno].Path, Kubeconfig: l.FrontKubeconfig(), Closure: c.Closure,
-		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log}
+		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log, EnforceMemory: true}
 	cvm := c.ComputeVM
 	watchdogLogged := false
 	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: &app,

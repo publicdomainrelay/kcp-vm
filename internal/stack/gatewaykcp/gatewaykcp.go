@@ -239,7 +239,7 @@ func Run(ctx context.Context, c Config, m hostsvc.Manager) error {
 	c.log().Info("the gateway application instance starts: lock, kcp store, kine, front, active slot, sets, root vault, members",
 		"state", c.StateDir, "prefix", l.UnitPrefix(), "backend", string(c.Backend), "units", app.Names().UnitPrefix())
 	deno := denoruntime.Config{StateDir: c.StateDir, Deno: c.Executables[ExeDeno].Path, Kubeconfig: l.FrontKubeconfig(), Closure: c.Closure,
-		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log}
+		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log, EnforceMemory: c.Backend == hostsvc.BackendSystemdUser}
 	return run(ctx, c, l, &deno, &app, m)
 }
 

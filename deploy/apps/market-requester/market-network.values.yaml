@@ -1,6 +1,7 @@
 name: requester
 entry: request-vm-ssh
 stateDir: "{{.StateDir}}"
+memory: 1Gi
 serviceAccount: deno-runner
 tls: trust
 trust: ["{{.CABundle}}"]
