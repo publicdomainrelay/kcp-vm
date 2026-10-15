@@ -16,12 +16,15 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appcli"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/buildstamp"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/computevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devsup"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimage"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimagerelease"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/progress"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/bidder"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/request"
@@ -146,6 +149,9 @@ func runBidder(ctx context.Context, a *app, vals clicfg.Values, rest []string) i
 	if r.readyTimeout, err = time.ParseDuration(vals.String("ready-timeout")); err != nil {
 		return a.fail(exitRefused, "run bidder: ready-timeout: %v", err)
 	}
+	if r.readyTimeout < 0 {
+		return a.fail(exitRefused, "run bidder: ready-timeout: %s is negative", r.readyTimeout)
+	}
 	if r.networkTimeout, err = time.ParseDuration(vals.String("network-timeout")); err != nil {
 		return a.fail(exitRefused, "run bidder: network-timeout: %v", err)
 	}
@@ -171,11 +177,15 @@ func runBidder(ctx context.Context, a *app, vals clicfg.Values, rest []string) i
 		return a.fail(exitRefused, "run bidder: --handle is required: it names the bidder's account and owns its ComputeVMs")
 	}
 	if r.vals.String("guest-image-source") == "" {
-		src, err := r.guestImageSource(ctx)
-		if err != nil {
-			return a.fail(exitRefused, "run bidder: %v", err)
+		if backend == hostsvc.BackendSystemdUser && cachedGuestImage(r.vals.String("state-dir")) {
+			r.a.log.Info("the pinned guest image is already in the store, so no source is asked of the published artifacts")
+		} else {
+			src, err := r.guestImageSource(ctx)
+			if err != nil {
+				return a.fail(exitRefused, "run bidder: %v", err)
+			}
+			r.vals = r.vals.With("guest-image-source", src)
 		}
-		r.vals = r.vals.With("guest-image-source", src)
 	}
 	if r.handle != "" {
 		if err := bidder.CheckHandle(r.handle); err != nil {
@@ -221,13 +231,37 @@ func (r *bidderRun) readMarketNetwork(path string) error {
 	return nil
 }
 
+func cachedGuestImage(stateDir string) bool {
+	if stateDir == "" {
+		return false
+	}
+	pin, err := guestimage.PinFor(vmruntime.ImageTarget())
+	if err != nil || pin.Valid() != nil {
+		return false
+	}
+	dir := guestimage.Store{Root: filepath.Join(stateDir, "images")}.Dir(pin)
+	for _, name := range []string{guestimage.ManifestName, guestimage.KernelName, guestimage.RootfsName} {
+		st, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || !st.Mode().IsRegular() || st.Size() != pin.Files[name].Bytes {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *bidderRun) guestImageSource(ctx context.Context) (string, error) {
-	version, commit := buildIdentity()
+	version, commit := buildstamp.Identity()
+	target := vmruntime.ImageTarget()
+	pin, err := guestimage.PinFor(target)
+	if err != nil {
+		return "", err
+	}
 	src, err := guestimagerelease.Source(ctx, guestimagerelease.Options{
-		Base:    r.vals.String("guest-image-release-base"),
-		Target:  vmruntime.ImageTarget(),
-		Version: version,
-		Commit:  commit,
+		Base:           r.vals.String("guest-image-release-base"),
+		Target:         target,
+		Version:        version,
+		Commit:         commit,
+		ManifestSHA256: pin.Files[guestimage.ManifestName].SHA256,
 	})
 	if err != nil {
 		return "", fmt.Errorf("%w (pass --guest-image-source file:///<dir>, or point --guest-image-release-base at the published artifacts)", err)
@@ -480,7 +514,8 @@ func (r *bidderRun) installedCore(ctx context.Context) int {
 	}
 	defer m.Close()
 	rt, err := vmruntime.ForHost(vmruntime.Config{Manager: m, StateDir: state, RuntimeDir: runtimeDir, Exec: vexe,
-		ImageSource: vm.ImageSource, StopGrace: grace, Binaries: installedBinaries(state)})
+		ImageSource: vm.ImageSource, StopGrace: grace, Binaries: installedBinaries(state),
+		ImageOut: r.a.stderr, ImageTTY: progress.IsTTYWriter(r.a.stderr)})
 	if err != nil {
 		return r.a.fail(exitFailed, "%s: the VM runtime: %v", verb, err)
 	}

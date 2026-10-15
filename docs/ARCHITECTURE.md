@@ -3317,9 +3317,11 @@ guest trust that CA (`ca_certs`), names the host for `relay.localhost` (`guestHo
 `CURL_HOME=/root` for every unit: curl resolves `*.localhost` to loopback itself unless a
 `--resolve` entry says otherwise, the firecracker provider writes that entry to `/root/.curlrc`, and a
 systemd unit has no `HOME`, so without it the guest's `provisioning-token.service` dialled its own
-loopback (runs 5 to 7). The bidder runs `--policy open`: the default `only-me` refuses an RFP from a
+loopback (runs 5 to 7). The bidder runs `--policy open`: the vendored policy engine's own default, `only-me`, refuses an RFP from a
 requester with no operator association (run 3, HTTP 403 `scope filter declined`), and every identity
-in the market network is minted per run.
+in the market network is minted per run. This repository's implemented default is `open`
+(`internal/appctl/bidder.go`), not `only-me`, so a production bidder must name its policy in
+`config.json` to be gated at all.
 
 **The market contract, with no session to the guest.** `market-requester/mod.ts` creates a
 requester PDS, runs `runComputeContract` against the bidder's DID (read from the bidder's own
@@ -3598,6 +3600,23 @@ because it bounds a mechanism the rest of this document leans on.
     st_blocks, file count) and writes the last sample into `status.stateDir` of its root object with
     the next status write. M4-SOAK-READING records the series; the item closes when it is flat.
 
+- **PORT-1: the kcp process piles up loopback connections to the fixed-port front of an old tenant
+  cluster until the gateway host has no ephemeral port left (opened 2026-10-15 from a live reading on the
+  prod gateway host; `NEXT.yaml` PORT-1).** `listen tcp 127.0.0.1:0` failed host-wide with "address already
+  in use" because about 28000 loopback connections from the kcp process were open to the fixed-port front
+  of each of two old tenant clusters (canary on port 20000, goat-demo on port 20018), which exhausted the
+  ephemeral range for every port 0 listener on the host. The relay in `internal/apiserverfront/front.go`
+  closes both ends when either end closes, so the connections are not held by the front; they are held on
+  the kcp side, as dials from kcp to the front of an old cluster. Deleting the two clusters released the
+  ports and the host recovered. The origin is not found: which kcp component dials the front (the mount,
+  the kubeconfig mount child, a controller informer) and why it opens a new connection instead of
+  reusing or closing one is open. Every listener on the host binds port 0, so one cluster front that
+  leaks connections takes the whole host down: a host-wide failure with a per-cluster cause. The
+  instrument that closes it: the count of established loopback connections from the kcp process to each
+  cluster front on the gateway host, read with `ss -tn state established '( dport = :<front port> )'`,
+  stays flat across one hour with the cluster idle, for a healthy cluster and for a cluster whose
+  apiserver is stopped, and the count of sockets in the ephemeral range shows headroom while a cluster is
+  deleted and recreated.
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
   refusal to lease a range overlapping the host's networks is a property of the NETWORK NAMESPACE the
@@ -3632,6 +3651,222 @@ can outlive the work that closed it, and why one whose subject has been deleted 
 questions for hours without anyone stopping on it. The measurements stay with the entries rather than
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
+
+- **An apply waits for its objects to be served, and adopts a schema that is already there, on
+  2026-10-13 (branch `task/install-bringup`).** The first cold
+  bootstrap of a kcp printed `kcpapply ... APIResourceSchema ... already exists` and
+  `... is not served in root:socialweb-provider` and treated both as fatal, because discovery was run
+  once and its answer was believed: an informer that had not caught up yet read as a kind that does not
+  exist. `servedFor` (`internal/kcpapply/kcpapply.go`) now re-runs discovery until every object of the
+  set is served or the Applier's `WaitTimeout` passes, logging the missing path, kind and attempt as it
+  waits, and `applySchema` adopts an existing `APIResourceSchema` whose `spec` matches (raising
+  `ErrSchemaChanged`, and naming the field, only on a real difference). Both are waiting on the
+  apiserver to agree with a manifest that is already correct, so the fail-fast rule does not apply: the
+  deadline is what fails, and it fails with what it was waiting for. The wider effect is that every
+  apply path - `dev up`, `run request`, `run bidder`, the gateway - blocks up to that timeout instead of
+  returning an error the caller had no way to act on. Readings were then taken on the
+  host that had the incident, and they cover the two paths differently. Across every core restart since
+  the change went live the same count is 0, and what those restarts exercise is the adoption: `applyOne`'s
+  `Get` finds the live schema, so `applySchema` skips `Create` and compares `spec`. They cannot exercise
+  `already exists` at all - that is raised only where the `Get` missed and the `Create` then hit an object
+  that was there, which is the race the cold start runs into. Nor do they cover the wait, because a unit
+  that kept its kcp never ran discovery against kinds it had never served. That path is the other reading:
+  on a slot wiped to
+  nothing - its kine store and its run directory removed,
+  the kine, front and slot units stopped, one `install bidder` - the same count is 0: a kcp that had
+  never served those kinds brought them up and answered `/readyz` on a new port.
+
+- **A bidder takes its guest image from a published release, not from its own bytes, on 2026-10-13 (branch
+  `task/install-bringup`).** The incident's bidder had no image at all, and the fetch that would have
+  given it one was a 1.5 GiB download that printed nothing until it finished. The image is now fetched and
+  verified during `install bidder`, with progress, and a build that has no release of its own still finds
+  one: `guestimagerelease.Source` tries `releases/<version>`, then `main/<commit>`, then `main/latest`,
+  then the newest `releases/v*` by version order. Each candidate's `image.json` is verified against the
+  sha256 pinned for it in `internal/versions/versions.json` before the source is chosen, and the kernel
+  and rootfs that source serves are verified against their own pins as they are fetched, so a wrong or
+  stale release is refused rather than booted - at selection for the manifest, and at fetch for the two
+  large files. That is what makes falling back safe. The progress was read on a terminal too, over a pty
+  with the store set aside: 13 renders of one line, advancing from 17% to 100% and ending on a newline, with the
+  line padded so the drop from `1024.00 MiB` to `1.00 GiB` at the unit boundary leaves no tail of the
+  older line on screen. Reading taken on the host, with the stored source removed so the search had
+  to run: a HEAD of the manifest key under the build's own `releases/` and `main/` prefixes answered 404,
+  a HEAD of it under `main/latest` answered 200, the search resolved there, and the store it fetched held
+  `firecracker-x86_64`'s three pinned files at their pinned byte counts (43 726 920, 1 543 503 872 and
+  5 822) under a directory named the pinned manifest sha256. A candidate that answers anything other than 200 or 404 -
+  a 403 on a prefix the bucket does not serve publicly, a 5xx - used to end the search there, which made
+  the fallback unreachable on a bucket that keeps one prefix private; such a candidate is now recorded and
+  skipped, and a refusal that finds nothing names the candidates that could not be read beside the ones
+  that were absent. `main/latest` is a pointer, not a
+  place: it tracks the newest pin, so a binary whose own commit is behind it finds nothing there but a
+  mismatch and has to be given `--guest-image-source` to reach an image of its own vintage. A note in this
+  tree from earlier the same day
+  records `main/*` answering 403; re-probed before this reading was written, the bucket answers 200 to a
+  listing of `main/` and of `releases/` and to a read of a named key, so that 403 is not reproducible now
+  and is left as the open question it is rather than as a property of the bucket.
+
+- **kine's sqlite runs with WAL, on 2026-10-13 (branch `task/install-bringup`).** A bidder's first kcp start lost its race with kcp's own bootstrap deadline
+  on this store: kine logged `Slow SQL: INSERT INTO kine(...)`, one transaction took 717 ms, one storage
+  write passed its 10 s timeout, and `etcdserver: mvcc: required revision has been compacted` repeated.
+  The kine directory held `kine.db` and no `-wal` file while kine held a connection open. kine applies
+  its own `DefaultParams` only when `DataSourceName` is empty, and this repository always passes a
+  non-empty `sqlite://` path, so WAL was never on. `KineSqliteArgv` now appends kine's own five
+  parameters (`_journal_mode=WAL`, `_synchronous=NORMAL`, `_busy_timeout=30000`, `_txlock=immediate`,
+  `_stmt_cache_size=20`; kine's `cache=shared` is left out because it is not a key this driver reads -
+  the driver (mattn/go-sqlite3, the version kine v0.17.1 pins) parses the query into its own settings
+  and then drops it from the file name it opens, so only its real keys have any effect, and
+  `_cache_size` is a different thing), in the sqlite builder
+  `KineSqliteArgv`
+  alone, because the postgres builder `KinePostgresArgv` goes through the same `kineArgv`. Compaction
+  deliberately stays the apiserver's:
+  `--compact-interval` defaults to 0, in kine's own flag set (`pkg/app/app.go`, kine v0.17.1, the version
+  `internal/versions/versions.json` pins; the binary is installed, not vendored, so the flag appears
+  nowhere in this tree), and kine's `Compact` is a documented no-op once it
+  is positive - "manual compact is a no-op unless automatic compaction is disabled"
+  (`pkg/logstructured/sqllog/sql.go`) - so setting it would move compaction to kine's own ticker, the
+  reverse of the design in `docs/research/2026-10-11-vm-lifecycle/kcp-blue-green.md`. The recurring
+  `mvcc: required revision has been compacted` warning is the apiserver compacting with a watcher behind
+  it. The DSN is carried in the kine unit's generated environment file, not in the unit itself, and that
+  file was written once and never updated - so a binary that changed a parameter could not reach a host
+  that had already installed, which is the one thing a storage fix must not be. install now writes that
+  file through the same byte comparison as a unit file and reports it, and the running kine keeps the
+  DSN it started with until that unit restarts, which a reboot does: install must not restart the kine
+  unit on its own, because the apiserver reading through it would lose its storage mid-flight - which is
+  why the storage change lands on a host at its next start, and on a fresh install at once.
+  Both instruments were then read on that host. First on the pinned kine binary started on the DSN
+  install had just written: its store held `kine.db-wal` beside `kine.db` and `kine.db-shm`, and
+  `pragma journal_mode` answered `wal`, while the store the *running* kine had opened held neither -
+  which is the before reading for the paragraph above. Then on the bidder's own store: once that kine
+  unit was restarted onto the rewritten environment file, its directory held `kine.db-wal` too.
+
+- **The bidder unit is `Type=notify` with a watchdog, on 2026-10-13 (branch `task/install-bringup`; the
+  readings this bullet names were taken on that host; a claim's reading is named where it has one - the
+  watchdog's is the `SIGSTOP`, the apply deadline has none, as the paragraph there states - and a claim
+  with no reading named is code-verified only).** A core that wedged - `applyRoot` retrying `ApplyRoot` forever and
+  logging once a minute - looked alive to systemd for as long as it did not exit, and a unit that was
+  `Type=exec` with no `WatchdogSec` could not tell. `applyRoot` is now the core's in-process member with
+  a three-minute deadline inside `applyRoot`, measured from there and therefore after `ensure` has had the
+  ready budget; failing that deadline ends the core with a
+  non-zero exit for `Restart=always`;
+  `internal/notify` sends `READY=1` once, after the core has applied its MarketBidder root object, so the
+  unit is not started until that object exists and `enable --now` cannot return before then. Sending that
+  readiness is still not the bidder's application phase: sign-in and the MarketBidder condition
+  come later, so anything that depends on a SERVING bidder must wait on the kcp it serves, as `install`'s
+  bring-up step does by re-proving the slot's `/readyz`. That step proves readiness only when the core
+  published a slot port, a slot record with no active port is a refusal, and a handle skipped while
+  another answers is a refusal too, because a partial bring-up is not the success the step claims. Only
+  "no record at all" stays
+  not-needed, and that case is not a failure because the install tests drive a fake systemd with no core
+  behind it, so a fake-backed install can never serve `/readyz`. A re-run over a unit that is still
+  starting waits for it to settle rather than skipping it, so a wedged core cannot be reported as a
+  finished install. Measured on the host: a unit whose process was killed with `Restart=always` reports
+  `activating/auto-restart` for the whole `RestartSec` gap, so `waitStarted` keeps waiting on the restart
+  it is already tracking. For a unit whose process was killed with `Restart=always`, the only window
+  that reads as ended is the instant between the process dying and systemd scheduling the restart, which
+  is what `StartEndedGrace` of ended samples covers, so a re-run that lands in it does not report a
+  converging core as finished with a failure. `WATCHDOG=1` comes from the
+  core's own loop rather than a ticker of its own, because a private ticker would keep pinging while the
+  core was wedged - refreshed at each tick, at every bring-up step, after each observed unit, on
+  every readyz poll, and at every poll of a wait for postgres, for kine's socket or for a unit's bound
+  port, so no wait inside a runtime `Ensure` can starve the ping. That matters because systemd pings twice per `WatchdogSec`, so
+  what has to exceed the longest legitimate gap is half the value, not the value: the gap is now one poll
+  of whichever wait the core is in - milliseconds - at every budget up to the ceiling, rather than the
+  ready budget a blocking wait could previously have spent. A tick
+  that spends minutes inside `Ensure` still refreshes it. The startup bounds hold by construction rather
+  than by convention: install derives the unit's `TimeoutStartSec` from the effective ready budget - the
+  flag or env value, else the one already in `config.json`, else the default - plus `BidderStartGrace`, the sum
+  of the items the core must clear before `READY=1` that the ready budget does not already cover
+  (`RootApplyDeadline` 3m, the instance-lock wait 2m, a stale-lease handover 12s), the rest of the
+  six minutes - 48s - being margin, and
+  derives its own start-job budget from that, so `startBudget()` > `TimeoutStartSec` > ready budget +
+  `RootApplyDeadline` for any budget an operator sets, and both budgets have a ceiling
+  (`MaxReadyBudget` 10m, `MaxNetworkBudget` 30m) that install refuses to go over: the budget sizes the
+  unit's start timeout and its watchdog, so without a ceiling one mistyped flag would give a wedged core
+  an hour before systemd restarted it, which is the hang this branch removed. The ceiling is checked
+  against the value in effect, not against every value on disk, and a passing flag beats a stored one -
+  so a host whose `config.json` holds an absurd budget is fixed by passing a sane flag once, which
+  rewrites that key, rather than by editing the file by hand. install and the core read the same
+  effective budget, so the two cannot disagree at install time; editing `config.json` afterwards by
+  hand moves the core's budget without moving the unit's fixed `TimeoutStartSec`, and the way to change
+  both is to run install again with the flag, which rewrites the key and restarts the unit. `CONFIG_PATH_SOCIALWEB_COMPUTER`
+  is how the *installed unit* finds its `config.json` - its `Environment=` sets it - while the root
+  install step reads `<state-dir>/config.json` itself, which is why a budget edited into that file by
+  hand is read by the next install (and refused if it is over the ceiling) and a release base edited
+  there is not. Raising `--ready-timeout` therefore raises the unit's timeout with it instead of inverting the
+  order and letting systemd preempt the diagnostic. The template became `Type=notify` with
+  `TimeoutStartSec` and `WatchdogSec` at that derived value (420s at the default budget) and `--fg`. That
+  flag has no reader on the path the installed unit takes - `installedCore` is resident with or without
+  it - and is pinned anyway because the standalone and in-network paths do read it, so a unit whose
+  backend ever resolves elsewhere stays resident instead of exiting 0 into a restart loop. `RootApplyDeadline` stays at three minutes rather than following the ready budget: `applyRoot` starts
+  after `ensure` has finished, retries its own `Patch` of the root object with a second between attempts, and hands each
+  attempt whatever is left of the three minutes, so the window is up to about 180 attempts and the value
+  is a judgement about how long a cold host may take to accept that object rather than a quantity derived
+  from another. The failure it replaced was not a bound that was too small but no bound at all - the old
+  loop retried for ever and logged once a minute, which is how twenty-five minutes passed in silence.
+  Missing the deadline exits the core non-zero, systemd restarts it, and install prints the command that
+  reads the reason out of the journal, because install reports systemd's own state rather than the log: the
+  step table ends at the failing step with a `journalctl --user -u <unit>` line for the operator to run.
+  What the value rests on is a measurement rather than a guess: on this host the root object's apply took
+  `attempts=4, after=3s` on the coldest bring-up there was - the slot wiped to nothing - and
+  `attempts=1, after=0s` on every warm restart, so the window is sixty times the worst apply seen here.
+  Its *firing* is the one thing on this branch not read on a host, and the attempt to read it says why: freezing the front - which looked like the way in, because `applyRoot` reaches the slot
+  through it while `ensure` reads the slot's `/readyz` directly - stops the core sooner than that, since
+  the front also carries the writes the core's own controllers make (`kcpstore: write denopods status`
+  fails, the core stops, systemd cycles it, `NRestarts` climbs). That measured `fail fast and be restarted`
+  for the third time rather than the deadline. Reading it needs a front that answers `/readyz` and refuses
+  the root object's `Patch`, which no host here can be put into without also breaking the store.
+  That is the trade this branch made deliberately: a bound that is occasionally too tight and always
+  visible beats a retry that is invisible for twenty-five minutes. `TimeoutStartSec` is finite on purpose: systemd
+  arms the watchdog only once startup completes, so an infinite start timeout would leave a core that
+  never sent `READY=1` in `activating` for ever - not killed, not restarted, and invisible, which is the
+  original silent hang moved from `active` into `activating`. Cancelling a context would not have failed
+  the core:
+  `devcore.Run` returns nil on `<-ctx.Done()`, so the members channel is the path that exits non-zero.
+  WatchdogSec is that same derived value rather than the thirty seconds first planned, because one tick runs
+  `Observe` on every unit - each manager call bounded at 10 s by `hostsvc.DefaultCallTimeout`, the settle
+  loop at `bootstrap.RestartSettle` = 3 s - and, when a unit is lost, a full `Ensure`, bounded by the
+  ready budget (1 m by default). Instrument: `SIGSTOP`
+  on the core is restarted by systemd and `NRestarts` grows. `SubState=running` under `Type=notify` is
+  the readiness itself, because a core that never sent `READY=1` stays `activating`; `StatusText` stays
+  empty and proves nothing, since the core sends `READY=1` and `WATCHDOG=1` and never `STATUS=`. That
+  instrument was read on the host that had the incident: the unit ran with `WatchdogSec=7min`, `kill
+  -STOP` on its main pid was followed by a new main pid and `NRestarts` 0 to 1 - `Result` then read
+  `success` because systemd had already restarted it, which is the point: a core that stops answering is
+  killed and restarted instead of lingering.
+  The unit that waits for that readiness is only correct for the binary that sends it, so `install`
+  refuses when `bin/current` is not the binary it was invoked as (`ErrBinaryMismatch`): the same unit
+  started under a binary that never notifies stays in `activating` until the start timeout and then
+  restarts for ever, which is the original silent hang in a new place. Switching a running install is
+  `upgrade`'s job - it stages the new binary, self-checks it, keeps `bin/previous` and restarts the units -
+  so install names that command and stops instead of writing a unit the host cannot start. A first
+  install, and a re-run with the same binary, are unaffected. An install that rewrites `config.json`, a
+  unit file, or a bootstrap drop-in now restarts what that rewrite reaches, because a running core reads
+  `config.json` once at startup: without the restart the file says one thing and the process does
+  another, which is the silent-ineffectiveness the branch exists to remove. `config.json` is one file
+  every core unit this run names reads, so rewriting it restarts all of them; a unit file reaches its own
+  template, so a bidder's `@.service` reaches every instance of it while a drop-in reaches only the unit it
+  sits under, and adding a second handle starts that instance's unit and leaves the running one alone. A re-run that writes nothing restarts nothing. `upgrade` to a binary that is already
+  `bin/current` still does not restart anything - a healthy core is not disturbed for nothing - and it
+  now says so, instead of leaving an operator whose units are down with no next step. The guest-image step is bounded the same
+  way: an image already in the store is verified against the pin and used, one that no longer matches is
+  removed and fetched again, and the removal happens only after a source has been resolved, so a run that
+  names no source leaves the store as it found it rather than deleting the only image it had. A caller
+  that names neither a source nor a release base at all gets not-needed rather than a refusal, because
+  that is what the install tests are - they drive a bidder with no image - and
+  `Options.GuestImageBaseResolved`, which the CLI always sets, is what tells such a caller from an
+  operator whose cleared base resolved to the empty string and is refused. The release base reaches the
+  two sides by different routes and they are not the same value: install takes it from its own flag or
+  env, defaulting to the bucket, and writes that key to `config.json` only when it was passed, while the
+  core reads the key out of `config.json`. A base edited into that file by hand is therefore used by the
+  running bidder and ignored by the next install, which is why the file is not the place to set it.
+  A budget edited there is the other way round: install reads those out of the same file, so the edit is
+  honoured, and refused if it is not a duration, if it is not positive, if it is over the ceiling, or -
+  for the network budget - if it is under the thirty seconds the search of the release base needs. `check-host`, the last step,
+  runs under `HostCheckBudget` rather than the signal-scoped context, so every wait an install makes has
+  a deadline. The account-management and AppArmor commands these steps exec - `useradd` and `userdel` when
+  installing and uninstalling the account, `gpasswd` and `apparmor_parser` either way - are killed after
+  `CommandBudget` (a constant, not an option: a minute is already pathological for these) or as soon as
+  the install's own context is cancelled, and their output is kept in the error, so a hung name service
+  or a wedged `apparmor_parser` fails the step with what it printed instead of holding the install open.
 
 - **The ssh gateway is an application of its own, and reaches guests over iroh with no --allow-run, on
   2026-10-12 (plan 0008 M1-SSH-GATEWAY-IROH proof, M4-RUN-GATEWAY-SSH).** `socialweb-computer run

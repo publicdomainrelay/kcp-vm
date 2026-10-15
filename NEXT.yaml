@@ -675,6 +675,27 @@ open:
       surviving a bidder kill, an upgrade and a logout, released by vm.delete, and Lost after a reboot.
     instrument: >
       The live readings recorded with UTC timestamps and zero ssh sessions.
+  - id: PORT-1
+    title: OPEN - the kcp process piles up loopback connections to the fixed-port front of an old tenant cluster until the gateway host has no ephemeral port left.
+    body: >
+      Opened 2026-10-15 from a live reading on the prod gateway host. `listen tcp 127.0.0.1:0` failed
+      host-wide with "address already in use" because about 28000 loopback connections from the kcp
+      process were open to the fixed-port front of each of two old tenant clusters (canary on port
+      20000, goat-demo on port 20018), which exhausted the ephemeral range for every port 0 listener on
+      the host. The relay in internal/apiserverfront/front.go closes both ends when either end closes,
+      so the connections are not held by the front; they are held on the kcp side, as dials from kcp to
+      the front of an old cluster. Deleting the two clusters released the
+      ports and the host recovered. The origin is not found: which kcp component dials the front
+      (the mount, the kubeconfig mount child, a controller informer) and why it opens a new connection
+      instead of reusing or closing one is open. Every listener on the host binds port 0, so one cluster
+      front that leaks connections takes the whole host down, which makes this a host-wide failure
+      with a per-cluster cause.
+    instrument: >
+      The count of established loopback connections from the kcp process to each cluster front on the
+      gateway host, read with `ss -tn state established '( dport = :<front port> )'`, stays flat across
+      one hour with the cluster idle, for a healthy cluster and for a cluster whose apiserver is stopped;
+      and the count of sockets in the ephemeral range (`ss -tan | wc -l` against
+      `net.ipv4.ip_local_port_range`) shows headroom while a cluster is deleted and recreated.
 
 execution_order:
   written: "2026-10-12, third fold of plans 0006-0008 (user request (i)); waves computed from depends_on across plans 0005-0012 (no unresolved id, no cycle). Re-derived after the fifth fold (multi-server-to-kcp.md + the user's section-7 answers): still no unresolved id or cycle; critical path unchanged. Advisory: depends_on governs; re-derive after every merge."

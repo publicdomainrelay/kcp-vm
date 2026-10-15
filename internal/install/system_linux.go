@@ -3,6 +3,7 @@
 package install
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -30,25 +31,101 @@ const (
 
 type liveSystem struct {
 	out io.Writer
+	ctx context.Context
 }
 
-func NewSystem(out io.Writer) (System, error) {
+func NewSystem(ctx context.Context, out io.Writer) (System, error) {
 	if out == nil {
 		out = io.Discard
 	}
-	return liveSystem{out: out}, nil
+	return liveSystem{out: out, ctx: ctx}, nil
+}
+
+func (s liveSystem) cancelling() <-chan struct{} {
+	if s.ctx == nil {
+		return nil
+	}
+	return s.ctx.Done()
 }
 
 func (s liveSystem) run(cmd *exec.Cmd) error {
-	b, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s: %w: %s", filepath.Base(cmd.Path), err, b)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.WaitDelay = CommandBudget
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%s: %w", filepath.Base(cmd.Path), err)
 	}
-	return nil
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return ranError(cmd, err, out.Bytes())
+	case <-s.cancelling():
+		_ = cmd.Process.Kill()
+		<-done
+		return fmt.Errorf("%s: %w while it ran", filepath.Base(cmd.Path), s.ctx.Err())
+	case <-time.After(CommandBudget):
+		select {
+		case err := <-done:
+			return ranError(cmd, err, out.Bytes())
+		default:
+		}
+		_ = cmd.Process.Kill()
+		<-done
+		return fmt.Errorf("%s: still running after %s, so it was killed: %s",
+			filepath.Base(cmd.Path), CommandBudget, out.Bytes())
+	}
 }
 
-func (liveSystem) LookupAccount(name string) (Account, bool, error) {
-	u, err := user.Lookup(name)
+func lookupWithin(cancel <-chan struct{}, what string, f func() (*user.User, error)) (*user.User, error) {
+	type answer struct {
+		u   *user.User
+		err error
+	}
+	ch := make(chan answer, 1)
+	go func() {
+		u, err := f()
+		ch <- answer{u, err}
+	}()
+	select {
+	case a := <-ch:
+		return a.u, a.err
+	case <-cancel:
+		return nil, fmt.Errorf("%s: %w while the name service was asked", what, context.Canceled)
+	case <-time.After(CommandBudget):
+		return nil, fmt.Errorf("%s: the name service did not answer within %s", what, CommandBudget)
+	}
+}
+
+func groupIDsWithin(cancel <-chan struct{}, u *user.User) ([]string, error) {
+	type answer struct {
+		ids []string
+		err error
+	}
+	ch := make(chan answer, 1)
+	go func() {
+		ids, err := u.GroupIds()
+		ch <- answer{ids, err}
+	}()
+	select {
+	case a := <-ch:
+		return a.ids, a.err
+	case <-cancel:
+		return nil, fmt.Errorf("%s: %w while the name service was asked", u.Username, context.Canceled)
+	case <-time.After(CommandBudget):
+		return nil, fmt.Errorf("%s: the name service did not answer within %s", u.Username, CommandBudget)
+	}
+}
+
+func ranError(cmd *exec.Cmd, err error, out []byte) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w: %s", filepath.Base(cmd.Path), err, out)
+}
+
+func (s liveSystem) LookupAccount(name string) (Account, bool, error) {
+	u, err := lookupWithin(s.cancelling(), name, func() (*user.User, error) { return user.Lookup(name) })
 	if err != nil {
 		var unknown user.UnknownUserError
 		if errors.As(err, &unknown) {
@@ -170,17 +247,24 @@ type liveUser struct {
 
 func (u *liveUser) Reload(ctx context.Context) error { return u.conn.ReloadContext(ctx) }
 
-func (u *liveUser) Active(ctx context.Context, unit string) (bool, error) {
-	p, err := u.conn.GetUnitPropertyContext(ctx, unit, "ActiveState")
-	if err != nil {
-		return false, err
+func (u *liveUser) Restart(ctx context.Context, units []string) error {
+	for _, unit := range units {
+		if err := waitJob(ctx, unit, func(ch chan<- string) error {
+			_, err := u.conn.RestartUnitContext(ctx, unit, "replace", ch)
+			return err
+		}); err != nil {
+			return err
+		}
 	}
-	return p.Value.Value() == string(hostsvc.Active), nil
+	return nil
 }
 
 func waitJob(ctx context.Context, unit string, start func(chan<- string) error) error {
-	ctx, cancel := context.WithTimeout(ctx, jobTimeout)
-	defer cancel()
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, jobTimeout)
+		defer cancel()
+	}
 	ch := make(chan string, 1)
 	if err := start(ch); err != nil {
 		return fmt.Errorf("%s: %w", unit, err)
@@ -192,7 +276,7 @@ func waitJob(ctx context.Context, unit string, start func(chan<- string) error) 
 		}
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("%s: %w", unit, ctx.Err())
+		return fmt.Errorf("%s: the start job did not finish: %w", unit, ctx.Err())
 	}
 }
 
@@ -227,7 +311,7 @@ func (u *liveUser) DisableStop(ctx context.Context, units []string) error {
 }
 
 func (u *liveUser) List(ctx context.Context) ([]hostsvc.UnitStatus, error) {
-	units, err := u.conn.ListUnitsByPatternsContext(ctx, nil, []string{"socialweb*"})
+	units, err := u.conn.ListUnitsByPatternsContext(ctx, nil, []string{hostsvc.NamePrefix + "*"})
 	if err != nil {
 		return nil, err
 	}
@@ -252,11 +336,11 @@ func (u *liveUser) Stop(ctx context.Context, unit string) error {
 func (u *liveUser) Close() { u.conn.Close() }
 
 func (s liveSystem) CheckHost(ctx context.Context, a Account, binary string, role hostcontract.Role, stateDir string) error {
-	u, err := user.LookupId(strconv.Itoa(a.UID))
+	u, err := lookupWithin(ctx.Done(), strconv.Itoa(a.UID), func() (*user.User, error) { return user.LookupId(strconv.Itoa(a.UID)) })
 	if err != nil {
 		return err
 	}
-	gids, err := u.GroupIds()
+	gids, err := groupIDsWithin(ctx.Done(), u)
 	if err != nil {
 		return err
 	}
@@ -292,14 +376,5 @@ func RestartOwnUnits(ctx context.Context, units []string) error {
 		return err
 	}
 	defer um.Close()
-	u := um.(*liveUser)
-	for _, unit := range units {
-		if err := waitJob(ctx, unit, func(ch chan<- string) error {
-			_, err := u.conn.RestartUnitContext(ctx, unit, "replace", ch)
-			return err
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return um.Restart(ctx, units)
 }

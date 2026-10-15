@@ -213,9 +213,9 @@ func (a *Applier) applyPhase(ctx context.Context, set manifests.Set, p manifests
 
 func (a *Applier) ApplyObjects(ctx context.Context, workspace string, objs []manifests.Object) ([]Change, error) {
 	cfg := a.ForWorkspace(workspace)
-	served, err := discover(ctx, cfg, objs)
+	served, err := a.servedFor(ctx, cfg, workspace, objs)
 	if err != nil {
-		return nil, fmt.Errorf("discovery for %s: %w", workspace, err)
+		return nil, err
 	}
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
@@ -251,6 +251,37 @@ func (a *Applier) ApplyObjects(ctx context.Context, workspace string, objs []man
 type servedResource struct {
 	resource   schema.GroupVersionResource
 	namespaced bool
+}
+
+func (a *Applier) servedFor(ctx context.Context, cfg *rest.Config, workspace string, objs []manifests.Object) (map[schema.GroupVersionKind]servedResource, error) {
+	deadline := time.Now().Add(a.opts.WaitTimeout)
+	for attempt := 1; ; attempt++ {
+		served, err := discover(ctx, cfg, objs)
+		if err != nil {
+			return nil, fmt.Errorf("discovery for %s: %w", workspace, err)
+		}
+		var missing *manifests.Object
+		for i := range objs {
+			if _, ok := served[objs[i].Unstructured.GroupVersionKind()]; !ok {
+				missing = &objs[i]
+				break
+			}
+		}
+		if missing == nil {
+			return served, nil
+		}
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("%s: %s %s is not served in %s after %s", missing.Path,
+				missing.Unstructured.GroupVersionKind(), missing.Unstructured.GetName(), workspace, a.opts.WaitTimeout)
+		}
+		a.opts.Log.Info("waiting for every object to be served", "workspace", workspace, "attempt", attempt,
+			"path", missing.Path, "kind", missing.Unstructured.GroupVersionKind().String(), "deadline", a.opts.WaitTimeout.String())
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(a.opts.Poll):
+		}
+	}
 }
 
 func discover(ctx context.Context, cfg *rest.Config, objs []manifests.Object) (map[schema.GroupVersionKind]servedResource, error) {
@@ -405,11 +436,18 @@ func (a *Applier) stampOwner(ctx context.Context, u *unstructured.Unstructured) 
 func (a *Applier) applySchema(ctx context.Context, ri dynamic.ResourceInterface, u, live *unstructured.Unstructured, c Change) (Change, error) {
 	if live == nil {
 		got, err := ri.Create(ctx, u, metav1.CreateOptions{FieldManager: a.fieldManager(), DryRun: a.dryRun()})
-		if err != nil {
+		switch {
+		case err == nil:
+			c.Action, c.Managers = Created, managerChanges(nil, got)
+			return c, nil
+		case apierrors.IsAlreadyExists(err):
+			live, err = ri.Get(ctx, u.GetName(), metav1.GetOptions{})
+			if err != nil {
+				return c, err
+			}
+		default:
 			return c, err
 		}
-		c.Action, c.Managers = Created, managerChanges(nil, got)
-		return c, nil
 	}
 	want, _, _ := unstructured.NestedMap(u.Object, "spec")
 	have, _, _ := unstructured.NestedMap(live.Object, "spec")

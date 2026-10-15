@@ -98,7 +98,7 @@ func (r *firecracker) Capabilities() Capabilities {
 func (r *firecracker) imagePin() (guestimage.Pin, error) { return guestimage.PinFor(r.target) }
 
 func (r *firecracker) imageStore() guestimage.Store {
-	return guestimage.Store{Root: filepath.Join(r.cfg.StateDir, "images")}
+	return guestimage.Store{Root: filepath.Join(r.cfg.StateDir, "images"), Out: r.cfg.ImageOut, TTY: r.cfg.ImageTTY}
 }
 
 func (r *firecracker) Prepare(ctx context.Context, spec VMSpec) (Prepared, error) {

@@ -111,7 +111,7 @@ as_account chmod 0700 "$home/.tmp" "$home/.cache" "$home/.config"
 
 tarball="actions-runner-linux-x64-${runner_version#v}.tar.gz"
 if [ ! -x "$runner_dir/run.sh" ]; then
-  as_account curl -fsSL --max-time 900 -o "$home/$tarball" "https://github.com/actions/runner/releases/download/$runner_version/$tarball"
+  as_account curl -fL --max-time 900 --progress-bar -o "$home/$tarball" "https://github.com/actions/runner/releases/download/$runner_version/$tarball"
   echo "$runner_sha  $home/$tarball" | sha256sum -c --quiet -
   as_account mkdir -p "$runner_dir"
   sudo tar -xzf "$home/$tarball" -C "$runner_dir"

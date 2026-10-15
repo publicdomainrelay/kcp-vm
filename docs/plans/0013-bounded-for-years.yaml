@@ -123,10 +123,14 @@ items:
     title: The kcp store keeps a bounded history
     depends_on: ["0006:M5-FRESH-DEPLOY"]
     decision: >
-      kine runs with an explicit compaction interval and retained revisions (set, not left to defaults). A
-      bidder's sqlite store uses auto_vacuum=INCREMENTAL and the core runs incremental_vacuum on an interval;
-      the gateway's postgres keeps autovacuum on for the kine table and the root status reports its table size
-      and dead tuples. kcp runs with a short --event-ttl (1 h) and our controllers write status, not Events.
+      kine's compaction stays the apiserver's, not kine's own: kine's --compact-interval defaults to 0 and its
+      Compact is a documented no-op once that interval is positive ("manual compact is a no-op unless automatic
+      compaction is disabled"), so setting it would hand history-bounding to kine's ticker, the reverse of the
+      design. The sqlite DSN does carry _journal_mode=WAL and the rest of kine's own five parameters (see the
+      kine bullet in docs/ARCHITECTURE.md section 15). Still to do, and what this item is now about: a bidder's
+      sqlite store uses auto_vacuum=INCREMENTAL and the core runs incremental_vacuum on an interval; the
+      gateway's postgres keeps autovacuum on for the kine table and the root status reports its table size and
+      dead tuples; kcp runs with a short --event-ttl (1 h) and our controllers write status, not Events.
       Decided by Claude, user may veto.
     files: ["internal/bootstrap", "internal/kcpserver", "internal/pgunit", "internal/postgresctl"]
     done_when: "under M4-SOAK-READING load the sqlite file size and the kine row count plateau on a bidder, and the kine table size plateaus on the gateway."

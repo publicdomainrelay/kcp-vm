@@ -67,7 +67,7 @@
     },
     "network-timeout": {
       "type": "string",
-      "description": "dev up --profile market-network: how long dev up waits for the MarketNetwork and every child application to report Ready (Go duration)",
+      "description": "How long dev up waits for the MarketNetwork and every child application to report Ready, and how long install bidder gives the guest image download; a third of it, at least 30s, is the budget install bidder gives the search of the release base for that image, and install bidder refuses a value under 30s (Go duration)",
       "env": "SOCIALWEB_DEV_NETWORK_TIMEOUT",
       "default": "3m"
     },
@@ -122,7 +122,7 @@
     },
     "ready-timeout": {
       "type": "string",
-      "description": "How long dev up waits for kcp /readyz (Go duration)",
+      "description": "How long dev up waits for kcp /readyz, and how long install bidder waits for the same before it gives up and records a refused bring-up step. The installed core is given it as its ready budget, and the installed unit's start timeout and watchdog are this plus six minutes, so a large value means a long start timeout (Go duration)",
       "env": "SOCIALWEB_READY_TIMEOUT",
       "default": "1m"
     },
@@ -420,12 +420,12 @@
     },
     "guest-image-source": {
       "type": "string",
-      "description": "internal vm, dev up --handle, dev up --profile market-network, run bidder and install bidder (written to config.json): file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256; run bidder without one downloads the image of its own build from guest-image-release-base instead",
+      "description": "internal vm, dev up --handle, dev up --profile market-network, run bidder and install bidder (written to config.json): file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256; run bidder without one downloads the image of its own build from guest-image-release-base instead, unless the installed bidder's own store already holds the pinned image and verifies, in which case no artifact is asked",
       "env": "SOCIALWEB_GUEST_IMAGE_SOURCE"
     },
     "guest-image-release-base": {
       "type": "string",
-      "description": "run bidder without guest-image-source: the base the guest image of this build's own version is downloaded from when the local cache does not hold it yet (releases/<version> then main/<commit> of the published artifacts)",
+      "description": "The base the published guest image is searched under by run bidder and by install bidder when neither --guest-image-source nor a stored source names one; install bidder refuses an empty base, when nothing else names an image, rather than installing a bidder that can provision nothing",
       "env": "SOCIALWEB_GUEST_IMAGE_RELEASE_BASE",
       "default": "https://socialweb-computer-kcp.sfo3.digitaloceanspaces.com"
     },

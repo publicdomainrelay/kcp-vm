@@ -24,12 +24,13 @@ import (
 )
 
 const (
-	PortPoll         = 20 * time.Millisecond
-	ReadyPoll        = 200 * time.Millisecond
-	FrontAddress     = "127.0.0.1:0"
-	LeaseStaleAfter  = 6 * time.Second
-	LeaseWatchWindow = 12 * time.Second
-	RestartSettle    = 3 * time.Second
+	PortPoll            = 20 * time.Millisecond
+	ReadyPoll           = 200 * time.Millisecond
+	FrontAddress        = "127.0.0.1:0"
+	LeaseStaleAfter     = 6 * time.Second
+	LeaseWatchWindow    = 12 * time.Second
+	RestartSettle       = 3 * time.Second
+	DefaultReadyTimeout = time.Minute
 )
 
 func CheckProfile(p string) error {
@@ -50,10 +51,13 @@ type Config struct {
 	FrontAddress string
 	ReadyTimeout time.Duration
 	OnListen     func(name string, addr net.Addr)
+	OnStep       func(step string)
+	OnTick       func()
 	Application  *table.App
 	Retention    kcpstore.BackupRetention
 	Log          *slog.Logger
 	silent       map[string]bool
+	portDeadline time.Time
 }
 
 func SlotRole(slot string) string { return table.SlotRole(slot) }
@@ -89,6 +93,19 @@ func (c Config) onListen(name string, port int) {
 	}
 }
 
+func (c Config) onStep(step string) {
+	c.onTick()
+	if c.OnStep != nil {
+		c.OnStep(step)
+	}
+}
+
+func (c Config) onTick() {
+	if c.OnTick != nil {
+		c.OnTick()
+	}
+}
+
 func (p Params) slotSpec(slot, frontURL string) (hostsvc.UnitSpec, string, error) {
 	spec, err := p.Spec(p.App.SlotEntry(slot), frontURL)
 	return spec, p.SlotRoot(slot), err
@@ -108,8 +125,13 @@ func writeSlotEnv(p Params, spec hostsvc.UnitSpec) error {
 	return writePrivate(f.EnvPath, f.Env)
 }
 
-func waitUnixSocket(ctx context.Context, path string) error {
+func waitUnixSocket(ctx context.Context, path string, progress ...func()) error {
+	tick := func() {}
+	if len(progress) > 0 && progress[0] != nil {
+		tick = progress[0]
+	}
 	for {
+		tick()
 		c, err := net.Dial("unix", path)
 		if err == nil {
 			c.Close()
@@ -167,8 +189,8 @@ func (p Params) storeBackup(r kcpstore.BackupRetention, log *slog.Logger) func(c
 	}
 }
 
-func waitPostgres(ctx context.Context, p Params) error {
-	if err := pgunit.WaitReady(ctx, p.PgSocketDir(), kcpstore.PostgresUser); err != nil {
+func waitPostgres(ctx context.Context, p Params, progress ...func()) error {
+	if err := pgunit.WaitReady(ctx, p.PgSocketDir(), kcpstore.PostgresUser, progress...); err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
 	if _, err := pgunit.CreateDatabase(ctx, p.PgSocketDir(), kcpstore.PostgresUser, kcpstore.KineDatabase); err != nil {
@@ -229,8 +251,12 @@ func identifyUnit(ctx context.Context, m hostsvc.Manager, cfg Config, role, name
 		return devinstance.Unit{Role: role, Unit: name, Identity: id, Adopted: adopted, PlacedAt: placedAt, PortAt: time.Now().UTC()}, nil
 	}
 	pctx, cancel := context.WithTimeout(ctx, cfg.ReadyTimeout)
+	if !cfg.portDeadline.IsZero() {
+		cancel()
+		pctx, cancel = context.WithDeadline(ctx, cfg.portDeadline)
+	}
 	defer cancel()
-	port, err := hostsvc.WaitListenPort(pctx, id.PID, PortPoll)
+	port, err := hostsvc.WaitListenPort(pctx, id.PID, PortPoll, cfg.onTick)
 	if err != nil {
 		return devinstance.Unit{}, fmt.Errorf("bootstrap: reading the bound port of %s (pid %d): %w", name, id.PID, err)
 	}
@@ -372,6 +398,9 @@ func HandoverStaleLease(ctx context.Context, admin *kcpserver.HTTPAdmin, log *sl
 }
 
 func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance.Record) error {
+	if cfg.ReadyTimeout <= 0 {
+		cfg.ReadyTimeout = DefaultReadyTimeout
+	}
 	if len(rec.StandIns) > 0 {
 		return ensureStandIns(ctx, m, cfg, rec)
 	}
@@ -405,6 +434,9 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 	}
 	rctx, cancel := context.WithTimeout(ctx, cfg.ReadyTimeout)
 	defer cancel()
+	if d, ok := rctx.Deadline(); ok {
+		cfg.portDeadline = d
+	}
 	var kine, front devinstance.Unit
 	frontPlaced := false
 	for _, e := range tbl {
@@ -422,18 +454,21 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 			}
 			before = func() error { return initdb(ctx, p) }
 		}
+		cfg.onStep("placing " + e.Role)
 		u, placed, err := ensureUnit(ctx, m, cfg, rec, e.Role, spec, before)
 		if err != nil {
 			return err
 		}
 		switch e.Kind {
 		case table.KindStore:
-			if err := waitPostgres(rctx, p); err != nil {
+			cfg.onStep("waiting for postgres")
+			if err := waitPostgres(rctx, p, cfg.onTick); err != nil {
 				return err
 			}
 			u.Endpoint = "unix://" + p.PgSocketDir()
 		case table.KindKine:
-			if err := waitUnixSocket(rctx, p.KineSocket(e.Slot)); err != nil {
+			cfg.onStep("waiting for kine's unix socket")
+			if err := waitUnixSocket(rctx, p.KineSocket(e.Slot), cfg.onTick); err != nil {
 				return err
 			}
 			u.Endpoint = p.KineURL(e.Slot)
@@ -477,11 +512,26 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 	if prev := rec.Unit(role); prev != nil {
 		prevInvocation = prev.Identity.InvocationID
 	}
+	cfg.onStep("placing the kcp slot")
 	kcp, kcpPlaced, err := ensureUnit(ctx, m, cfg, rec, role, slotSpec, seed)
 	if err != nil {
 		return err
 	}
 	cfg.onListen(role, kcp.Port)
+	cfg.onStep("waiting for kcp /readyz")
+	var lastReady string
+	reportReady := func(attempt int, last error) {
+		cfg.onTick()
+		msg := ""
+		if last != nil {
+			msg = last.Error()
+		}
+		if msg == lastReady {
+			return
+		}
+		lastReady = msg
+		log.Info("waiting for kcp /readyz", "attempt", attempt, "detail", msg)
+	}
 	var readyAt time.Time
 	if kcpserver.HasShared(l.SharedDir()) {
 		a, err := kcpserver.ReadSharedAdmin(l.SharedDir())
@@ -492,7 +542,7 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 		if err != nil {
 			return err
 		}
-		if err := kcpserver.WaitOwnPortReady(rctx, admin, kcp.Port, ReadyPoll); err != nil {
+		if err := kcpserver.WaitOwnPortReady(rctx, admin, kcp.Port, ReadyPoll, reportReady); err != nil {
 			return fmt.Errorf("bootstrap: %s on 127.0.0.1:%d: %w", kcp.Unit, kcp.Port, err)
 		}
 		readyAt = time.Now().UTC()
@@ -501,7 +551,7 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 		if kcpPlaced {
 			notBefore = kcp.PlacedAt
 		}
-		readyAt, err = kcpserver.WaitReady(rctx, kcp.Port, filepath.Join(root, "admin.kubeconfig"), notBefore, ReadyPoll)
+		readyAt, err = kcpserver.WaitReady(rctx, kcp.Port, filepath.Join(root, "admin.kubeconfig"), notBefore, ReadyPoll, reportReady)
 		if err != nil {
 			return fmt.Errorf("bootstrap: %s on 127.0.0.1:%d: %w", kcp.Unit, kcp.Port, err)
 		}

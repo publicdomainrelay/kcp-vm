@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestrootfs"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/progress"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
@@ -21,6 +22,7 @@ const (
 	KernelName   = "vmlinux"
 	RootfsName   = "rootfs.ext4"
 	ManifestName = "image.json"
+	SHA256HexLen = 64
 )
 
 type FileRecord struct {
@@ -87,6 +89,8 @@ func PinFor(target string) (Pin, error) {
 type Store struct {
 	Root   string
 	Client *http.Client
+	Out    io.Writer
+	TTY    bool
 }
 
 type Result struct {
@@ -98,13 +102,13 @@ func (s Store) Dir(pin Pin) string {
 	return filepath.Join(s.Root, pin.Hypervisor, pin.Arch, pin.Files[ManifestName].SHA256)
 }
 
-func (p Pin) check() error {
+func (p Pin) Valid() error {
 	if p.Hypervisor == "" || p.Arch == "" {
 		return fmt.Errorf("guestimage: the pin for %s names no hypervisor or arch", p.Target)
 	}
 	for _, name := range []string{KernelName, RootfsName, ManifestName} {
 		f, ok := p.Files[name]
-		if !ok || len(f.SHA256) != 64 {
+		if !ok || len(f.SHA256) != SHA256HexLen {
 			return fmt.Errorf("guestimage: %s has no sha256 pin for %s in versions.json, so there is "+
 				"nothing to verify a fetched copy against: build it with scripts/build-guest-image.sh "+
 				"and record its outputs", p.Target, name)
@@ -128,7 +132,7 @@ func hashFile(path string) (string, int64, error) {
 }
 
 func (s Store) Verify(pin Pin) (string, error) {
-	if err := pin.check(); err != nil {
+	if err := pin.Valid(); err != nil {
 		return "", err
 	}
 	dir := s.Dir(pin)
@@ -177,7 +181,7 @@ func (s Store) open(ctx context.Context, source, name string) (io.ReadCloser, er
 }
 
 func (s Store) Ensure(ctx context.Context, pin Pin, source string) (Result, error) {
-	if err := pin.check(); err != nil {
+	if err := pin.Valid(); err != nil {
 		return Result{}, err
 	}
 	dir := s.Dir(pin)
@@ -219,6 +223,11 @@ func (s Store) Ensure(ctx context.Context, pin Pin, source string) (Result, erro
 	return Result{Dir: dir, Fetched: true}, nil
 }
 
+func localSource(source string) bool {
+	u, err := url.Parse(source)
+	return err == nil && u.Scheme == "file"
+}
+
 func (s Store) fetchOne(ctx context.Context, pin Pin, source, name, dst string) error {
 	in, err := s.open(ctx, source, name)
 	if err != nil {
@@ -229,15 +238,17 @@ func (s Store) fetchOne(ctx context.Context, pin Pin, source, name, dst string) 
 	if err != nil {
 		return fmt.Errorf("guestimage: %w", err)
 	}
+	want := pin.Files[name]
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(out, h), in)
+	pw := progress.New(name, want.Bytes, s.Out, s.TTY && !localSource(source), 0)
+	defer pw.Finish()
+	n, err := io.Copy(io.MultiWriter(out, h, pw), in)
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
 		return fmt.Errorf("guestimage: fetching %s of %s: %w", name, pin.Target, err)
 	}
-	want := pin.Files[name]
 	if got := hex.EncodeToString(h.Sum(nil)); got != want.SHA256 {
 		return fmt.Errorf("guestimage: %s of %s from %s hashes to %s and versions.json pins %s; "+
 			"the image is refused", name, pin.Target, source, got, want.SHA256)

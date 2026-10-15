@@ -250,8 +250,11 @@ func (u *fakeUser) Reload(ctx context.Context) error {
 	return nil
 }
 
-func (u *fakeUser) Active(ctx context.Context, unit string) (bool, error) {
-	return u.f.units[unit], nil
+func (u *fakeUser) Restart(ctx context.Context, units []string) error {
+	for _, unit := range units {
+		u.f.mutate("user restart " + unit)
+	}
+	return nil
 }
 
 func (u *fakeUser) wants(unit string) string {

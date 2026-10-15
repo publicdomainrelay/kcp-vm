@@ -35,6 +35,8 @@ const (
 	StepUnitFiles  = "unit-files"
 	StepLinger     = "linger"
 	StepUnits      = "core-units"
+	StepGuestImage = "guest-image"
+	StepBringUp    = "bring-up"
 	StepCheckHost  = "check-host"
 	recordMode     = 0o644
 )

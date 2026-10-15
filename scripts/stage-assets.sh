@@ -58,7 +58,8 @@ die() { echo "stage-assets: $*" >&2; exit 1; }
 say() { echo "stage-assets: $*" >&2; }
 
 sha_of() { sha256sum "$1" | cut -d' ' -f1; }
-curl_args=(-fsSL --retry 3 --connect-timeout 10 --speed-limit 10000 --speed-time 20)
+dl_args=(-fSL --retry 3 --connect-timeout 10 --speed-limit 10000 --speed-time 20 --progress-bar)
+api_args=(-fsSL --retry 3 --connect-timeout 10 --speed-limit 10000 --speed-time 20)
 
 fetch_pinned() {
   local url="$1" want="$2" out="$cache/$2"
@@ -67,7 +68,7 @@ fetch_pinned() {
     return
   fi
   local part="$out.part.$BASHPID" got
-  curl "${curl_args[@]}" -o "$part" "$url" || { rm -f "$part"; die "download failed: $url"; }
+  curl "${dl_args[@]}" -o "$part" "$url" || { rm -f "$part"; die "download failed: $url"; }
   got="$(sha_of "$part")"
   if [ "$got" != "$want" ]; then
     rm -f "$part"
@@ -79,7 +80,7 @@ fetch_pinned() {
 
 fetch_fresh() {
   local url="$1" out="$2"
-  curl "${curl_args[@]}" -o "$out" "$url" || die "download failed: $url"
+  curl "${dl_args[@]}" -o "$out" "$url" || die "download failed: $url"
 }
 
 key_ring() {
@@ -165,20 +166,20 @@ stage_oci() {
   index="$(echo "$spec" | jq -r .index)"
   manifest="$(echo "$spec" | jq -r .manifest)"
   layer="$(echo "$spec" | jq -r .layer)"
-  tok="$(curl "${curl_args[@]}" "https://$reg/token?scope=repository:$repo:pull" | jq -r .token)"
+  tok="$(curl "${api_args[@]}" "https://$reg/token?scope=repository:$repo:pull" | jq -r .token)"
   local accept="application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
-  curl "${curl_args[@]}" -H "Authorization: Bearer $tok" -H "Accept: $accept" -o "$x/index.json" "https://$reg/v2/$repo/manifests/$index"
+  curl "${api_args[@]}" -H "Authorization: Bearer $tok" -H "Accept: $accept" -o "$x/index.json" "https://$reg/v2/$repo/manifests/$index"
   [ "sha256:$(sha_of "$x/index.json")" = "$index" ] || die "$repo index does not hash to $index"
   jq -e --arg d "$manifest" --arg os "${plat%/*}" --arg a "${plat#*/}" \
     '.manifests[] | select(.digest == $d and .platform.os == $os and .platform.architecture == $a)' "$x/index.json" >/dev/null \
     || die "$repo index $index does not name $manifest for $plat"
-  curl "${curl_args[@]}" -H "Authorization: Bearer $tok" -H "Accept: $accept" -o "$x/manifest.json" "https://$reg/v2/$repo/manifests/$manifest"
+  curl "${api_args[@]}" -H "Authorization: Bearer $tok" -H "Accept: $accept" -o "$x/manifest.json" "https://$reg/v2/$repo/manifests/$manifest"
   [ "sha256:$(sha_of "$x/manifest.json")" = "$manifest" ] || die "$repo manifest does not hash to $manifest"
   jq -e --arg d "$layer" '.layers[] | select(.digest == $d)' "$x/manifest.json" >/dev/null || die "$manifest does not name layer $layer"
   f="$cache/${layer#sha256:}"
   if [ ! -f "$f" ] || [ "sha256:$(sha_of "$f")" != "$layer" ]; then
     local part="$f.part.$BASHPID"
-    curl "${curl_args[@]}" -H "Authorization: Bearer $tok" -o "$part" "https://$reg/v2/$repo/blobs/$layer"
+    curl "${dl_args[@]}" -H "Authorization: Bearer $tok" -o "$part" "https://$reg/v2/$repo/blobs/$layer"
     [ "sha256:$(sha_of "$part")" = "$layer" ] || { rm -f "$part"; die "layer does not hash to $layer"; }
     mv -f "$part" "$f"
   fi

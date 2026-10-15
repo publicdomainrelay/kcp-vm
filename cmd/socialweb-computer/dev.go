@@ -375,6 +375,9 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 	if err != nil {
 		return upReport{}, a.fail(exitRefused, "dev up: ready-timeout: %v", err)
 	}
+	if readyTimeout < 0 {
+		return upReport{}, a.fail(exitRefused, "dev up: ready-timeout: %s is negative", readyTimeout)
+	}
 	var kcpExe, kineExe devinstance.Executable
 	pgExe, err := a.postgresRoot(vals, profile)
 	if err != nil {

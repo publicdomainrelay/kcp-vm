@@ -80,17 +80,24 @@ func (in *installer) bootstrapFiles(dir string) ([]string, bool, error) {
 				return nil, false, err
 			}
 			in.rec.addUnitFile(full)
+			if c {
+				in.noteWritten(u.Path)
+			}
 			changed = changed || c
 			names = append(names, u.Path)
 			if u.File.EnvPath == "" || u.File.Env == nil {
 				continue
 			}
-			if _, err := os.Stat(in.path(u.File.EnvPath)); err == nil {
-				continue
+			if u.Entry.Kind == table.KindSlot {
+				if _, err := os.Stat(in.path(u.File.EnvPath)); err == nil {
+					continue
+				}
 			}
-			if _, err := in.ensureFile(u.File.EnvPath, u.File.Env, 0o600, uid, gid); err != nil {
+			ec, err := in.ensureFile(u.File.EnvPath, u.File.Env, 0o600, uid, gid)
+			if err != nil {
 				return nil, false, err
 			}
+			changed = changed || ec
 		}
 	}
 	return names, changed, nil
@@ -109,7 +116,7 @@ func (in *installer) configString(key string) string {
 	return s
 }
 
-func (in *installer) enableBootstrap(um UserManager) error {
+func (in *installer) enableBootstrap(ctx context.Context, um UserManager) error {
 	units, err := BootableUnits(in.o.Role, in.o.UnitPrefix, in.o.Handles)
 	if err != nil || len(units) == 0 {
 		return err
@@ -119,7 +126,7 @@ func (in *installer) enableBootstrap(um UserManager) error {
 		return nil
 	}
 	return in.change("enable "+strings.Join(units, " ")+" as "+in.o.Account+" (started at boot, before the core)", func() error {
-		return e.Enable(in.ctx, units)
+		return e.Enable(ctx, units)
 	})
 }
 

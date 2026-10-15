@@ -217,9 +217,10 @@ func Readyz(ctx context.Context, port int, a Admin) (int, string, error) {
 	return resp.StatusCode, strings.TrimSpace(string(b)), nil
 }
 
-func WaitReady(ctx context.Context, port int, kubeconfig string, notBefore time.Time, every time.Duration) (time.Time, error) {
+func WaitReady(ctx context.Context, port int, kubeconfig string, notBefore time.Time, every time.Duration,
+	progress ...func(attempt int, last error)) (time.Time, error) {
 	var last error
-	for {
+	for attempt := 1; ; attempt++ {
 		fi, err := os.Stat(kubeconfig)
 		switch {
 		case err != nil:
@@ -238,10 +239,19 @@ func WaitReady(ctx context.Context, port int, kubeconfig string, notBefore time.
 			}
 			last = fmt.Errorf("readyz on 127.0.0.1:%d: %d %q %v", port, code, body, err)
 		}
+		report(progress, attempt, last)
 		select {
 		case <-ctx.Done():
 			return time.Time{}, fmt.Errorf("kcpserver: not ready: %v (%w)", last, ctx.Err())
 		case <-time.After(every):
+		}
+	}
+}
+
+func report(progress []func(attempt int, last error), attempt int, last error) {
+	for _, p := range progress {
+		if p != nil {
+			p(attempt, last)
 		}
 	}
 }

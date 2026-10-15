@@ -16,17 +16,20 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/install"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/notify"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
 const (
-	ExeCore      = "socialweb-computer"
-	ExeKcp       = "kcp"
-	ExeKine      = "kine"
-	ExeDeno      = "deno"
-	ExeBao       = "bao"
-	ApplyTimeout = time.Minute
+	ExeCore           = "socialweb-computer"
+	ExeKcp            = "kcp"
+	ExeKine           = "kine"
+	ExeDeno           = "deno"
+	ExeBao            = "bao"
+	ApplyTimeout      = time.Minute
+	RootApplyDeadline = 3 * time.Minute
+	RootRetryLogEvery = time.Minute
 )
 
 type CoreConfig struct {
@@ -45,15 +48,7 @@ type CoreConfig struct {
 }
 
 func NewLayout(state, prefix, handle string) devinstance.Layout {
-	hid := install.HandleID(handle)
-	dir := filepath.Join(state, "handles", hid)
-	kcp := filepath.Join(dir, "kcp")
-	run := filepath.Join(kcp, "run")
-	return devinstance.Layout{ID: "bidder-" + hid, Short: hid, StateDir: dir, RuntimeDir: run,
-		Socket: filepath.Join(run, "sup.sock"), SupState: filepath.Join(dir, "sup"),
-		Record: filepath.Join(dir, "bidder.json"), CoreRecord: filepath.Join(dir, "core.json"),
-		Lock: filepath.Join(kcp, "instance.lock"), CoreLock: filepath.Join(kcp, "core.lock"), Logs: filepath.Join(dir, "logs"),
-		KineDir: filepath.Join(kcp, "kine-a"), KcpRoot: filepath.Join(kcp, "slot-a"), Prefix: prefix}
+	return install.BidderLayout(state, prefix, handle)
 }
 
 func (c CoreConfig) app() table.App {
@@ -120,34 +115,67 @@ func RunCore(ctx context.Context, c CoreConfig, m hostsvc.Manager) error {
 	deno := denoruntime.Config{StateDir: l.StateDir, Deno: c.Executables[ExeDeno].Path, Kubeconfig: l.FrontKubeconfig(), Closure: c.Closure,
 		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log}
 	cvm := c.ComputeVM
+	watchdogLogged := false
 	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: &app,
 		FrontAddress: c.FrontAddress, DenoRuntime: &deno, ComputeVM: &cvm, SignInGuard: CheckSignIn,
-		Before: func(ctx context.Context, rec devinstance.Record) error {
+		OnStep: func(step string) { log.Info("the core brings up the stack", "step", step) },
+		OnTick: func() {
+			if err := notify.Watchdog(); err != nil && !watchdogLogged {
+				watchdogLogged = true
+				log.Warn("telling systemd's watchdog the core is alive", "err", err.Error())
+			}
+		},
+		Members: func(ctx context.Context, rec devinstance.Record) error {
 			k, err := OpenKcp(rec.AdminKubeconfig)
 			if err != nil {
 				return err
 			}
-			go c.applyRoot(ctx, k, log)
+			if err := c.applyRoot(ctx, k, log); err != nil {
+				return err
+			}
+			if err := notify.Ready(); err != nil {
+				return fmt.Errorf("bidder: telling systemd the core is ready: %w", err)
+			}
+			<-ctx.Done()
 			return nil
 		}}, m)
 }
 
-func (c CoreConfig) applyRoot(ctx context.Context, k *Kcp, log *slog.Logger) {
+func attempts(n int) string {
+	if n == 1 {
+		return "1 attempt"
+	}
+	return fmt.Sprintf("%d attempts", n)
+}
+
+func (c CoreConfig) applyRoot(ctx context.Context, k *Kcp, log *slog.Logger) error {
 	started := time.Now()
-	for {
-		err := k.ApplyRoot(ctx, c.Spec)
+	last := started
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		remaining := RootApplyDeadline - time.Since(started)
+		if remaining <= 0 {
+			return fmt.Errorf("bidder: the MarketBidder root object is not applied after %s and %s: %w",
+				time.Since(started).Round(time.Second), attempts(attempt-1), lastErr)
+		}
+		actx, cancel := context.WithTimeout(ctx, remaining)
+		err := k.ApplyRoot(actx, c.Spec)
+		cancel()
 		if err == nil {
 			log.Info("the MarketBidder root object is applied; the core renders its components", "profile", c.Spec.Profile,
-				"afterControllerStart", time.Since(started).String())
-			return
+				"attempts", attempt, "after", time.Since(started).Round(time.Second).String())
+			return nil
 		}
-		if time.Since(started) > ApplyTimeout {
-			log.Error("applying the MarketBidder root object; still retrying", "err", err.Error())
-			started = time.Now()
+		lastErr = err
+		if attempt == 1 || time.Since(last) >= RootRetryLogEvery {
+			log.Warn("applying the MarketBidder root object; still retrying",
+				"attempt", attempt, "elapsed", time.Since(started).Round(time.Second).String(),
+				"deadline", RootApplyDeadline.String(), "err", err.Error())
+			last = time.Now()
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-time.After(Poll):
 		}
 	}

@@ -195,9 +195,14 @@ func DSN(socketDir, user, db string) string {
 	return "postgres://" + user + "@localhost/" + db + "?host=" + socketDir + "&sslmode=disable"
 }
 
-func WaitReady(ctx context.Context, socketDir, user string) error {
+func WaitReady(ctx context.Context, socketDir, user string, progress ...func()) error {
+	tick := func() {}
+	if len(progress) > 0 && progress[0] != nil {
+		tick = progress[0]
+	}
 	var last error
 	for {
+		tick()
 		if last = Ready(ctx, socketDir, user); last == nil {
 			return nil
 		}

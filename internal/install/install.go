@@ -17,38 +17,58 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/buildstamp"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimage"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimagerelease"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/progress"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/vmruntime"
 )
 
 //go:embed templates
 var templates embed.FS
 
 const (
-	AccountGateway  = "socialweb"
-	AccountBidder   = "swc-bidder"
-	BidderProfile   = "prod-qr"
-	StateRoot       = "/var/lib/socialweb-computer"
-	DefaultVMSlots  = 256
-	SubidFloor      = 100000
-	KVMGroup        = "kvm"
-	CoreName        = "socialweb-computer"
-	GatewayUnit     = hostsvc.NamePrefix + table.GatewayCore
-	BidderTemplate  = hostsvc.NamePrefix + table.BidderCore + hostsvc.ServiceSuffix
-	SliceUnit       = "socialweb.slice"
-	DropInName      = "socialweb-delegate.conf"
-	AppArmorPath    = "/etc/apparmor.d/" + hostcontract.AppArmorProfileName
-	NodePassword    = "/etc/rancher/node/password"
-	LingerDir       = "/var/lib/systemd/linger"
-	RestrictUserns  = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
-	AppArmorLoaded  = "/sys/kernel/security/apparmor/profiles"
-	ConfigPathEnv   = "CONFIG_PATH_SOCIALWEB_COMPUTER"
-	UserUnitDir     = ".config/systemd/user"
-	WantsDir        = "default.target.wants"
-	RuntimePrefix   = hostsvc.NamePrefix
-	RuntimeSliceTop = "socialweb"
+	AccountGateway       = "socialweb"
+	AccountBidder        = "swc-bidder"
+	BidderProfile        = "prod-qr"
+	StateRoot            = "/var/lib/socialweb-computer"
+	DefaultVMSlots       = 256
+	SubidFloor           = 100000
+	KVMGroup             = "kvm"
+	CoreName             = "socialweb-computer"
+	GatewayUnit          = hostsvc.NamePrefix + table.GatewayCore
+	BidderTemplate       = hostsvc.NamePrefix + table.BidderCore + hostsvc.ServiceSuffix
+	SliceUnit            = "socialweb.slice"
+	DropInName           = "socialweb-delegate.conf"
+	AppArmorPath         = "/etc/apparmor.d/" + hostcontract.AppArmorProfileName
+	NodePassword         = "/etc/rancher/node/password"
+	LingerDir            = "/var/lib/systemd/linger"
+	RestrictUserns       = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+	WaitReport           = 10 * time.Second
+	DefaultReadyBudget   = bootstrap.DefaultReadyTimeout
+	DefaultNetworkBudget = 3 * time.Minute
+	MaxReadyBudget       = 10 * time.Minute
+	MaxNetworkBudget     = 30 * time.Minute
+	HostCheckBudget      = 2 * time.Minute
+	CommandBudget        = time.Minute
+	MinImageBudget       = 30 * time.Second
+	StartEndedGrace      = 6 * time.Second
+	BidderStartGrace     = 6 * time.Minute
+	StartJobGrace        = time.Minute
+	AppArmorLoaded       = "/sys/kernel/security/apparmor/profiles"
+	UserUnitDir          = ".config/systemd/user"
+	WantsDir             = "default.target.wants"
+	RuntimePrefix        = hostsvc.NamePrefix
+	RuntimeSliceTop      = "socialweb"
 )
 
 var (
@@ -57,6 +77,8 @@ var (
 	ErrManagerWithoutKVM = errors.New("install: the account's user manager already runs without the kvm group")
 	ErrVMsRunning        = errors.New("uninstall: VM units of the account are active; stopping one makes its VM Lost")
 	ErrNoRecord          = errors.New("uninstall: no install record for this account")
+	ErrUsage             = errors.New("install: refused the arguments")
+	ErrBinaryMismatch    = errors.New("install: bin/current is not the binary this install was invoked as")
 	ErrUnsupported       = errors.New("install: install and uninstall are Linux root steps; this OS has no backend (plans 0011, 0012)")
 	handleRE             = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
 	accountRE            = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,30}$`)
@@ -72,8 +94,8 @@ type Account struct {
 
 type UserManager interface {
 	Reload(ctx context.Context) error
-	Active(ctx context.Context, unit string) (bool, error)
 	EnableNow(ctx context.Context, units []string) error
+	Restart(ctx context.Context, units []string) error
 	DisableStop(ctx context.Context, units []string) error
 	List(ctx context.Context) ([]hostsvc.UnitStatus, error)
 	Stop(ctx context.Context, unit string) error
@@ -97,32 +119,39 @@ type System interface {
 }
 
 type Options struct {
-	Role         hostcontract.Role
-	Handles      []string
-	Account      string
-	StateDir     string
-	Binary       string
-	VMSlots      int
-	DryRun       bool
-	AdoptAccount bool
-	HostBackend  string
-	Root         string
-	Staged       bool
-	UnitPrefix   string
-	Settings     map[string]string
-	Out          io.Writer
+	Role                   hostcontract.Role
+	Handles                []string
+	Account                string
+	StateDir               string
+	Binary                 string
+	VMSlots                int
+	DryRun                 bool
+	AdoptAccount           bool
+	HostBackend            string
+	Root                   string
+	Staged                 bool
+	UnitPrefix             string
+	ReadyTimeout           string
+	NetworkTimeout         string
+	GuestImageBase         string
+	GuestImageBaseResolved bool
+	Settings               map[string]string
+	Out                    io.Writer
 }
 
 const (
-	OptKcpFront = "kcp-front-address"
-	OptTLSFront = "tls-front-address"
-	OptSpecFile = "gateway-spec-file"
-	OptGuestImg = "guest-image-source"
+	OptKcpFront       = "kcp-front-address"
+	OptTLSFront       = "tls-front-address"
+	OptSpecFile       = "gateway-spec-file"
+	OptGuestImg       = "guest-image-source"
+	OptGuestImgBase   = "guest-image-release-base"
+	OptReadyTimeout   = "ready-timeout"
+	OptNetworkTimeout = "network-timeout"
 )
 
 var GatewayListen = map[string]string{OptKcpFront: "127.0.0.1:6443", OptTLSFront: "127.0.0.1:8443"}
 
-var Passed = []string{OptKcpFront, OptTLSFront, OptSpecFile, OptGuestImg}
+var Passed = []string{OptKcpFront, OptTLSFront, OptSpecFile, OptGuestImg, OptGuestImgBase}
 
 func Rooted(root string) bool { return root != "" && filepath.Clean(root) != "/" }
 
@@ -158,6 +187,18 @@ func HandleID(handle string) string {
 	return hex.EncodeToString(s[:])[:10]
 }
 
+func BidderLayout(state, prefix, handle string) devinstance.Layout {
+	hid := HandleID(handle)
+	dir := filepath.Join(state, "handles", hid)
+	kcp := filepath.Join(dir, "kcp")
+	run := filepath.Join(kcp, "run")
+	return devinstance.Layout{ID: "bidder-" + hid, Short: hid, StateDir: dir, RuntimeDir: run,
+		Socket: filepath.Join(run, "sup.sock"), SupState: filepath.Join(dir, "sup"),
+		Record: filepath.Join(dir, "bidder.json"), CoreRecord: filepath.Join(dir, "core.json"),
+		Lock: filepath.Join(kcp, "instance.lock"), CoreLock: filepath.Join(kcp, "core.lock"), Logs: filepath.Join(dir, "logs"),
+		KineDir: filepath.Join(kcp, "kine-a"), KcpRoot: filepath.Join(kcp, "slot-a"), Prefix: prefix}
+}
+
 func CoreUnits(role hostcontract.Role, prefix string, handles []string) []string {
 	if role == hostcontract.RoleGateway {
 		return []string{table.CoreTemplate(prefix, table.RoleGateway)}
@@ -171,16 +212,18 @@ func CoreUnits(role hostcontract.Role, prefix string, handles []string) []string
 }
 
 type installer struct {
-	ctx     context.Context
-	o       Options
-	sys     System
-	rep     *Report
-	rec     *Record
-	recPath string
-	acct    Account
-	known   bool
-	unitsUp bool
-	planned map[string]bool
+	ctx      context.Context
+	o        Options
+	sys      System
+	rep      *Report
+	rec      *Record
+	recPath  string
+	acct     Account
+	known    bool
+	cfgWrote bool
+	wrote    map[string]bool
+	planned  map[string]bool
+	mu       sync.Mutex
 }
 
 func within(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/") }
@@ -199,17 +242,61 @@ func (in *installer) out() io.Writer {
 	return in.o.Out
 }
 
+func (in *installer) printf(format string, a ...any) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	fmt.Fprintf(in.out(), format, a...)
+}
+
 func (in *installer) change(desc string, f func() error) error {
 	in.rep.Changes = append(in.rep.Changes, desc)
 	if in.o.DryRun {
-		fmt.Fprintf(in.out(), "would %s\n", desc)
+		in.printf("would %s\n", desc)
 		return nil
 	}
-	fmt.Fprintf(in.out(), "%s\n", desc)
+	in.printf("%s\n", desc)
 	if err := f(); err != nil {
 		return fmt.Errorf("install: %s: %w", desc, err)
 	}
 	return nil
+}
+
+func (in *installer) wait(desc string, f func() error) error {
+	if in.o.DryRun {
+		in.printf("would %s\n", desc)
+		return nil
+	}
+	started := time.Now()
+	in.printf("%s\n", desc)
+	stop := make(chan struct{})
+	ticking := make(chan struct{})
+	go func() {
+		defer close(ticking)
+		t := time.NewTicker(WaitReport)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				in.printf("  ... %s\n", progress.Elapsed(time.Since(started)))
+			}
+		}
+	}()
+	err := f()
+	close(stop)
+	<-ticking
+	if err != nil {
+		in.printf("  failed after %s\n", progress.Elapsed(time.Since(started)))
+		return fmt.Errorf("install: %s: %w", desc, err)
+	}
+	in.printf("  done after %s\n", progress.Elapsed(time.Since(started)))
+	return nil
+}
+
+func (in *installer) changeWait(desc string, f func() error) error {
+	in.rep.Changes = append(in.rep.Changes, desc)
+	return in.wait(desc, f)
 }
 
 func (in *installer) step(name, outcome, detail string) {
@@ -395,7 +482,7 @@ func validate(o *Options) error {
 func Install(ctx context.Context, o Options, sys System) (Report, error) {
 	rep := Report{}
 	if err := validate(&o); err != nil {
-		return rep, err
+		return rep, fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 	in := &installer{ctx: ctx, o: o, sys: sys, rep: &rep, recPath: filepath.Join(o.Root, RecordPath(o.Account))}
 	rec, _, err := loadOrNewRecord(in.recPath, o.Role, o.Account, o.StateDir)
@@ -413,8 +500,11 @@ func Install(ctx context.Context, o Options, sys System) (Report, error) {
 	}
 	rec.UnitPrefix = o.UnitPrefix
 	in.rec = rec
+	if err := in.checkBudgets(); err != nil {
+		return rep, fmt.Errorf("%w: %w", ErrUsage, err)
+	}
 	steps := []func() error{in.account, in.subids, in.kvm, in.delegation, in.apparmor, in.nodePassword, in.stateLayout,
-		in.unitFiles, in.linger, in.enable, in.checkHost}
+		in.guestImage, in.unitFiles, in.linger, in.enable, in.bringUp, in.checkHost}
 	for _, s := range steps {
 		if err := s(); err != nil {
 			return rep, err
@@ -424,7 +514,7 @@ func Install(ctx context.Context, o Options, sys System) (Report, error) {
 		}
 	}
 	if o.DryRun {
-		fmt.Fprintf(in.out(), "dry run: %d change(s) computed, nothing written\n", len(rep.Changes))
+		in.printf("dry run: %d change(s) computed, nothing written\n", len(rep.Changes))
 	}
 	return rep, nil
 }
@@ -465,6 +555,9 @@ func (in *installer) account() error {
 	}
 	in.acct, in.known = a, true
 	in.rec.UID = a.UID
+	if err := in.saveRecord(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -503,11 +596,30 @@ func (in *installer) subids() error {
 	sub, sg := in.read("/etc/subuid"), in.read("/etc/subgid")
 	start := NextRangeStart(sub, sg)
 	count := uint64(in.o.VMSlots) * hostcontract.VMSlotIDs
+	reusedFrom := ""
+	for i, content := range []string{sub, sg} {
+		if r, ok := hostcontract.AccountRange(content, in.o.Account, in.acct.UID); ok {
+			start, count = r.Start, r.End()-r.Start
+			reusedFrom = files[i].host
+			break
+		}
+	}
 	for _, f := range files {
 		content := in.read(f.host)
 		if r, ok := hostcontract.AccountRange(content, in.o.Account, in.acct.UID); ok {
 			in.step(f.step, OutcomeFound, fmt.Sprintf("%d-%d", r.Start, r.End()-1))
 			continue
+		}
+		if reusedFrom != "" {
+			want := hostcontract.SubidEntry{Start: start, Count: count}
+			for _, e := range hostcontract.ParseSubids(content) {
+				if hostcontract.Overlaps(want, e) {
+					detail := fmt.Sprintf("the range %d-%d of %s in %s overlaps %s:%d:%d on line %d of %s",
+						start, start+count-1, in.o.Account, reusedFrom, e.Owner, e.Start, e.Count, e.Line+1, f.host)
+					in.step(f.step, OutcomeRefused, detail)
+					return fmt.Errorf("install: %s; give %s one range that is free in both /etc/subuid and /etc/subgid", detail, in.o.Account)
+				}
+			}
 		}
 		line := fmt.Sprintf("%s:%d:%d\n", in.o.Account, start, count)
 		next := content
@@ -520,16 +632,20 @@ func (in *installer) subids() error {
 		if st, err := os.Stat(full); err == nil {
 			mode = st.Mode().Perm()
 		}
+		if in.rec.SubidLines == nil {
+			in.rec.SubidLines = map[string]string{}
+		}
+		in.rec.SubidLines[f.host] = line
+		in.rec.set(f.step, OutcomeCreated)
+		if err := in.saveRecord(); err != nil {
+			return err
+		}
 		err := in.change(fmt.Sprintf("reserve %s in %s (%d VM slots of %d ids)", strings.TrimSpace(line), f.host, in.o.VMSlots, hostcontract.VMSlotIDs), func() error {
 			return writeAtomic(full, []byte(next), mode)
 		})
 		if err != nil {
 			return err
 		}
-		if in.rec.SubidLines == nil {
-			in.rec.SubidLines = map[string]string{}
-		}
-		in.rec.SubidLines[f.host] = line
 		in.step(f.step, OutcomeCreated, strings.TrimSpace(line))
 	}
 	return nil
@@ -577,30 +693,39 @@ func (in *installer) kvm() error {
 
 const statePlaceholder = "{{.State}}"
 
+const startTimeoutPlaceholder = "{{.StartTimeout}}"
+
 func render(name string, data unitData) ([]byte, error) {
 	raw, err := templates.ReadFile("templates/" + name)
 	if err != nil {
 		return nil, err
 	}
 	out := strings.ReplaceAll(string(raw), statePlaceholder, data.State)
+	out = strings.ReplaceAll(out, startTimeoutPlaceholder, data.StartTimeout)
 	if strings.Contains(out, "{{") {
-		return nil, fmt.Errorf("install: template %s has a placeholder other than %s", name, statePlaceholder)
+		return nil, fmt.Errorf("install: template %s has a placeholder other than %s or %s", name, statePlaceholder, startTimeoutPlaceholder)
 	}
 	return []byte(out), nil
 }
 
 type unitData struct {
-	State string
+	State        string
+	StartTimeout string
 }
 
-func RenderUnits(role hostcontract.Role, state, prefix string) (map[string][]byte, error) {
+func StartTimeoutFor(readyBudget time.Duration) time.Duration {
+	return readyBudget + BidderStartGrace
+}
+
+func RenderUnits(role hostcontract.Role, state, prefix string, startTimeout time.Duration) (map[string][]byte, error) {
 	out := map[string][]byte{}
 	core, tmpl := table.CoreTemplate(prefix, table.RoleGateway), GatewayUnit
 	if role == hostcontract.RoleBidder {
 		core, tmpl = table.CoreTemplate(prefix, table.RoleBidder), BidderTemplate
 	}
+	data := unitData{State: state, StartTimeout: strconv.Itoa(int(startTimeout.Seconds())) + "s"}
 	for name, src := range map[string]string{SliceUnit: SliceUnit, core: tmpl} {
-		b, err := render(src, unitData{State: state})
+		b, err := render(src, data)
 		if err != nil {
 			return nil, err
 		}
@@ -752,11 +877,18 @@ func (in *installer) binary() error {
 	current := filepath.Join(bin, "current")
 	if target, err := os.Readlink(in.path(current)); err == nil {
 		if _, err := os.Stat(in.path(filepath.Join(bin, target, CoreName))); err == nil {
-			detail := "bin/current -> " + target
 			if target != sum {
-				detail += "; this binary is " + sum + ": use upgrade to switch"
+				in.step(StepBinary, OutcomeRefused, "bin/current -> "+target+"; this binary is "+sum)
+				dev := ""
+				if buildstamp.Read() != nil {
+					dev = " --allow-dev-binary"
+				}
+				return fmt.Errorf("%w: install writes a unit that starts bin/current, and this binary is the one "+
+					"that sends the readiness that unit waits for; switch it first by running, as %s, "+
+					"\"upgrade --binary %s --sha256 %s --state-dir %s%s\", then run install again",
+					ErrBinaryMismatch, in.o.Account, in.o.Binary, sum, in.o.StateDir, dev)
 			}
-			in.step(StepBinary, OutcomeFound, detail)
+			in.step(StepBinary, OutcomeFound, "bin/current -> "+target)
 			return nil
 		}
 	}
@@ -841,10 +973,13 @@ func (in *installer) config() error {
 			}
 		}
 	}
+	cfg[OptReadyTimeout] = in.readyBudget().String()
+	cfg[OptNetworkTimeout] = in.networkBudget().String()
 	for k, v := range in.o.Settings {
-		if v != "" {
-			cfg[k] = v
+		if v == "" || k == OptReadyTimeout || k == OptNetworkTimeout {
+			continue
 		}
+		cfg[k] = v
 	}
 	b, _ := json.MarshalIndent(cfg, "", "  ")
 	changed, err := in.ensureFile(p, append(b, '\n'), 0o644, in.acct.UID, in.acct.GID)
@@ -852,6 +987,7 @@ func (in *installer) config() error {
 		return err
 	}
 	if changed {
+		in.cfgWrote = true
 		in.step(StepConfig, OutcomeCreated, p+": host-backend "+string(hostsvc.BackendSystemdUser))
 	} else {
 		in.step(StepConfig, OutcomeFound, p)
@@ -859,10 +995,377 @@ func (in *installer) config() error {
 	return nil
 }
 
+func (in *installer) bringUp() error {
+	if in.o.Role != hostcontract.RoleBidder {
+		in.step(StepBringUp, OutcomeNotNeeded, "the gateway answers for itself")
+		return nil
+	}
+	if in.o.DryRun {
+		in.step(StepBringUp, OutcomeCreated, "would wait for the kcp slot of "+strings.Join(in.o.Handles, ", "))
+		in.printf("would wait for the kcp slot of %s to answer /readyz\n", strings.Join(in.o.Handles, ", "))
+		return nil
+	}
+	budget := in.readyBudget()
+	details := make([]string, 0, len(in.o.Handles))
+	skipped := make([]string, 0, len(in.o.Handles))
+	for _, handle := range in.o.Handles {
+		l := BidderLayout(in.o.StateDir, prefixOr(in.o.UnitPrefix), handle)
+		slots, err := kcpserver.ReadSlots(in.path(l.SlotsFile()))
+		if err != nil {
+			skipped = append(skipped, handle+": "+err.Error())
+			continue
+		}
+		slot, ok := slots.Slots[slots.Active]
+		if !ok || slot.Port == 0 {
+			skipped = append(skipped, handle+": the active slot records no port")
+			continue
+		}
+		port := strconv.Itoa(slot.Port)
+		ctx, cancel := context.WithTimeout(in.ctx, budget)
+		reported := ""
+		err = in.wait("waiting for the kcp slot of "+handle+" on 127.0.0.1:"+port, func() error {
+			_, err := kcpserver.WaitReady(ctx, slot.Port, in.path(l.AdminKubeconfig()), time.Time{}, kcpserver.ProbePoll,
+				func(_ int, last error) {
+					msg := ""
+					if last != nil {
+						msg = last.Error()
+					}
+					if msg == "" || msg == reported {
+						return
+					}
+					reported = msg
+					in.printf("  %s\n", msg)
+				})
+			return err
+		})
+		cancel()
+		if err != nil {
+			in.step(StepBringUp, OutcomeRefused, err.Error())
+			if errors.Is(err, context.DeadlineExceeded) {
+				return fmt.Errorf("%w; raise --%s if this host's first start is slow, and read %s",
+					err, OptReadyTimeout, journalHint(in.o.Account, in.acct.UID, CoreUnits(in.o.Role, in.o.UnitPrefix, in.o.Handles)...))
+			}
+			return err
+		}
+		details = append(details, handle+" on 127.0.0.1:"+port)
+	}
+	if len(details) == 0 {
+		for _, handle := range in.o.Handles {
+			l := BidderLayout(in.o.StateDir, prefixOr(in.o.UnitPrefix), handle)
+			if _, err := os.Stat(in.path(l.SlotsFile())); err == nil {
+				in.step(StepBringUp, OutcomeRefused, "the core wrote a kcp slot record with no active port: "+strings.Join(skipped, "; "))
+				return fmt.Errorf("install: %s records no active kcp slot port; read %s",
+					in.path(l.SlotsFile()), journalHint(in.o.Account, in.acct.UID, CoreUnits(in.o.Role, in.o.UnitPrefix, in.o.Handles)...))
+			}
+		}
+		in.step(StepBringUp, OutcomeNotNeeded, "no handle published an active kcp slot port: "+strings.Join(skipped, "; "))
+		return nil
+	}
+	if len(skipped) > 0 {
+		in.step(StepBringUp, OutcomeRefused, "ready: "+strings.Join(details, ", ")+"; not ready: "+strings.Join(skipped, "; "))
+		return fmt.Errorf("install: %s came up and %s did not; read %s", strings.Join(details, ", "),
+			strings.Join(skipped, "; "), journalHint(in.o.Account, in.acct.UID,
+				CoreUnits(in.o.Role, in.o.UnitPrefix, in.o.Handles)...))
+	}
+	in.step(StepBringUp, OutcomeFound, strings.Join(details, ", "))
+	return nil
+}
+
+func (in *installer) chownTree(host string, uid, gid int) error {
+	return filepath.WalkDir(in.path(host), func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return in.sys.Chown(p, uid, gid)
+	})
+}
+
+func (in *installer) checkBudgets() error {
+	for _, b := range []struct {
+		opt, passed, why string
+		min, max         time.Duration
+	}{
+		{OptReadyTimeout, in.o.ReadyTimeout, "that budget sizes the unit's start timeout and its watchdog, so " +
+			"a longer one makes a wedged core wait longer to be restarted rather than giving a cold start more room",
+			0, MaxReadyBudget},
+		{OptNetworkTimeout, in.o.NetworkTimeout, "that budget is how long the guest image fetch may take, " +
+			"a third of it, at least " + MinImageBudget.String() + ", is the search of the release base, and an " +
+			"image that needs longer than either is better named with --" + OptGuestImg,
+			MinImageBudget, MaxNetworkBudget},
+	} {
+		for _, v := range []struct{ src, val string }{
+			{"--" + b.opt, b.passed},
+			{"config.json " + b.opt, in.storedSetting(b.opt)},
+		} {
+			if v.val == "" {
+				continue
+			}
+			d, err := time.ParseDuration(v.val)
+			if err != nil {
+				return fmt.Errorf("install: %s %q is not a duration: %w", v.src, v.val, err)
+			}
+			if d <= 0 {
+				return fmt.Errorf("install: %s %q is not a positive duration", v.src, v.val)
+			}
+			if d < b.min {
+				return fmt.Errorf("install: %s %q is under the minimum of %s, which is what the search of the "+
+					"release base needs to list a bucket rather than report a slow one as a missing image",
+					v.src, v.val, b.min)
+			}
+			if d > b.max {
+				return fmt.Errorf("install: %s %q is over the maximum of %s: %s", v.src, v.val, b.max, b.why)
+			}
+			break
+		}
+	}
+	return nil
+}
+
+func (in *installer) budget(opt, passed string, def time.Duration) time.Duration {
+	for _, v := range []string{passed, in.storedSetting(opt)} {
+		if v == "" {
+			continue
+		}
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
+}
+
+func (in *installer) readyBudget() time.Duration {
+	return in.budget(OptReadyTimeout, in.o.ReadyTimeout, DefaultReadyBudget)
+}
+
+func (in *installer) networkBudget() time.Duration {
+	return in.budget(OptNetworkTimeout, in.o.NetworkTimeout, DefaultNetworkBudget)
+}
+
+func (in *installer) waitStarted(um UserManager, unit string) error {
+	ctx, cancel := context.WithTimeout(in.ctx, in.startBudget())
+	defer cancel()
+	flags := journalHint(in.o.Account, in.acct.UID, unit)
+	var endedSince time.Time
+	return in.wait("waiting for "+unit+" to finish starting", func() error {
+		for {
+			listed, err := um.List(ctx)
+			if err != nil {
+				return err
+			}
+			found := false
+			for _, s := range listed {
+				if s.Name != unit {
+					continue
+				}
+				found = true
+				if s.State == hostsvc.Active {
+					return nil
+				}
+				if s.State != hostsvc.Activating {
+					if endedSince.IsZero() {
+						endedSince = time.Now()
+					}
+					if time.Since(endedSince) < StartEndedGrace {
+						break
+					}
+					return fmt.Errorf("install: %s ended %s %s and stayed there for %s; read %s",
+						unit, s.State, s.SubState, StartEndedGrace, flags)
+				}
+				endedSince = time.Time{}
+			}
+			if !found {
+				return fmt.Errorf("install: %s is no longer known to systemd; read %s", unit, flags)
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("install: %s is still starting after %s; read %s", unit, in.startBudget(), flags)
+			case <-time.After(kcpserver.ProbePoll):
+			}
+		}
+	})
+}
+
+func journalHint(account string, uid int, units ...string) string {
+	flags := make([]string, 0, len(units))
+	for _, u := range units {
+		flags = append(flags, "-u "+u)
+	}
+	return fmt.Sprintf("runuser -u %s -- env XDG_RUNTIME_DIR=/run/user/%d journalctl --user %s", account, uid, strings.Join(flags, " "))
+}
+
+func (in *installer) startBudget() time.Duration {
+	return StartTimeoutFor(in.readyBudget()) + StartJobGrace
+}
+
+func dirExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+func storeVerifies(store guestimage.Store, pin guestimage.Pin) bool {
+	_, err := store.Verify(pin)
+	return err == nil
+}
+
 func (in *installer) unitDir() string { return filepath.Join(in.acct.Home, UserUnitDir) }
 
+func (in *installer) storedSetting(key string) string {
+	b, err := os.ReadFile(in.path(filepath.Join(in.o.StateDir, "config.json")))
+	if err != nil {
+		return ""
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return ""
+	}
+	s, _ := cfg[key].(string)
+	return s
+}
+
+func (in *installer) guestImage() error {
+	if in.o.Role != hostcontract.RoleBidder {
+		in.step(StepGuestImage, OutcomeNotNeeded, "the gateway runs no guest")
+		return nil
+	}
+	target := vmruntime.ImageTarget()
+	images := filepath.Join(in.o.StateDir, "images")
+	pin, err := guestimage.PinFor(target)
+	if err != nil {
+		in.step(StepGuestImage, OutcomeRefused, err.Error())
+		return fmt.Errorf("install: this host cannot name the guest image it would boot: %w", err)
+	}
+	if err := pin.Valid(); err != nil {
+		in.step(StepGuestImage, OutcomeRefused, err.Error())
+		return fmt.Errorf("install: %w", err)
+	}
+	root := in.path(images)
+	store := guestimage.Store{Root: root, Out: in.out(), TTY: progress.IsTTYWriter(in.out())}
+	if in.o.DryRun {
+		if dir := store.Dir(pin); dirExists(dir) {
+			in.step(StepGuestImage, OutcomeFound, dir)
+			in.printf("the guest image for %s is already in %s\n", target, dir)
+			return nil
+		}
+		in.step(StepGuestImage, OutcomeCreated, "would fetch the guest image for "+target+" into "+in.path(images))
+		in.printf("would fetch the guest image for %s into %s\n", target, in.path(images))
+		return nil
+	}
+	if err := in.ensureDir(images, 0o700, in.acct.UID, in.acct.GID, true); err != nil {
+		return err
+	}
+	lookup := in.networkBudget() / 3
+	if lookup < MinImageBudget {
+		lookup = MinImageBudget
+	}
+	lookupCtx, lookupCancel := context.WithTimeout(in.ctx, lookup)
+	defer lookupCancel()
+	dir := store.Dir(pin)
+	if dirExists(dir) && storeVerifies(store, pin) {
+		if err := in.chownTree(images, in.acct.UID, in.acct.GID); err != nil {
+			return err
+		}
+		in.step(StepGuestImage, OutcomeFound, dir)
+		return nil
+	}
+	if dirExists(dir) {
+		in.printf("the stored guest image no longer matches its pin; fetching it again\n")
+	}
+	source := in.o.Settings[OptGuestImg]
+	if source == "" {
+		source = in.storedSetting(OptGuestImg)
+	}
+	if source == "" {
+		if in.o.GuestImageBase == "" && in.o.GuestImageBaseResolved {
+			in.step(StepGuestImage, OutcomeRefused, "no guest image source and the release base was cleared")
+			return fmt.Errorf("install: no --%s and --%s is empty, so no image can be named; name one with --%s",
+				OptGuestImg, OptGuestImgBase, OptGuestImg)
+		}
+		if in.o.GuestImageBase == "" {
+			in.step(StepGuestImage, OutcomeNotNeeded, "the caller named no guest image source and no release base")
+			return nil
+		}
+		version, commit := buildstamp.Identity()
+		s, err := guestimagerelease.Source(lookupCtx, guestimagerelease.Options{Base: in.o.GuestImageBase, Target: target,
+			Version: version, Commit: commit,
+			ManifestSHA256: pin.Files[guestimage.ManifestName].SHA256})
+		switch {
+		case err == nil:
+			source = s
+		case errors.Is(err, guestimagerelease.ErrPinMismatch):
+			in.step(StepGuestImage, OutcomeRefused, err.Error())
+			return fmt.Errorf("%w; name a matching image with --%s, or build one with scripts/build-guest-image.sh", err, OptGuestImg)
+		case errors.Is(err, guestimagerelease.ErrNotPublished):
+			in.step(StepGuestImage, OutcomeRefused, err.Error())
+			return fmt.Errorf("%w; a bidder with no guest image can provision nothing, so name one with --%s", err, OptGuestImg)
+		default:
+			in.step(StepGuestImage, OutcomeRefused, err.Error())
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return fmt.Errorf("%w; raise --%s, of which this search is a third floored at %s, or name an "+
+					"image with --%s", err, OptNetworkTimeout, MinImageBudget, OptGuestImg)
+			}
+			return fmt.Errorf("%w; name an image with --%s, or check that %s answers this host",
+				err, OptGuestImg, in.o.GuestImageBase)
+		}
+	}
+	if dirExists(dir) {
+		if err := removeImageTree(root, dir); err != nil {
+			return err
+		}
+	}
+	in.printf("fetching the guest image for %s from %s\n", target, source)
+	ctx, cancel := context.WithTimeout(in.ctx, in.networkBudget())
+	defer cancel()
+	res, err := store.Ensure(ctx, pin, source)
+	if err != nil {
+		in.step(StepGuestImage, OutcomeRefused, err.Error())
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("%w; raise --%s if the image is large or the link slow, or name an image with --%s", err, OptNetworkTimeout, OptGuestImg)
+		}
+		return fmt.Errorf("%w; name a matching image with --%s, or build one with scripts/build-guest-image.sh", err, OptGuestImg)
+	}
+	outcome := OutcomeFound
+	if res.Fetched {
+		outcome = OutcomeCreated
+	}
+	if err := in.chownTree(images, in.acct.UID, in.acct.GID); err != nil {
+		return err
+	}
+	in.step(StepGuestImage, outcome, res.Dir)
+	return nil
+}
+
+func removeImageTree(root, dir string) error {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." || rel == ".." || filepath.IsAbs(rel) ||
+		strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("install: refusing to remove %s: it is not inside the image store %s", dir, root)
+	}
+	if len(filepath.Base(dir)) != guestimage.SHA256HexLen {
+		return fmt.Errorf("install: refusing to remove %s: it is not named for a manifest sha256", dir)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("install: resolving the image store %s: %w", root, err)
+	}
+	realDir, err := filepath.EvalSymlinks(filepath.Dir(dir))
+	if err != nil {
+		return fmt.Errorf("install: resolving %s: %w", filepath.Dir(dir), err)
+	}
+	if under, err := filepath.Rel(realRoot, realDir); err != nil || under == ".." || filepath.IsAbs(under) ||
+		strings.HasPrefix(under, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("install: refusing to remove %s: its directory resolves to %s, outside the image store %s", dir, realDir, realRoot)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("install: removing the unusable image at %s: %w", dir, err)
+	}
+	return nil
+}
+
 func (in *installer) unitFiles() error {
-	units, err := RenderUnits(in.o.Role, in.o.StateDir, in.o.UnitPrefix)
+	units, err := RenderUnits(in.o.Role, in.o.StateDir, in.o.UnitPrefix, StartTimeoutFor(in.readyBudget()))
 	if err != nil {
 		return err
 	}
@@ -884,6 +1387,9 @@ func (in *installer) unitFiles() error {
 			return err
 		}
 		in.rec.addUnitFile(filepath.Join(dir, n))
+		if changed {
+			in.noteWritten(n)
+		}
 		any = any || changed
 	}
 	boot, bootChanged, err := in.bootstrapFiles(dir)
@@ -892,13 +1398,40 @@ func (in *installer) unitFiles() error {
 	}
 	names = append(names, boot...)
 	any = any || bootChanged
-	in.unitsUp = !any
 	if any {
 		in.step(StepUnitFiles, OutcomeCreated, strings.Join(names, " "))
 	} else {
 		in.step(StepUnitFiles, OutcomeFound, strings.Join(names, " "))
 	}
 	return nil
+}
+
+func (in *installer) noteWritten(name string) {
+	if in.wrote == nil {
+		in.wrote = map[string]bool{}
+	}
+	in.wrote[name] = true
+}
+
+func coreTemplate(unit string) string {
+	at := strings.Index(unit, "@")
+	dot := strings.LastIndex(unit, ".")
+	if at < 0 || dot < at {
+		return ""
+	}
+	return unit[:at+1] + "." + unit[dot+1:]
+}
+
+func (in *installer) unitChanged(unit string) bool {
+	if in.cfgWrote || in.wrote[unit] || in.wrote[coreTemplate(unit)] {
+		return true
+	}
+	for p := range in.wrote {
+		if strings.HasPrefix(p, unit+".d/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (in *installer) linger() error {
@@ -921,7 +1454,7 @@ func (in *installer) enable() error {
 	if in.o.DryRun && !in.known {
 		for _, u := range units {
 			in.rep.Changes = append(in.rep.Changes, "enable --now "+u)
-			fmt.Fprintf(in.out(), "would enable --now %s as %s\n", u, in.o.Account)
+			in.printf("would enable --now %s as %s\n", u, in.o.Account)
 		}
 		return nil
 	}
@@ -929,7 +1462,7 @@ func (in *installer) enable() error {
 		if _, err := os.Stat(in.path(filepath.Join(LingerDir, in.o.Account))); err != nil {
 			for _, u := range units {
 				in.rep.Changes = append(in.rep.Changes, "enable --now "+u)
-				fmt.Fprintf(in.out(), "would enable --now %s as %s\n", u, in.o.Account)
+				in.printf("would enable --now %s as %s\n", u, in.o.Account)
 			}
 			return nil
 		}
@@ -939,45 +1472,94 @@ func (in *installer) enable() error {
 		return fmt.Errorf("install: reaching user@%d: %w", in.acct.UID, err)
 	}
 	defer um.Close()
-	var todo []string
+	actx, acancel := context.WithTimeout(in.ctx, in.startBudget())
+	defer acancel()
+	states := map[string]hostsvc.UnitStatus{}
+	listed, err := um.List(actx)
+	if err != nil {
+		return err
+	}
+	for _, s := range listed {
+		states[s.Name] = s
+	}
+	var todo, starting, restart []string
 	for _, u := range units {
 		_, linkErr := os.Lstat(in.path(filepath.Join(in.unitDir(), WantsDir, u)))
-		active, err := um.Active(in.ctx, u)
-		if err != nil {
-			return err
-		}
-		if linkErr != nil || !active {
+		st := states[u]
+		switch {
+		case linkErr != nil || (st.State != hostsvc.Active && st.State != hostsvc.Activating):
 			todo = append(todo, u)
+		case in.unitChanged(u):
+			restart = append(restart, u)
+		case st.State == hostsvc.Activating:
+			starting = append(starting, u)
 		}
 	}
 	in.rec.addHandles(in.o.Handles)
-	if len(todo) == 0 && in.unitsUp {
+	if err := in.saveRecord(); err != nil {
+		return err
+	}
+	if len(todo) == 0 && len(starting) == 0 && len(restart) == 0 {
 		in.step(StepUnits, OutcomeFound, strings.Join(units, " "))
 		return nil
 	}
-	if err := in.change("systemctl --user daemon-reload as "+in.o.Account, func() error { return um.Reload(in.ctx) }); err != nil {
+	if err := in.change("systemctl --user daemon-reload as "+in.o.Account, func() error { return um.Reload(actx) }); err != nil {
 		return err
 	}
-	if err := in.enableBootstrap(um); err != nil {
+	if err := in.enableBootstrap(actx, um); err != nil {
 		return err
 	}
-	if len(todo) > 0 {
-		if err := in.change("enable --now "+strings.Join(todo, " ")+" as "+in.o.Account, func() error { return um.EnableNow(in.ctx, todo) }); err != nil {
+	for _, u := range todo {
+		sctx, cancel := context.WithTimeout(in.ctx, in.startBudget())
+		err := in.changeWait("enable --now "+u+" as "+in.o.Account, func() error { return um.EnableNow(sctx, []string{u}) })
+		cancel()
+		if err != nil {
+			in.step(StepUnits, OutcomeRefused, u+": "+err.Error())
+			return fmt.Errorf("%w; read %s", err, journalHint(in.o.Account, in.acct.UID, u))
+		}
+	}
+	for _, u := range restart {
+		sctx, cancel := context.WithTimeout(in.ctx, in.startBudget())
+		err := in.changeWait("restart "+u+" as "+in.o.Account+" (its unit file or its config.json changed)", func() error {
+			return um.Restart(sctx, []string{u})
+		})
+		cancel()
+		if err != nil {
+			in.step(StepUnits, OutcomeRefused, u+": "+err.Error())
+			return fmt.Errorf("%w; read %s", err, journalHint(in.o.Account, in.acct.UID, u))
+		}
+	}
+	for _, u := range starting {
+		if err := in.waitStarted(um, u); err != nil {
+			in.step(StepUnits, OutcomeRefused, u+": "+err.Error())
 			return err
 		}
 	}
-	in.step(StepUnits, OutcomeCreated, strings.Join(units, " "))
+	outcome := OutcomeCreated
+	if len(todo) == 0 && len(starting) == 0 {
+		outcome = OutcomeUpdated
+	}
+	in.step(StepUnits, outcome, strings.Join(units, " "))
 	return nil
 }
 
 func (in *installer) checkHost() error {
+	exe := filepath.Join(in.o.StateDir, "bin", "current", CoreName)
+	desc := "run check-host -role " + string(in.o.Role) + " as " + in.o.Account
 	if in.o.DryRun {
-		fmt.Fprintf(in.out(), "would run check-host -role %s as %s\n", in.o.Role, in.o.Account)
+		in.printf("would %s\n", desc)
 		return nil
 	}
-	exe := filepath.Join(in.o.StateDir, "bin", "current", CoreName)
-	if err := in.sys.CheckHost(in.ctx, in.acct, exe, in.o.Role, in.o.StateDir); err != nil {
-		return fmt.Errorf("install: check-host as %s: %w; fix what it names and re-run install, which completes from here", in.o.Account, err)
+	in.printf("%s\n", desc)
+	cctx, cancel := context.WithTimeout(in.ctx, HostCheckBudget)
+	defer cancel()
+	if err := in.sys.CheckHost(cctx, in.acct, exe, in.o.Role, in.o.StateDir); err != nil {
+		in.rep.Steps = append(in.rep.Steps, StepResult{Name: StepCheckHost, Outcome: OutcomeRefused, Detail: err.Error()})
+		if errors.Is(cctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("install: %s did not finish within %s, and it prints what it found only at the end: %w",
+				desc, HostCheckBudget, err)
+		}
+		return fmt.Errorf("install: %s: %w; fix what it names and re-run install, which completes from here", desc, err)
 	}
 	in.rep.Steps = append(in.rep.Steps, StepResult{Name: StepCheckHost, Outcome: OutcomeFound, Detail: "the host contract holds"})
 	return nil

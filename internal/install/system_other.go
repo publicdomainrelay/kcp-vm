@@ -9,7 +9,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 )
 
-func NewSystem(out io.Writer) (System, error) { return nil, ErrUnsupported }
+func NewSystem(context.Context, io.Writer) (System, error) { return nil, ErrUnsupported }
 
 func SelfCheck(ctx context.Context, exe string, role hostcontract.Role, stateDir string) error {
 	return ErrUnsupported

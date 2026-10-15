@@ -121,14 +121,16 @@ func (c *RollConfig) defaults() {
 
 func backendOf(port int) string { return "127.0.0.1:" + strconv.Itoa(port) }
 
-func WaitOwnPortReady(ctx context.Context, admin ShardAdmin, port int, every time.Duration) error {
+func WaitOwnPortReady(ctx context.Context, admin ShardAdmin, port int, every time.Duration,
+	progress ...func(attempt int, last error)) error {
 	var last error
-	for {
+	for attempt := 1; ; attempt++ {
 		code, err := admin.Readyz(ctx, port)
 		if err == nil && code == http.StatusOK {
 			return nil
 		}
 		last = fmt.Errorf("readyz on 127.0.0.1:%d: %d %v", port, code, err)
+		report(progress, attempt, last)
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("kcpserver: not ready: %v (%w)", last, ctx.Err())

@@ -16,6 +16,8 @@ const (
 	MaxSocketPath   = 107
 	PostgresUser    = "kcp"
 	KineDatabase    = "kine"
+
+	SqliteParams = "_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=30000&_txlock=immediate&_stmt_cache_size=20"
 )
 
 type KineConfig struct {
@@ -67,7 +69,7 @@ func kineArgv(c KineConfig, endpoint string) ([]string, error) {
 }
 
 func KineSqliteArgv(c KineConfig) ([]string, error) {
-	return kineArgv(c, "sqlite://"+filepath.Join(c.Dir, SqliteFile))
+	return kineArgv(c, "sqlite://"+filepath.Join(c.Dir, SqliteFile)+"?"+SqliteParams)
 }
 
 func PostgresDSN(socketDir string) string {

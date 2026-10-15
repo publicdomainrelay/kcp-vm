@@ -13,6 +13,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/progress"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vmruntime"
 )
@@ -75,6 +76,7 @@ func (a *app) vmRuntime(ctx context.Context, vals clicfg.Values) (vmruntime.Runt
 	rt, err := vmruntime.ForHost(vmruntime.Config{
 		Manager: p.manager, StateDir: state, RuntimeDir: vals.String("vm-runtime-dir"), Exec: exe,
 		ImageSource: vals.String("guest-image-source"), StopGrace: grace,
+		ImageOut: a.stderr, ImageTTY: progress.IsTTYWriter(a.stderr),
 	})
 	if err != nil {
 		p.manager.Close()
@@ -178,7 +180,7 @@ func (a *app) instanceVMRuntime(ctx context.Context, rec devinstance.Record) (vm
 	rt, err := vmruntime.ForHost(vmruntime.Config{Manager: m, StateDir: rec.Layout.StateDir, RuntimeDir: v.RuntimeDir,
 		Exec: vmruntime.Executables{Stage: v.Executables["swc-userns-stage"], Pasta: v.Executables["pasta"],
 			VMExec: v.Executables["socialweb-vmexec"], Firecracker: v.Executables["firecracker"]},
-		ImageSource: v.ImageSource, StopGrace: grace})
+		ImageSource: v.ImageSource, StopGrace: grace, ImageOut: a.stderr, ImageTTY: progress.IsTTYWriter(a.stderr)})
 	if err != nil {
 		m.Close()
 		return nil, nil, err

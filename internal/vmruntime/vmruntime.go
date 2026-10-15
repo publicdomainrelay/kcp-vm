@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -60,6 +61,8 @@ type Config struct {
 	StopGrace   time.Duration
 	ConsoleCap  int64
 	Binaries    []string
+	ImageOut    io.Writer
+	ImageTTY    bool
 }
 
 type Capabilities struct {

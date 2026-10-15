@@ -34,6 +34,8 @@ type Config struct {
 	ComputeVM    *computevm.Config
 	Application  *table.App
 	FrontAddress string
+	OnStep       func(step string)
+	OnTick       func()
 	Before       func(ctx context.Context, rec devinstance.Record) error
 	Members      func(ctx context.Context, rec devinstance.Record) error
 	Listeners    func(owner string) []v1alpha1.ApplicationListener
@@ -101,7 +103,8 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	core := devinstance.Core{Generation: prev.Generation + 1, PID: os.Getpid(), InvocationID: os.Getenv("INVOCATION_ID"),
 		StartedAt: time.Now().UTC()}
 	bcfg := bootstrap.Config{Layout: l, KcpPath: rec.Executables["kcp"].Path, KinePath: rec.Executables["kine"].Path, PostgresRoot: rec.Executables["postgres"].Path,
-		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: cfg.ReadyTimeout, Application: cfg.Application, FrontAddress: cfg.FrontAddress, Log: log}
+		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: cfg.ReadyTimeout, Application: cfg.Application, FrontAddress: cfg.FrontAddress,
+		OnStep: cfg.OnStep, OnTick: cfg.OnTick, Log: log}
 	lk, err := lockRecord(l.Lock)
 	if err != nil {
 		return err
@@ -140,7 +143,8 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	}
 	members := make(chan error, 1)
 	if cfg.Members != nil {
-		go func() { members <- cfg.Members(ctx, rec) }()
+		launched := rec
+		go func() { members <- cfg.Members(ctx, launched) }()
 	}
 	if rec.Host && rec.AdminKubeconfig != "" {
 		go devinstance.RunHost(ctx, devinstance.HostConfig{Kubeconfig: rec.AdminKubeconfig, Manager: m, Own: devinstance.Prefixes(l.ID), Log: log})
@@ -163,20 +167,27 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 			return err
 		case <-t.C:
 		}
+		if cfg.OnTick != nil {
+			cfg.OnTick()
+		}
 		lk, ok := tryLockRecord(l.Lock)
 		if !ok {
 			log.Info("a dev verb holds the instance; this check is skipped")
 			continue
 		}
-		if err := devinstance.ReadJSON(l.Record, &rec); err != nil {
+		cur := devinstance.Record{}
+		if err := devinstance.ReadJSON(l.Record, &cur); err != nil {
 			lk.Close()
 			log.Error("re-reading the instance record", "err", err.Error())
 			continue
 		}
 		lost := false
 		core.Verdicts = nil
-		for _, u := range rec.Units {
+		for _, u := range cur.Units {
 			obs, restarted, err := bootstrap.Observe(ctx, m, u.Identity)
+			if cfg.OnTick != nil {
+				cfg.OnTick()
+			}
 			if err != nil {
 				log.Error("check", "unit", u.Unit, "err", err.Error())
 				continue
@@ -195,7 +206,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		}
 		core.LastCheck = time.Now().UTC()
 		if lost {
-			if err := ensure(ctx, m, bcfg, l, &rec, &core, log); err != nil {
+			if err := ensure(ctx, m, bcfg, l, &cur, &core, log); err != nil {
 				log.Error("re-placing the bootstrap units", "err", err.Error())
 			}
 			lk.Close()

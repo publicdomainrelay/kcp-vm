@@ -3,11 +3,14 @@ Description=socialweb-computer bidder for %i (run bidder)
 StartLimitIntervalSec=0
 
 [Service]
-Type=exec
+Type=notify
+NotifyAccess=main
+WatchdogSec={{.StartTimeout}}
+TimeoutStartSec={{.StartTimeout}}
 Slice=socialweb.slice
 WorkingDirectory={{.State}}
 Environment=CONFIG_PATH_SOCIALWEB_COMPUTER={{.State}}/config.json
-ExecStart={{.State}}/bin/current/socialweb-computer run bidder --handle %i
+ExecStart={{.State}}/bin/current/socialweb-computer run bidder --handle %i --fg
 Restart=always
 RestartSec=5
 KillMode=control-group

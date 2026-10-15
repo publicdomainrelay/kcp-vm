@@ -111,7 +111,8 @@ func Upgrade(ctx context.Context, o UpgradeOptions) error {
 	}
 	current := readTarget(filepath.Join(o.bin(), "current"))
 	if current == sum {
-		fmt.Fprintf(o.out(), "upgrade: bin/current is already %s\n", sum)
+		fmt.Fprintf(o.out(), "upgrade: bin/current is already %s; nothing to switch, and a running core is left "+
+			"running. If its units are not up, restart them: systemctl --user restart <unit>\n", sum)
 		return nil
 	}
 	dir := filepath.Join(o.bin(), sum)

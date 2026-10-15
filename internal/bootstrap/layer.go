@@ -167,8 +167,8 @@ func (p Params) Spec(e table.Entry, frontURL string) (hostsvc.UnitSpec, error) {
 			return hostsvc.UnitSpec{}, errors.New("bootstrap: a production core is an installed unit of install's table, not a spec")
 		}
 		timeout := p.ReadyTimeout
-		if timeout == 0 {
-			timeout = time.Minute
+		if timeout <= 0 {
+			timeout = DefaultReadyTimeout
 		}
 		spec = hostsvc.UnitSpec{Name: e.Unit, Description: "dev core of " + p.Owner,
 			Exec:    []string{p.Exe, "internal", "dev-core", "--instance-dir", p.InstanceDir, "--ready-timeout", timeout.String()},

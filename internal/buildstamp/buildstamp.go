@@ -1,6 +1,9 @@
 package buildstamp
 
-import "strconv"
+import (
+	"runtime/debug"
+	"strconv"
+)
 
 var (
 	Kind         string
@@ -25,6 +28,21 @@ type Info struct {
 }
 
 func Dev() bool { return Kind == KindDev }
+
+func Identity() (version, commit string) {
+	version, commit = Version, Commit
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if version == "" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			version = bi.Main.Version
+		}
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" && commit == "" {
+				commit = s.Value
+			}
+		}
+	}
+	return version, commit
+}
 
 func Read() *Info {
 	if !Dev() {

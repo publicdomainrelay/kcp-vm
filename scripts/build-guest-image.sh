@@ -106,7 +106,7 @@ fetch_pinned() {
     return
   fi
   say "fetching $url"
-  curl -fsSL --retry 3 -o "$file.part" "$url" || die "download failed: $url"
+  curl -fL --retry 3 --progress-bar -o "$file.part" "$url" || die "download failed: $url"
   local got
   got="$(sha_of "$file.part")"
   if [ "$got" != "$want" ]; then
