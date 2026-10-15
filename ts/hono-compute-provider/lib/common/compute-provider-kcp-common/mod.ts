@@ -391,6 +391,7 @@ export interface OpenBaoServerSpec {
   tls?: OpenBaoServerTLS;
   declared?: OpenBaoServerDeclared;
   plugins?: OpenBaoPlugin[];
+  tidy?: OpenBaoServerTidy;
 }
 
 export interface OpenBaoServerInit {
@@ -432,12 +433,14 @@ export interface OpenBaoServerDeclared {
   appRoles?: OpenBaoAppRole[];
   pkiRoles?: OpenBaoPKIRole[];
   kv?: OpenBaoKVScope[];
+  pkiTidy?: OpenBaoPKITidy[];
 }
 
 export interface OpenBaoSecretMount {
   path: string;
   type: string;
   maxLeaseTTL?: string;
+  maxVersions?: number;
 }
 
 export interface OpenBaoAuthMount {
@@ -513,6 +516,7 @@ export interface OpenBaoPKIRole {
   cnValidations?: string[];
   ttl?: string;
   maxTTL?: string;
+  noStore?: boolean;
 }
 
 export interface OpenBaoKVScope {
@@ -522,11 +526,21 @@ export interface OpenBaoKVScope {
   grace?: string;
 }
 
+export interface OpenBaoPKITidy {
+  mount: string;
+  interval?: string;
+  safetyBuffer?: string;
+}
+
 export interface OpenBaoPlugin {
   name: string;
   type: string;
   asset: HostProcessAsset;
   mountPath?: string;
+}
+
+export interface OpenBaoServerTidy {
+  interval?: string;
 }
 
 export interface OpenBaoServerStatus {
@@ -544,6 +558,7 @@ export interface OpenBaoServerStatus {
   clients?: OpenBaoServerClientRefs[];
   sync?: OpenBaoServerSync;
   plugins?: OpenBaoServerPluginStatus[];
+  tidy?: OpenBaoServerTidyStatus;
   conditions?: Condition[];
 }
 
@@ -593,6 +608,12 @@ export interface OpenBaoServerPluginStatus {
   command?: string;
   mountPath?: string;
   runningSha256?: string;
+  message?: string;
+}
+
+export interface OpenBaoServerTidyStatus {
+  lastRunAt?: string;
+  interval?: string;
   message?: string;
 }
 
@@ -658,7 +679,7 @@ export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
   listKind: "OpenBaoServerList",
   plural: "openbaoservers",
   singular: "openbaoserver",
-  schema: "v1alpha1-7.openbaoservers.socialweb.computer",
+  schema: "v1alpha1-8.openbaoservers.socialweb.computer",
   export: "hostprocesses",
 };
 
@@ -717,6 +738,7 @@ export type ApiTypeName =
   | "OpenBaoJWTRole"
   | "OpenBaoKVScope"
   | "OpenBaoPKIRole"
+  | "OpenBaoPKITidy"
   | "OpenBaoPlugin"
   | "OpenBaoPolicy"
   | "OpenBaoPolicyRule"
@@ -736,6 +758,8 @@ export type ApiTypeName =
   | "OpenBaoServerStorage"
   | "OpenBaoServerSync"
   | "OpenBaoServerTLS"
+  | "OpenBaoServerTidy"
+  | "OpenBaoServerTidyStatus"
   | "Postgres"
   | "PostgresPhase"
   | "PostgresSpec"
@@ -1969,6 +1993,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "name": {
         "type": "string"
       },
+      "noStore": {
+        "type": "boolean"
+      },
       "organization": {
         "items": {
           "type": "string"
@@ -1994,6 +2021,23 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [
       "mount",
       "name"
+    ],
+    "type": "object"
+  },
+  "OpenBaoPKITidy": {
+    "properties": {
+      "interval": {
+        "type": "string"
+      },
+      "mount": {
+        "type": "string"
+      },
+      "safetyBuffer": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mount"
     ],
     "type": "object"
   },
@@ -2061,6 +2105,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "properties": {
       "maxLeaseTTL": {
         "type": "string"
+      },
+      "maxVersions": {
+        "type": "integer"
       },
       "path": {
         "type": "string"
@@ -2186,6 +2233,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "pkiRoles": {
         "items": {
           "ref": "OpenBaoPKIRole"
+        },
+        "type": "array"
+      },
+      "pkiTidy": {
+        "items": {
+          "ref": "OpenBaoPKITidy"
         },
         "type": "array"
       },
@@ -2374,6 +2427,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "storage": {
         "ref": "OpenBaoServerStorage"
       },
+      "tidy": {
+        "ref": "OpenBaoServerTidy"
+      },
       "tls": {
         "ref": "OpenBaoServerTLS"
       },
@@ -2439,6 +2495,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "sync": {
         "ref": "OpenBaoServerSync"
+      },
+      "tidy": {
+        "ref": "OpenBaoServerTidyStatus"
       },
       "unsealedAt": {
         "type": "string"
@@ -2515,6 +2574,30 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "keyFile",
       "caFile"
     ],
+    "type": "object"
+  },
+  "OpenBaoServerTidy": {
+    "properties": {
+      "interval": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoServerTidyStatus": {
+    "properties": {
+      "interval": {
+        "type": "string"
+      },
+      "lastRunAt": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      }
+    },
+    "required": [],
     "type": "object"
   },
   "Postgres": {
@@ -3792,6 +3875,24 @@ export function parseOpenBaoKVScope(value: unknown): OpenBaoKVScope {
   return value;
 }
 
+export function validateOpenBaoPKITidy(value: unknown): ApiIssue[] {
+  return validate("OpenBaoPKITidy", value);
+}
+
+export function isOpenBaoPKITidy(value: unknown): value is OpenBaoPKITidy {
+  return validate("OpenBaoPKITidy", value).length === 0;
+}
+
+export function assertOpenBaoPKITidy(value: unknown): asserts value is OpenBaoPKITidy {
+  const issues = validate("OpenBaoPKITidy", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoPKITidy", issues);
+}
+
+export function parseOpenBaoPKITidy(value: unknown): OpenBaoPKITidy {
+  assertOpenBaoPKITidy(value);
+  return value;
+}
+
 export function validateOpenBaoPlugin(value: unknown): ApiIssue[] {
   return validate("OpenBaoPlugin", value);
 }
@@ -3807,6 +3908,24 @@ export function assertOpenBaoPlugin(value: unknown): asserts value is OpenBaoPlu
 
 export function parseOpenBaoPlugin(value: unknown): OpenBaoPlugin {
   assertOpenBaoPlugin(value);
+  return value;
+}
+
+export function validateOpenBaoServerTidy(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerTidy", value);
+}
+
+export function isOpenBaoServerTidy(value: unknown): value is OpenBaoServerTidy {
+  return validate("OpenBaoServerTidy", value).length === 0;
+}
+
+export function assertOpenBaoServerTidy(value: unknown): asserts value is OpenBaoServerTidy {
+  const issues = validate("OpenBaoServerTidy", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerTidy", issues);
+}
+
+export function parseOpenBaoServerTidy(value: unknown): OpenBaoServerTidy {
+  assertOpenBaoServerTidy(value);
   return value;
 }
 
@@ -3933,5 +4052,23 @@ export function assertOpenBaoServerPluginStatus(value: unknown): asserts value i
 
 export function parseOpenBaoServerPluginStatus(value: unknown): OpenBaoServerPluginStatus {
   assertOpenBaoServerPluginStatus(value);
+  return value;
+}
+
+export function validateOpenBaoServerTidyStatus(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerTidyStatus", value);
+}
+
+export function isOpenBaoServerTidyStatus(value: unknown): value is OpenBaoServerTidyStatus {
+  return validate("OpenBaoServerTidyStatus", value).length === 0;
+}
+
+export function assertOpenBaoServerTidyStatus(value: unknown): asserts value is OpenBaoServerTidyStatus {
+  const issues = validate("OpenBaoServerTidyStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerTidyStatus", issues);
+}
+
+export function parseOpenBaoServerTidyStatus(value: unknown): OpenBaoServerTidyStatus {
+  assertOpenBaoServerTidyStatus(value);
   return value;
 }

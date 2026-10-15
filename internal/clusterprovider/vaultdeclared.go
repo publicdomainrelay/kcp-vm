@@ -59,7 +59,7 @@ func layoutPKIRole(r vaultlayout.PKIRole) v1alpha1.OpenBaoPKIRole {
 	return v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: r.Name, AllowedDomains: r.AllowedDomains, AllowSubdomains: r.AllowSubdomains,
 		AllowBareDomains: r.AllowBareDomains, AllowIPSANs: r.AllowIPSANs, EnforceHostnames: r.EnforceHostnames, RequireCN: r.RequireCN,
 		ClientFlag: r.ClientAuth, ServerFlag: r.ServerAuth, KeyType: vaultKeyType(r.KeyType), KeyBits: int32(r.KeyBits),
-		KeyUsage: r.KeyUsage, TTL: durationString(r.TTL), MaxTTL: durationString(r.MaxTTL)}
+		KeyUsage: r.KeyUsage, TTL: durationString(r.TTL), MaxTTL: durationString(r.MaxTTL), NoStore: true}
 }
 
 func staticClusterDeclared() *v1alpha1.OpenBaoServerDeclared {
@@ -98,9 +98,9 @@ func staticClusterDeclared() *v1alpha1.OpenBaoServerDeclared {
 	}
 	d.PKIRoles = append(d.PKIRoles,
 		v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: VaultPKIRoleTenant, AllowAnyName: true, ClientFlag: true, RequireCN: true,
-			KeyType: "ec", KeyBits: 256, Organization: []string{SuperuserOrganization}, TTL: "8760h", MaxTTL: "87600h"},
+			KeyType: "ec", KeyBits: 256, Organization: []string{SuperuserOrganization}, TTL: "8760h", MaxTTL: "87600h", NoStore: true},
 		v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: vaultcert.PKIRoleNode, AllowAnyName: true, ClientFlag: true, RequireCN: true,
-			KeyType: "ec", KeyBits: 256, TTL: durationString(vaultcert.NodeCertTTL), MaxTTL: durationString(vaultcert.NodeMaxTTL)},
+			KeyType: "ec", KeyBits: 256, TTL: durationString(vaultcert.NodeCertTTL), MaxTTL: durationString(vaultcert.NodeMaxTTL), NoStore: true},
 		v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: VaultPKIRoleKubeconfig, AllowAnyName: true, EnforceHostnames: false,
 			ClientFlag: true, ServerFlag: false, RequireCN: true, KeyType: "ec", KeyBits: 256, KeyUsage: []string{"DigitalSignature"},
 			Organization: []string{kcpclient.OwnersGroup}, CNValidations: []string{"disabled"}, TTL: "8h", MaxTTL: "24h"},
@@ -108,6 +108,7 @@ func staticClusterDeclared() *v1alpha1.OpenBaoServerDeclared {
 			ClientFlag: true, ServerFlag: false, RequireCN: true, KeyType: "ec", KeyBits: 256, KeyUsage: []string{"DigitalSignature"},
 			Organization: []string{kcpclient.OwnersGroup}, OrganizationalUnit: []string{NoExpiryOrganizationalUnit},
 			CNValidations: []string{"disabled"}})
+	d.PKITidy = append(d.PKITidy, v1alpha1.OpenBaoPKITidy{Mount: VaultPKIPath})
 	return d
 }
 

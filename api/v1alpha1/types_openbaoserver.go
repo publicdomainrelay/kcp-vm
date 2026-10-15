@@ -49,6 +49,12 @@ type OpenBaoServerSpec struct {
 	Declared *OpenBaoServerDeclared `json:"declared,omitempty"`
 
 	Plugins []OpenBaoPlugin `json:"plugins,omitempty"`
+
+	Tidy *OpenBaoServerTidy `json:"tidy,omitempty"`
+}
+
+type OpenBaoServerTidy struct {
+	Interval string `json:"interval,omitempty"`
 }
 
 type OpenBaoPlugin struct {
@@ -111,6 +117,16 @@ type OpenBaoServerDeclared struct {
 	PKIRoles []OpenBaoPKIRole `json:"pkiRoles,omitempty"`
 
 	KV []OpenBaoKVScope `json:"kv,omitempty"`
+
+	PKITidy []OpenBaoPKITidy `json:"pkiTidy,omitempty"`
+}
+
+type OpenBaoPKITidy struct {
+	Mount string `json:"mount"`
+
+	Interval string `json:"interval,omitempty"`
+
+	SafetyBuffer string `json:"safetyBuffer,omitempty"`
 }
 
 type OpenBaoSecretMount struct {
@@ -119,6 +135,8 @@ type OpenBaoSecretMount struct {
 	Type string `json:"type"`
 
 	MaxLeaseTTL string `json:"maxLeaseTTL,omitempty"`
+
+	MaxVersions int32 `json:"maxVersions,omitempty"`
 }
 
 type OpenBaoAuthMount struct {
@@ -237,6 +255,8 @@ type OpenBaoPKIRole struct {
 	TTL string `json:"ttl,omitempty"`
 
 	MaxTTL string `json:"maxTTL,omitempty"`
+
+	NoStore bool `json:"noStore,omitempty"`
 }
 
 type OpenBaoKVScope struct {
@@ -298,7 +318,17 @@ type OpenBaoServerStatus struct {
 
 	Plugins []OpenBaoServerPluginStatus `json:"plugins,omitempty"`
 
+	Tidy *OpenBaoServerTidyStatus `json:"tidy,omitempty"`
+
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type OpenBaoServerTidyStatus struct {
+	LastRunAt string `json:"lastRunAt,omitempty"`
+
+	Interval string `json:"interval,omitempty"`
+
+	Message string `json:"message,omitempty"`
 }
 
 type OpenBaoServerSync struct {

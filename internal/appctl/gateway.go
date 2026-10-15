@@ -108,7 +108,12 @@ func RootVaultDeclared() *v1alpha1.OpenBaoServerDeclared {
 			AllowedDomains: r.AllowedDomains, AllowSubdomains: r.AllowSubdomains, AllowBareDomains: r.AllowBareDomains,
 			AllowIPSANs: r.AllowIPSANs, EnforceHostnames: r.EnforceHostnames, RequireCN: r.RequireCN, ClientFlag: r.ClientAuth,
 			ServerFlag: r.ServerAuth, KeyType: keyType(r.KeyType), KeyBits: int32(r.KeyBits), KeyUsage: r.KeyUsage,
-			TTL: duration(r.TTL), MaxTTL: duration(r.MaxTTL)})
+			TTL: duration(r.TTL), MaxTTL: duration(r.MaxTTL), NoStore: true})
+	}
+	for _, m := range d.SecretMounts {
+		if m.Type == string(vaultlayout.MountPKI) {
+			d.PKITidy = append(d.PKITidy, v1alpha1.OpenBaoPKITidy{Mount: m.Path})
+		}
 	}
 	return d
 }

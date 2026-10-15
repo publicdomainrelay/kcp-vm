@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -284,6 +285,54 @@ type synced struct {
 	how     string
 	desired baosync.Desired
 	running map[string]string
+	tidied  bool
+	tidyErr error
+}
+
+func tidyInterval(s v1alpha1.OpenBaoServerSpec) (time.Duration, error) {
+	if s.Tidy == nil || s.Tidy.Interval == "" {
+		return DefaultTidyInterval, nil
+	}
+	d, err := time.ParseDuration(s.Tidy.Interval)
+	if err != nil || d < time.Minute {
+		return 0, fmt.Errorf("spec.tidy.interval %q: a duration of at least 1m", s.Tidy.Interval)
+	}
+	return d, nil
+}
+
+func tidyDue(prev *v1alpha1.OpenBaoServerTidyStatus, interval time.Duration, now time.Time) bool {
+	if prev == nil || prev.LastRunAt == "" {
+		return true
+	}
+	at, err := time.Parse(time.RFC3339Nano, prev.LastRunAt)
+	return err != nil || now.Sub(at) >= interval
+}
+
+func tidyTokensAndLeases(ctx context.Context, admin *openbao.Client) (bool, error) {
+	var errs []error
+	for _, p := range []string{"auth/token/tidy", "sys/leases/tidy"} {
+		if err := admin.Write(ctx, p, map[string]any{}); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", p, err))
+		}
+	}
+	return len(errs) == 0, errors.Join(errs...)
+}
+
+func recordTidy(st *v1alpha1.OpenBaoServerStatus, s synced, interval time.Duration, log *slog.Logger) {
+	next := &v1alpha1.OpenBaoServerTidyStatus{Interval: interval.String()}
+	if st.Tidy != nil {
+		next.LastRunAt, next.Message = st.Tidy.LastRunAt, st.Tidy.Message
+	}
+	switch {
+	case s.tidyErr != nil:
+		next.Message = "token and lease tidy failed: " + s.tidyErr.Error()
+		log.Warn("token and lease tidy failed", "err", s.tidyErr.Error())
+	case s.tidied:
+		next.LastRunAt = time.Now().UTC().Format(time.RFC3339Nano)
+		next.Message = "token and lease tidy ran"
+		log.Info("token and lease tidy ran", "interval", interval.String())
+	}
+	st.Tidy = next
 }
 
 func syncWith(ctx context.Context, admin *openbao.Client, in layoutInput) (synced, error) {
@@ -293,6 +342,9 @@ func syncWith(ctx context.Context, admin *openbao.Client, in layoutInput) (synce
 	}
 	rep, err := baosync.Sync(ctx, admin, d)
 	s := synced{report: rep, pending: pending, desired: d}
+	if err == nil && in.tidyDue {
+		s.tidied, s.tidyErr = tidyTokensAndLeases(ctx, admin)
+	}
 	if err == nil && len(in.plugins) > 0 {
 		s.running = map[string]string{}
 		if auths, aerr := admin.AuthMounts(ctx); aerr == nil {
@@ -437,7 +489,12 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		st.Plugins = nil
 		return fail("spec.plugins: %v", err)
 	}
-	layout := layoutInput{caPEM: tlsm.CAPEM, clientsCAPEM: clientsCA.CAPEM, clients: o.Spec.Clients, declared: o.Spec.Declared, plugins: plugins}
+	tidyEvery, err := tidyInterval(o.Spec)
+	if err != nil {
+		return fail("%v", err)
+	}
+	layout := layoutInput{caPEM: tlsm.CAPEM, clientsCAPEM: clientsCA.CAPEM, clients: o.Spec.Clients, declared: o.Spec.Declared, plugins: plugins,
+		tidyDue: tidyDue(st.Tidy, tidyEvery, time.Now())}
 	opts, err := serverOptions(o.Spec, clientsCA.BundlePath)
 	if err != nil {
 		return fail("%v", err)
@@ -544,6 +601,8 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 			log.Info("the initial root token is revoked; the core logs in with its client certificate")
 		}
 		recordSync(&st, gen, s, serr, log)
+		recordTidy(&st, s, tidyEvery, log)
+		layout.tidyDue = tidyDue(st.Tidy, tidyEvery, time.Now())
 	} else if h.Sealed {
 		k, err := ReadUnsealKeys(keysPath)
 		if err != nil {
@@ -557,6 +616,7 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 	}
 	s, serr := c.syncCore(ctx, client, keysPath, layout)
 	recordSync(&st, gen, s, serr, log)
+	recordTidy(&st, s, tidyEvery, log)
 	if len(plugins) > 0 {
 		perr := serr
 		if perr == nil {

@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-7.openbaoservers.socialweb.computer
+  name: v1alpha1-8.openbaoservers.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -135,6 +135,9 @@ spec:
                           type: string
                         maxLeaseTTL:
                           type: string
+                        maxVersions:
+                          type: integer
+                          format: int32
                       required:
                         - path
                         - type
@@ -323,6 +326,8 @@ spec:
                           type: string
                         maxTTL:
                           type: string
+                        noStore:
+                          type: boolean
                       required:
                         - mount
                         - name
@@ -340,6 +345,19 @@ spec:
                           items:
                             type: string
                         grace:
+                          type: string
+                      required:
+                        - mount
+                  pkiTidy:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        mount:
+                          type: string
+                        interval:
+                          type: string
+                        safetyBuffer:
                           type: string
                       required:
                         - mount
@@ -368,6 +386,11 @@ spec:
                     - name
                     - type
                     - asset
+              tidy:
+                type: object
+                properties:
+                  interval:
+                    type: string
           status:
             type: object
             properties:
@@ -494,6 +517,15 @@ spec:
                   required:
                     - name
                     - type
+              tidy:
+                type: object
+                properties:
+                  lastRunAt:
+                    type: string
+                  interval:
+                    type: string
+                  message:
+                    type: string
               conditions:
                 type: array
                 items:

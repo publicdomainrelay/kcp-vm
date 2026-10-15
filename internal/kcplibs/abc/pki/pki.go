@@ -59,6 +59,8 @@ type Role struct {
 	KeyBits int
 
 	MaxTTL string
+
+	NoStore bool
 }
 
 type CertRequest struct {

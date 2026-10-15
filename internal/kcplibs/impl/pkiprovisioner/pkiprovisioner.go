@@ -198,6 +198,7 @@ func (p *Provisioner) writeRole(ctx context.Context, path string) error {
 		KeyType:          "ec",
 		KeyBits:          256,
 		MaxTTL:           p.opts.LeafTTL,
+		NoStore:          true,
 	}
 	if p.opts.Domain != "" {
 		role.AllowedDomains = []string{p.opts.Domain}

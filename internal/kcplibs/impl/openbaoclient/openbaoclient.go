@@ -290,6 +290,7 @@ func (c *Client) WriteRole(ctx context.Context, namespace, mount, name string, r
 		"allow_bare_domains": role.AllowBareDomains,
 		"enforce_hostnames":  role.EnforceHostnames,
 		"allow_ip_sans":      true,
+		"no_store":           role.NoStore,
 	}
 	if len(role.AllowedDomains) > 0 {
 		body["allowed_domains"] = role.AllowedDomains

@@ -24,6 +24,11 @@ const (
 	CoreTokenMax   = "1h"
 	AppRoleMount   = "approle"
 	DefaultJWTRole = "jwt"
+
+	DefaultKVMaxVersions   = 3
+	DefaultTidyInterval    = 6 * time.Hour
+	DefaultPKITidyInterval = "6h"
+	DefaultPKITidyBuffer   = "72h"
 )
 
 var CorePolicyRules = []v1alpha1.OpenBaoPolicyRule{
@@ -35,7 +40,10 @@ var CorePolicyRules = []v1alpha1.OpenBaoPolicyRule{
 	{Path: "auth/+/certs/*", Capabilities: []string{"create", "read", "update", "delete", "list"}},
 	{Path: "auth/+/role/*", Capabilities: []string{"create", "read", "update", "delete", "list"}},
 	{Path: "auth/+/config", Capabilities: []string{"create", "read", "update"}},
-	{Path: "+/config", Capabilities: []string{"read"}},
+	{Path: "+/config", Capabilities: []string{"create", "read", "update"}},
+	{Path: "+/config/auto-tidy", Capabilities: []string{"create", "read", "update"}},
+	{Path: "auth/token/tidy", Capabilities: []string{"create", "update"}},
+	{Path: "sys/leases/tidy", Capabilities: []string{"create", "update"}},
 	{Path: "+/roles/*", Capabilities: []string{"create", "read", "update", "delete", "list"}},
 	{Path: "+/metadata/*", Capabilities: []string{"read", "delete", "list"}},
 }
@@ -119,6 +127,7 @@ type layoutInput struct {
 	clients      []v1alpha1.OpenBaoServerClient
 	declared     *v1alpha1.OpenBaoServerDeclared
 	plugins      []placedPlugin
+	tidyDue      bool
 }
 
 func or(v, dflt string) string {
@@ -154,6 +163,22 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 	var pending []string
 	d.AuthMounts = append(d.AuthMounts, baosync.AuthMount{Path: CertAuthMount, Type: baosync.AuthCert})
 	d.SecretMounts = append(d.SecretMounts, baosync.SecretMount{Path: KVMount, Type: baosync.MountKV2})
+	maxVersions := map[string]int32{}
+	if in.declared != nil {
+		for _, m := range in.declared.SecretMounts {
+			if m.MaxVersions > 0 {
+				maxVersions[strings.Trim(m.Path, "/")] = m.MaxVersions
+			}
+		}
+	}
+	kvConfig := func(mount string) baosync.Object {
+		n := maxVersions[mount]
+		if n == 0 {
+			n = DefaultKVMaxVersions
+		}
+		return baosync.Object{Path: mount + "/config", Data: map[string]any{"max_versions": int(n)}}
+	}
+	d.Objects = append(d.Objects, kvConfig(KVMount))
 	core := CorePolicyRules
 	for _, p := range in.plugins {
 		d.Plugins = append(d.Plugins, p.plugin)
@@ -173,6 +198,7 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 	for _, c := range in.clients {
 		if c.KVMount != "" {
 			d.SecretMounts = append(d.SecretMounts, baosync.SecretMount{Path: c.KVMount, Type: baosync.MountKV2})
+			d.Objects = append(d.Objects, kvConfig(c.KVMount))
 			d.Policies = append(d.Policies, baosync.Policy{Name: ClientPolicy(c.Name), HCL: PolicyHCL(clientPolicyRules(c.KVMount))})
 		}
 		d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + CertAuthMount + "/certs/" + c.Name, Data: map[string]any{
@@ -192,6 +218,9 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 			continue
 		}
 		d.SecretMounts = append(d.SecretMounts, baosync.SecretMount{Path: strings.Trim(m.Path, "/"), Type: m.Type, MaxLeaseTTL: m.MaxLeaseTTL})
+		if m.Type == baosync.MountKV2 {
+			d.Objects = append(d.Objects, kvConfig(strings.Trim(m.Path, "/")))
+		}
 	}
 	for _, m := range decl.AuthMounts {
 		p := strings.Trim(m.Path, "/")
@@ -258,7 +287,7 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 	for _, r := range decl.PKIRoles {
 		data := map[string]any{"allow_subdomains": r.AllowSubdomains, "allow_bare_domains": r.AllowBareDomains,
 			"allow_any_name": r.AllowAnyName, "allow_ip_sans": r.AllowIPSANs, "enforce_hostnames": r.EnforceHostnames,
-			"require_cn": r.RequireCN, "client_flag": r.ClientFlag, "server_flag": r.ServerFlag}
+			"require_cn": r.RequireCN, "client_flag": r.ClientFlag, "server_flag": r.ServerFlag, "no_store": r.NoStore}
 		put(data, "allowed_domains", r.AllowedDomains)
 		put(data, "key_type", r.KeyType)
 		put(data, "key_bits", r.KeyBits)
@@ -269,6 +298,11 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 		put(data, "ttl", r.TTL)
 		put(data, "max_ttl", r.MaxTTL)
 		d.Objects = append(d.Objects, baosync.Object{Path: strings.Trim(r.Mount, "/") + "/roles/" + r.Name, Data: data})
+	}
+	for _, t := range decl.PKITidy {
+		d.Objects = append(d.Objects, baosync.Object{Path: strings.Trim(t.Mount, "/") + "/config/auto-tidy", Data: map[string]any{
+			"enabled": true, "tidy_cert_store": true, "tidy_revoked_certs": true, "tidy_expired_issuers": false,
+			"interval_duration": or(t.Interval, DefaultPKITidyInterval), "safety_buffer": or(t.SafetyBuffer, DefaultPKITidyBuffer)}})
 	}
 	for _, s := range decl.KV {
 		keys := append([]string(nil), s.Keys...)
