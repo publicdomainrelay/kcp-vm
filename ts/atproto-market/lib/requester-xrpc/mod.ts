@@ -439,11 +439,16 @@ export async function createRequesterPDS(
   async function createRepoRecord(
     collection: string,
     record: Record<string, unknown>,
+    wantedKey?: string,
   ): Promise<{ uri: string; cid: string }> {
-    const rkey = TID.next().toString();
+    const rkey = wantedKey ?? TID.next().toString();
     await api.applyWrites(did, [{ action: "create", collection, rkey, record }]);
     const rec = await api.getRecord(did, collection, rkey);
     return { uri: `at://${did}/${collection}/${rkey}`, cid: rec?.cid ?? "" };
+  }
+
+  async function deleteRepoRecord(collection: string, rkey: string): Promise<void> {
+    await api.applyWrites(did, [{ action: "delete", collection, rkey }]);
   }
 
   async function createSignedRepoRecord(
@@ -529,6 +534,7 @@ export async function createRequesterPDS(
     beginServe: () => serve.beginServe(),
     pendingBids,
     createRepoRecord,
+    deleteRepoRecord,
     createSignedRepoRecord,
     resolveBidderEndpoint,
     callBidder,
@@ -1122,10 +1128,14 @@ export function applyOAuthAgentToRequesterPDS(
   target.oauthAgent = agent;
   target.oauthSession = { userDid: did };
 
-  pds.createRepoRecord = async (collection: string, record: Record<string, unknown>) => {
-    const rkey = TID.next().toString();
+  pds.createRepoRecord = async (collection: string, record: Record<string, unknown>, wantedKey?: string) => {
+    const rkey = wantedKey ?? TID.next().toString();
     const { uri, cid } = await agent.createRecord!(did, collection, rkey, record);
     return { uri, cid };
+  };
+
+  pds.deleteRepoRecord = async (collection: string, rkey: string) => {
+    await agent.applyWrites(did, [{ action: "delete", collection, rkey }]);
   };
 
   pds.createSignedRepoRecord = async (
@@ -1224,9 +1234,18 @@ export async function createOAuthRequester(opts: CreateOAuthRequesterOpts): Prom
     rejectAssociation(_err: Error) {},
     async dispose() {},
 
-    async createRepoRecord(collection: string, record: Record<string, unknown>) {
+    async deleteRepoRecord(collection: string, rkey: string) {
       const s = getSession();
-      const rkey = TID.next().toString();
+      const res = await s.fetchHandler(`${s.server.issuer}/xrpc/com.atproto.repo.deleteRecord`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repo: _did, collection, rkey }),
+      });
+      if (!res.ok) throw new Error(`deleteRecord failed: ${res.status}`);
+    },
+
+    async createRepoRecord(collection: string, record: Record<string, unknown>, wantedKey?: string) {
+      const s = getSession();
+      const rkey = wantedKey ?? TID.next().toString();
       const res = await s.fetchHandler(`${s.server.issuer}/xrpc/com.atproto.repo.applyWrites`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ repo: _did, writes: [{ action: "create", collection, rkey, record }] }),

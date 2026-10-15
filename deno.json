@@ -112,6 +112,7 @@
     "./ts/hono-compute-provider/lib/container-backend-docker",
     "./ts/hono-compute-provider/lib/microvm-vmruntime",
     "./ts/hono-compute-provider/lib/rbac-atproto",
+    "./ts/hono-compute-provider/lib/guest-identity-grants-kcp",
     "./ts/hono-compute-provider/lib/guest-identity-openbao",
     "./ts/hono-pds/lib/atproto-oauth-server-deno",
     "./ts/hono-pds/lib/atproto-repo-deno",

@@ -43,6 +43,7 @@ apps:
       - {name: compute-provider-kcp-token-file, to: state}
       - {name: compute-provider-kcp-ca-file, to: options}
       - {name: compute-provider-kcp-guest-login-mount, to: options}
+      - {name: compute-provider-kcp-guest-identity-resync-sec, to: options}
       - {name: compute-provider-kcp-handle, to: options}
       - {name: compute-provider-kcp-guest-host-address, to: options}
       - {name: ingress-key-dir, to: state}

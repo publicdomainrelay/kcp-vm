@@ -45,6 +45,16 @@ export function createSecretsCapability(
   let relay: IngressRef | null = null;
   let serve: ServeHandle | null = null;
 
+  const recordFor = (vars: GrantVars) =>
+    buildSecretsRbacRecord({
+      role: vars.role,
+      subject: vars.subject,
+      issuerUri: vars.issuerUri,
+      expectedAud: vars.expectedAud,
+      serviceUrl: relay?.ingressUrl ?? "",
+      route,
+    });
+
   return {
     id: SECRETS_CAPABILITY_ID,
     userDataModule: "secrets",
@@ -94,16 +104,13 @@ export function createSecretsCapability(
       };
     },
 
+    rbacRecord(vars: GrantVars): Record<string, unknown> {
+      return recordFor(vars) as unknown as Record<string, unknown>;
+    },
+
     onContract(vars: GrantVars): void {
       authorizer.install({
-        rbac: buildSecretsRbacRecord({
-          role: vars.role,
-          subject: vars.subject,
-          issuerUri: vars.issuerUri,
-          expectedAud: vars.expectedAud,
-          serviceUrl: relay?.ingressUrl ?? "",
-          route,
-        }),
+        rbac: recordFor(vars),
         issuerUri: vars.issuerUri,
         expectedAud: vars.expectedAud,
       });

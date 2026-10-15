@@ -11,6 +11,8 @@
     "@publicdomainrelay/compute-provider-abc": "jsr:@publicdomainrelay/compute-provider-abc@^0",
     "@publicdomainrelay/did-key-ingress-proxy": "jsr:@publicdomainrelay/did-key-ingress-proxy@^0",
     "@publicdomainrelay/did-plc": "jsr:@publicdomainrelay/did-plc@^0",
+    "@publicdomainrelay/fedproxy-rbac-common": "jsr:@publicdomainrelay/fedproxy-rbac-common@^0",
+    "@publicdomainrelay/guest-identity-abc": "jsr:@publicdomainrelay/guest-identity-abc@^0",
     "@publicdomainrelay/hono-factory-compute-provider-kcp": "jsr:@publicdomainrelay/hono-factory-compute-provider-kcp@^0",
     "@publicdomainrelay/identity-prompt-kcp": "jsr:@publicdomainrelay/identity-prompt-kcp@^0",
     "@publicdomainrelay/kcp-client-rest": "jsr:@publicdomainrelay/kcp-client-rest@^0",

@@ -12,7 +12,6 @@ import {
   createComputeProviderKcp,
   createComputeVMMarketRecorder,
   createKcpComputeVMClient,
-  createKcpGuestIdentityGrantClient,
   type GuestVault,
   type KcpComputeVMClient,
   type KcpCredentials,
@@ -36,10 +35,13 @@ import {
   isGuestLoginStep,
   TokenBuckets,
 } from "@publicdomainrelay/guest-identity-abc";
+import { createGuestIdentityGrantClient, createGuestIdentityGrants } from "@publicdomainrelay/guest-identity-grants-kcp";
+import type { GuestIdentityGrants } from "@publicdomainrelay/guest-identity-abc";
 import {
   GUEST_COMPUTEVM_PATTERN,
   GUEST_ROLE_PATTERN,
   GUEST_VAULT_TOKEN_HEADER,
+  guestOidcIssuer,
 } from "@publicdomainrelay/guest-identity-common";
 
 export const PROVIDER_MARKET_FIELDS: ReadonlyArray<keyof ComputeVMMarket> = ["onNetworkUri", "hostKeysUri"];
@@ -60,6 +62,8 @@ export interface ComputeProviderKcpFactoryOptions extends ComputeProviderCtx {
   reuseStale?: boolean;
   stopGraceSeconds?: number;
   guestLoginMount: string;
+  plcDirectoryUrl: string;
+  guestIdentityResyncMs?: number;
   bootTimeoutMs?: number;
   releaseTimeoutMs?: number;
   contractStoreReleases?: boolean;
@@ -80,13 +84,20 @@ export interface ComputeProviderKcpFactory {
   provider: ComputeProvider;
   client: KcpComputeVMClient;
   accepts: ComputeVMAccepts;
+  identities: GuestIdentityGrants;
 }
 
 export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryOptions): ComputeProviderKcpFactory {
   const { logger, atproto } = opts;
   const hostKeys = new GuestHostKeysRelay();
   const client = createKcpComputeVMClient({ credentials: opts.credentials, fetch: opts.fetch });
-  const grants = createKcpGuestIdentityGrantClient({ credentials: opts.credentials, fetch: opts.fetch });
+  const identities = createGuestIdentityGrants({
+    grants: createGuestIdentityGrantClient({ credentials: opts.credentials, fetch: opts.fetch }),
+    logger,
+    issuer: () => guestOidcIssuer(opts.getIssuerUrl()),
+    plcDirectoryUrl: opts.plcDirectoryUrl,
+    resyncMs: opts.guestIdentityResyncMs,
+  });
   const accepts = new ComputeVMAccepts();
   const market = createComputeVMMarketRecorder({ client, logger, fields: PROVIDER_MARKET_FIELDS });
   const latest = new Map<string, ComputeVM>();
@@ -187,7 +198,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     reuseStale: opts.reuseStale,
     stopGraceSeconds: opts.stopGraceSeconds,
     guestLoginMount: opts.guestLoginMount,
-    grants,
+    identities,
     bootTimeoutMs: opts.bootTimeoutMs,
     releaseTimeoutMs: opts.releaseTimeoutMs,
     hostKeys,
@@ -196,7 +207,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     onChange,
   });
 
-  return { provider, client, accepts };
+  return { provider, client, accepts, identities };
 }
 
 export interface ComputeProviderKcpGuestFactoryOptions {

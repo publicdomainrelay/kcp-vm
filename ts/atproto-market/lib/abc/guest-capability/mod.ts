@@ -57,6 +57,7 @@ export interface GuestCapability {
   prepare?(ctx: PrepareContext): Promise<CapabilityPrepared>;
   readonly userDataModule?: string | UserDataModule;
   onContract?(vars: GrantVars): void | Promise<void>;
+  rbacRecord?(vars: GrantVars): Record<string, unknown> | undefined;
   onRevoke?(): void | Promise<void>;
   dispose?(): Promise<void>;
 }

@@ -119,3 +119,16 @@ export function grantWishesFromRbac(
   }
   return [...byAudience.values()].sort((a, b) => guestAudience(a.api, a.actx).localeCompare(guestAudience(b.api, b.actx)));
 }
+
+export interface GuestIdentitySubject {
+  computevm: string;
+  ownerUid: string;
+  requesterDid: string;
+  subject: string;
+}
+
+export interface GuestIdentityGrants {
+  register(guest: GuestIdentitySubject): Promise<void>;
+  forget(computevm: string): void;
+  requesterRbacChanged(requesterDid: string): void;
+}

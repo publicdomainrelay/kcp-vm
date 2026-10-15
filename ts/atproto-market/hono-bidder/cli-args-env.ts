@@ -227,6 +227,12 @@ export default {
       env: "COMPUTE_PROVIDER_KCP_GUEST_LOGIN_MOUNT",
       default: "sshsig",
     },
+    "compute-provider-kcp-guest-identity-resync-sec": {
+      type: "number" as const,
+      description: "Seconds between two reads of a live guest's requester RBAC records; a firehose event for the requester reads them at once, and this read catches what the firehose does not carry (a requester whose repo no relay crawls) and what it lost",
+      env: "COMPUTE_PROVIDER_KCP_GUEST_IDENTITY_RESYNC_SEC",
+      default: 30,
+    },
     "compute-provider-kcp-handle": {
       type: "string" as const,
       description: "Owner handle written to every ComputeVM's spec.owner.handle; the controller namespaces units and work dirs by it",

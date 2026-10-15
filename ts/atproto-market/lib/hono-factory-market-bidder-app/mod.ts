@@ -45,6 +45,8 @@ import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-v
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import type { ResolvedOpenBaoServer } from "@publicdomainrelay/openbao-server-kcp";
 import type { GuestKv } from "@publicdomainrelay/oidc-issuer-abc";
+import type { GuestIdentityGrants } from "@publicdomainrelay/guest-identity-abc";
+import { FEDPROXY_RBAC_NSID } from "@publicdomainrelay/fedproxy-rbac-common";
 import { oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueKeysRecord, loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
@@ -105,6 +107,7 @@ export interface KcpProviderSpec {
   caFile?: string;
   guestHostAddress?: string;
   guestLoginMount: string;
+  guestIdentityResyncSec?: number;
 }
 
 export type MarketBidderProviderSpec =
@@ -235,6 +238,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   let crawlRelayUrls: string[] = [];
   let localRelayUrls: string[] = [];
   let kcpContracts: { client: KcpComputeVMClient; accepts: ComputeVMAccepts; handle: string } | undefined;
+  let kcpIdentities: GuestIdentityGrants | undefined;
   let bidLedger: BidLedger | undefined;
   let vaultMount = id.vaultMount;
   let keyVault: IdentityVault | undefined;
@@ -549,6 +553,8 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           guestVault: guest,
           guestHostAddress: p.guestHostAddress,
           guestLoginMount: p.guestLoginMount,
+          plcDirectoryUrl: network.plcDirectoryUrl,
+          guestIdentityResyncMs: p.guestIdentityResyncSec ? p.guestIdentityResyncSec * 1_000 : undefined,
           getIssuerUrl: () => issuerUrl,
           guestTlsPort,
           createSignedRepoRecord: signed,
@@ -556,6 +562,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           contractStoreReleases: true,
         });
         kcpContracts = { client: kcp.client, accepts: kcp.accepts, handle: p.handle };
+        kcpIdentities = kcp.identities;
         bidLedger = createKcpBidLedger({
           kcp: createKcpRestClient({ server: p.server, tokenFile: p.tokenFile, caFile: p.caFile }),
           workspace: p.workspace,
@@ -639,6 +646,17 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
     const providers: MarketBidderProviderRef[] = [];
     for (const p of spec.providers) providers.push(await openProvider(p));
+    if (kcpIdentities) {
+      const identities = kcpIdentities;
+      eventStreams.watch({
+        wantedCollections: [FEDPROXY_RBAC_NSID],
+        onEvent: (e) => {
+          logger.info("requester_rbac_event", { did: e.did, rkey: e.rkey, operation: e.operation });
+          identities.requesterRbacChanged(e.did);
+        },
+        log: logger,
+      });
+    }
 
     const marketRelay = spec.market.ingressProxy ? await openIngress("market") : undefined;
     bidderServe = openMarketServe(marketRelay);

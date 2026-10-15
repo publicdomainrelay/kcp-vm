@@ -54,7 +54,7 @@ import {
 } from "@publicdomainrelay/policy-engine-abc";
 import { buildUserData, GUEST_TRANSPORT_MODULE, LegacyTransportError } from "@publicdomainrelay/cloud-init-common";
 import type { CloudInitContext } from "@publicdomainrelay/cloud-init-common";
-import { buildSshKeyRbacRecord, FEDPROXY_RBAC_NSID } from "@publicdomainrelay/fedproxy-rbac-common";
+import { buildSshKeyRbacRecord, FEDPROXY_RBAC_NSID, rbacRecordKey } from "@publicdomainrelay/fedproxy-rbac-common";
 import { deriveGrantVars, isWifSimpleConfig } from "@publicdomainrelay/guest-capability-abc";
 import type {
   GuestCapability,
@@ -1700,7 +1700,7 @@ runcmd:
             requesterDid: marketDid,
             subjectTemplate: wifConfig.subject,
           });
-          const { uri: rbacUri } = await pds.createRepoRecord(FEDPROXY_RBAC_NSID, rbacRecord);
+          const { uri: rbacUri } = await pds.createRepoRecord(FEDPROXY_RBAC_NSID, rbacRecord, rbacRecordKey("ssh", serviceName));
           log("rbac_created", { uri: rbacUri, serviceName, issuerUri: wifConfig.issuer_uri });
         } catch (err) {
           log("rbac_skipped", { reason: String(err) });
@@ -1729,6 +1729,15 @@ runcmd:
             await cap.onContract?.(grantVars);
           } catch (err) {
             log("capability_grant_failed", { capability: cap.id, error: String(err) });
+          }
+          const record = resumedAccept ? undefined : cap.rbacRecord?.(grantVars);
+          if (record) {
+            try {
+              const { uri } = await pds.createRepoRecord(FEDPROXY_RBAC_NSID, record, rbacRecordKey(cap.id, serviceName));
+              log("capability_rbac_created", { capability: cap.id, uri });
+            } catch (err) {
+              log("capability_rbac_failed", { capability: cap.id, error: String(err) });
+            }
           }
         }
       } else {
@@ -2168,12 +2177,31 @@ export interface ReleaseComputeOptions {
   reason?: string;
 }
 
+async function deleteRbacRecords(
+  pds: ContractReleaser,
+  state: ContractState,
+  capabilities: GuestCapability[],
+  log: FlowLog,
+): Promise<void> {
+  if (!pds.deleteRepoRecord) return;
+  const keys = [rbacRecordKey("ssh", state.vmName), ...capabilities.filter((c) => c.rbacRecord).map((c) => rbacRecordKey(c.id, state.vmName))];
+  for (const rkey of keys) {
+    try {
+      await pds.deleteRepoRecord(FEDPROXY_RBAC_NSID, rkey);
+      log("rbac_deleted", { rkey });
+    } catch (err) {
+      log("rbac_delete_skipped", { rkey, reason: String(err) });
+    }
+  }
+}
+
 export async function releaseCompute(
   pds: ContractReleaser,
   state: ContractState,
   opts: ReleaseComputeOptions = {},
 ): Promise<ContractState> {
   const log = flowLog(opts.logger);
+  await deleteRbacRecords(pds, state, opts.capabilities ?? [], log);
   if (isTerminated(state)) {
     log("vm_delete_skipped", {
       reason: "terminated_by_bidder",

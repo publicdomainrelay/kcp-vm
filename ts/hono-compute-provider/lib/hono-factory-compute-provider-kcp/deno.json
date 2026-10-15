@@ -11,6 +11,7 @@
     "@hono/hono": "jsr:@hono/hono@^4",
     "@publicdomainrelay/compute-provider-kcp-abc": "jsr:@publicdomainrelay/compute-provider-kcp-abc@^0",
     "@publicdomainrelay/guest-identity-abc": "jsr:@publicdomainrelay/guest-identity-abc@^0",
+    "@publicdomainrelay/guest-identity-grants-kcp": "jsr:@publicdomainrelay/guest-identity-grants-kcp@^0",
     "@publicdomainrelay/guest-identity-common": "jsr:@publicdomainrelay/guest-identity-common@^0"
   }
 }

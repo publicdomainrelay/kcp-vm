@@ -1,5 +1,7 @@
 import { UnauthorizedException } from "@publicdomainrelay/oidc-issuer-abc";
 
+const FETCH_TIMEOUT_MS = 8_000;
+
 export interface RBACPolicy {
   meta: Record<string, string>;
   schemas: Record<string, RBACSchema>;
@@ -42,12 +44,12 @@ export async function resolvePDS(
   let didDoc: { service?: { id: string; type: string; serviceEndpoint: string }[] };
 
   if (did.startsWith("did:plc:")) {
-    const res = await fetch(`${plcDirectoryUrl}/${encodeURIComponent(did)}`);
+    const res = await fetch(`${plcDirectoryUrl}/${encodeURIComponent(did)}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`PLC lookup failed for ${did}: ${res.status}`);
     didDoc = await res.json();
   } else if (did.startsWith("did:web:")) {
     const host = did.slice("did:web:".length).replace(/:/g, "/");
-    const res = await fetch(`https://${host}/.well-known/did.json`);
+    const res = await fetch(`https://${host}/.well-known/did.json`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`did:web lookup failed for ${did}: ${res.status}`);
     didDoc = await res.json();
   } else {
@@ -75,7 +77,7 @@ export async function listRBACRecords(pdsURL: string, did: string): Promise<RBAC
     url.searchParams.set("collection", "com.fedproxy.rbac");
     url.searchParams.set("limit", "100");
     if (cursor) url.searchParams.set("cursor", cursor);
-    const res = await fetch(url.toString());
+    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`listRecords failed pds=${pdsURL} did=${did}: ${res.status}`);
     const page = await res.json() as { records?: RBACRecordEntry[]; cursor?: string };
     for (const rec of page.records ?? []) out.push({ uri: rec.uri, value: rec.value });

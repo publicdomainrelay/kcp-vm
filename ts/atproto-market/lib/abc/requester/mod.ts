@@ -144,7 +144,8 @@ export interface RequesterPDS {
   ingressHost: string;
   beginServe(): Promise<void>;
   pendingBids: Map<string, CollectedBid[]>;
-  createRepoRecord(collection: string, record: Record<string, unknown>): Promise<{ uri: string; cid: string }>;
+  createRepoRecord(collection: string, record: Record<string, unknown>, rkey?: string): Promise<{ uri: string; cid: string }>;
+  deleteRepoRecord?(collection: string, rkey: string): Promise<void>;
   createSignedRepoRecord(
     collection: string,
     record: Record<string, unknown>,

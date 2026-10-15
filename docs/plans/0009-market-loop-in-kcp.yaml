@@ -281,7 +281,7 @@ items:
     files: ["api/types_guestidentitygrant.go", "internal/openbao (grant apply)", "ts/atproto-market/lib/market-bidder", "ts/hono-compute-provider/lib/rbac-atproto (deleted or reduced to the record reader)"]
     done_when: "a requester RBAC record allowing api X gives the guest a token with aud api://X?actx=<did>; changing the record to remove X removes the bao role within one firehose event and the next request for X is refused; deleting the ComputeVM leaves no grant, role or policy entry; `kubectl get guestidentitygrants` shows every grant with its applied state."
     risks: ["A burst of RBAC changes: the controller applies the latest spec per grant, coalesced."]
-    status: todo
+    status: done
     evidence:
   - id: M4-LEGACY-BIDDER-CUT
     milestone: M4

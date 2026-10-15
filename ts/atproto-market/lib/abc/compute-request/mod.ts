@@ -485,6 +485,7 @@ export interface ContractReleaser {
     issuer?: string,
   ): Promise<RecordRef>;
   resolveBidderEndpoint(endpointUrl: string): Promise<{ targetUrl: string; audDid: string } | null>;
+  deleteRepoRecord?(collection: string, rkey: string): Promise<void>;
   callBidder(
     targetBase: string,
     nsid: string,

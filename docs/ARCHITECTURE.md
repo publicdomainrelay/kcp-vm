@@ -3741,6 +3741,46 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **The requester's RBAC records are the source of the guest's identity grants, on 2026-10-15 (plan 0009
+  M3-RBAC-TO-OPENBAO).** For each live guest the bidder reads the `com.fedproxy.rbac` records of its
+  requester's repo (the DID resolved through the PLC directory, `listRecords`) when it accepts, on every
+  firehose event for that collection and DID, and every `--compute-provider-kcp-guest-identity-resync-sec`
+  (30 s; the market network's requester keeps its repo in its own process, no relay crawls it and its
+  commits are not on the firehose, so the read is also the floor under a lost event). A role of a record
+  whose `sub` is the guest's subject (`actx:<bidder>:plc:<requester>:role:<role>`) and whose `iss`, when
+  it names one, is the bidder's issuer becomes one `GuestIdentityGrant` per audience (api and actx from
+  its `aud`, scopes from its policy names, claim `wid_sub` = the subject); a grant no record names any
+  more is deleted, a record that cannot be read leaves the held grants alone, and the `guest-kcp` grant
+  never depends on a record. The openbao controller does the rest as before: the grant's role and its path
+  in `guest-<computevm>` appear and disappear with it. `guest-identity-grants-kcp` (implementation: the
+  grant client, the registry of live guests, the read and the sync) is wired by
+  `hono-factory-compute-provider-kcp`; the choice of grants from records is the pure
+  `grantWishesFromRbac` of `guest-identity-abc`; `rbac-atproto` is the record reader (`resolvePDS`,
+  `listRBACRecords`) and `checkRBACPolicy`, with no provisioner and no per-call gate (the
+  bidder-side record that gated `/v1/oidc/issue` went with it). The requester now publishes the record the
+  secrets capability needs (`GuestCapability.rbacRecord`) beside its ssh-key record, both under the
+  record keys `ssh.<vm name>` and `secrets.<vm name>` (`rbacRecordKey`), and `releaseCompute` deletes them
+  before it sends `vm.delete`. Readings (market network, one bidder, test-0001, UTC): the secrets run
+  (`TestRequestSecretsReachTheGuestThroughTheRFPFlow`) PASS in 206 s with the grants taken from the
+  requester's two records (`rbac_created ssh.compute-...`, `capability_rbac_created`, a token for
+  `api://ATProto?actx=<requester>` answered 200, the secret delivered); `kubectl get guestidentitygrants`
+  listed both grants APPLIED true with their roles; a release deleted both records at 19:29:34.161 and .166 and
+  sent `vm.delete` at .177. The record change itself is not observable in that network (the release
+  restarts the requester's endpoint in the same second, so no read of the emptied repo came back before
+  the guest was gone), so the change was driven through the production code against the live bidder's
+  kcp with a stand-in PLC and PDS and the real `requesterRbacChanged` entry point: record for api X ->
+  grants `guest-kcp` and `X` created at 19:36:59.49 and the controller wrote the policy and both roles at
+  19:36:59.525, applied seen 204 ms later; record changed to api Y -> `Y` created and `X` deleted 2 ms
+  after the event and the controller replaced the role at 19:37:01.110 (1.4 s); record removed -> the
+  grant deleted 2 ms after the event, both roles and `guest-gi09-synthetic` deleted at 19:37:02.705
+  ("no declaration names it"), and `identity/oidc/role` listed nothing afterwards. Deleting a ComputeVM
+  leaves no grant, role or policy (item 1's release readings). The same drive against a held guest
+  (network gi9e, the guest asking for its requester's audience once a second): the stand-in sync took the
+  record away at 19:41:03.5 and the guest's answers went 200, 200, then 403 from 19:41:04 on, until
+  19:41:31, when the bidder's own 30 s read saw the requester's real records again and re-granted
+  (200 from 19:41:31). Not read live: a firehose event for the collection (the wiring subscribes and
+  calls `requesterRbacChanged`, which the stand-in runs used).
+
 - **The guest's workload identity is issued by the bidder's OpenBao, on 2026-10-15 (plan 0009
   M3-GUEST-IDENTITY-OPENBAO).** The OIDC issuer that guest-kcp ran in TypeScript is gone with its signing
   key, JWKS, nonce store, rotation code, provisioning token, `/v1/oidc/prove`, `/v1/oidc/issue`, the RBAC
@@ -3767,7 +3807,7 @@ refutation.
   `GuestIdentityGrant` (spec computevm, entity `guest-<computevm>`, api, actx, scopes, claims; status
   applied, role, audience, appliedAt, lastError; a name `<computevm>-<12 hex>`, an ownerReference to its
   ComputeVM, and the ComputeVM controller also deletes them when it releases the guest): the bidder writes
-  two at accept, one for `guest-kcp` and one for `api://ATProto?actx=<requester did>` carrying claim
+  one for `guest-kcp` at accept and one for each audience `api://<api>?actx=<did>` the requester's RBAC records name for the guest, carrying claim
   `wid_sub` = `actx:<bidder>:plc:<requester>:role:<role>`, and the openbao controller turns each into the
   role (client_id = the audience, a static claim template, ttl 5 m) and lists its token path in the policy
   `guest-<computevm>` that the guest's sshsig role carries as `token_policies` (the plugin's entity is named

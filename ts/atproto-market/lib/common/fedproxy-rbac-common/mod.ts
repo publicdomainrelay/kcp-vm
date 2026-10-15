@@ -9,6 +9,10 @@ export interface SshKeyRbacContext {
   subjectTemplate?: string;
 }
 
+export function rbacRecordKey(kind: string, vmName: string): string {
+  return `${kind}.${vmName.trim() || "compute"}`.replace(/[^A-Za-z0-9._~:-]/g, "-").slice(0, 512);
+}
+
 export function didPlcKey(did: string): string {
   return did.replace(/^did:plc:/, "");
 }

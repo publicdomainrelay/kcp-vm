@@ -10,13 +10,8 @@ import {
   withOnNetworkBaseUrl,
   withOnNetworkReporter,
 } from "@publicdomainrelay/compute-provider-common";
-import {
-  GUEST_ENTITY_PREFIX,
-  GUEST_KCP_API,
-  GUEST_OIDC_SUBJECT_CLAIM,
-  guestAudience,
-  guestOidcIssuer,
-} from "@publicdomainrelay/guest-identity-common";
+import { GUEST_KCP_API, guestAudience, guestOidcIssuer } from "@publicdomainrelay/guest-identity-common";
+import type { GuestIdentityGrants } from "@publicdomainrelay/guest-identity-abc";
 import { GUEST_LOGIN_TOKEN_PATH } from "@publicdomainrelay/cloud-init-common";
 import type {
   AdoptResult,
@@ -58,10 +53,7 @@ import {
   type ComputeVMMarket,
   FIELD_MANAGER_COMPUTE_VM_CONTRACT,
   FIELD_MANAGER_COMPUTE_VM_PROVIDER,
-  type GuestIdentityGrant,
-  GUEST_IDENTITY_GRANT_RESOURCE,
   parseComputeVM,
-  parseGuestIdentityGrant,
 } from "@publicdomainrelay/compute-provider-kcp-common";
 import type { GuestKv } from "@publicdomainrelay/oidc-issuer-abc";
 import { DEFAULT_ACCEPT_PATH_VM } from "@publicdomainrelay/secrets-common";
@@ -132,44 +124,6 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
   };
 }
 
-export const FIELD_MANAGER_GUEST_IDENTITY_GRANT = "compute-provider-kcp-grants";
-
-export interface KcpGuestIdentityGrantClient {
-  apply(grant: GuestIdentityGrant): Promise<GuestIdentityGrant>;
-  list(): Promise<KcpList<GuestIdentityGrant>>;
-  delete(name: string): Promise<boolean>;
-}
-
-export function createKcpGuestIdentityGrantClient(opts: {
-  credentials: KcpCredentials;
-  kcp?: KcpClient;
-  fetch?: typeof fetch;
-}): KcpGuestIdentityGrantClient {
-  const creds = opts.credentials;
-  const kcp = opts.kcp ??
-    createKcpRestClient(
-      { server: creds.server, token: creds.token, tokenFile: creds.tokenFile, caFile: creds.caFile },
-      { fetch: opts.fetch },
-    );
-  const grants = kcpResourceClient(kcp, { resource: GUEST_IDENTITY_GRANT_RESOURCE, workspace: creds.workspace }, parseGuestIdentityGrant);
-  return {
-    apply: (grant) =>
-      grants.patch(grant.metadata!.name!, {
-        type: "apply",
-        body: grant,
-        fieldManager: FIELD_MANAGER_GUEST_IDENTITY_GRANT,
-        force: true,
-      }),
-    list: () => grants.list(),
-    delete: (name) => grants.delete(name),
-  };
-}
-
-async function sha256Hex(text: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
-  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 export interface ComputeVMMarketRecorder {
   record(name: string, patch: ComputeVMMarket): Promise<boolean>;
 }
@@ -231,7 +185,7 @@ export interface ComputeProviderKcpCtx extends ComputeProviderCtx {
   reuseStale?: boolean;
   stopGraceSeconds?: number;
   guestLoginMount: string;
-  grants: KcpGuestIdentityGrantClient;
+  identities: GuestIdentityGrants;
   bootTimeoutMs?: number;
   releaseTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -278,6 +232,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
   let syncLoop: Promise<void> | undefined;
 
   async function releaseGone(name: string, vm: ComputeVM | undefined): Promise<void> {
+    ctx.identities.forget(name);
     if (ctx.contractStoreReleases && contractReceiptOf(vm)) {
       logger.info("computevm_kept_for_its_contract", { name, receiptUri: contractReceiptOf(vm), phase: phaseOf(vm) });
       return;
@@ -454,6 +409,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
 
   async function abandon(name: string): Promise<void> {
     releasing.add(name);
+    ctx.identities.forget(name);
     await client.delete(name).catch((err: unknown) =>
       logger.warn("computevm_release_failed", { name, error: String(err) })
     );
@@ -496,43 +452,6 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
         why: "this process now holds the Bid claim for the accept; a ComputeVM for it with no receipt was started by a bidder process that stopped",
       });
       await abandon(name);
-    }
-  }
-
-  async function grantIdentities(
-    owner: ComputeVM,
-    name: string,
-    requesterDid: string,
-    teamUuid: string,
-    role: string,
-  ): Promise<void> {
-    const ownerReferences = [{
-      apiVersion: COMPUTE_VM_API_VERSION,
-      kind: COMPUTE_VM_RESOURCE.kind,
-      name,
-      uid: owner.metadata?.uid ?? "",
-      blockOwnerDeletion: true,
-    }];
-    const entity = `${GUEST_ENTITY_PREFIX}${name}`;
-    const requesterPlc = requesterDid.split(":").pop() ?? requesterDid;
-    const wanted = [
-      { api: GUEST_KCP_API, actx: name, scopes: ["on-network"], claims: [] as { name: string; value: string }[] },
-      {
-        api: "ATProto",
-        actx: requesterDid,
-        scopes: ["secrets"],
-        claims: [{ name: GUEST_OIDC_SUBJECT_CLAIM, value: `actx:${teamUuid}:plc:${requesterPlc}:role:${role}` }],
-      },
-    ];
-    for (const g of wanted) {
-      const key = (await sha256Hex(guestAudience(g.api, g.actx))).slice(0, 12);
-      await ctx.grants.apply({
-        apiVersion: `${GUEST_IDENTITY_GRANT_RESOURCE.group}/${GUEST_IDENTITY_GRANT_RESOURCE.version}`,
-        kind: GUEST_IDENTITY_GRANT_RESOURCE.kind,
-        metadata: { name: `${name}-${key}`, ownerReferences },
-        spec: { computevm: name, entity, api: g.api, actx: g.actx, scopes: g.scopes, ...(g.claims.length ? { claims: g.claims } : {}) },
-      });
-      logger.info("computevm_guest_identity_granted", { name, api: g.api, actx: g.actx });
     }
   }
 
@@ -590,7 +509,13 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       await ctx.guestVault.kv.write(userDataPath(name), userDataEntry(userData));
       applied = await client.apply(desired);
       cache.upsert(applied);
-      await grantIdentities(applied, name, requesterDid, teamUuid, vm.role);
+      const requesterPlc = requesterDid.split(":").pop() ?? requesterDid;
+      await ctx.identities.register({
+        computevm: name,
+        ownerUid: applied.metadata?.uid ?? "",
+        requesterDid,
+        subject: `actx:${teamUuid}:plc:${requesterPlc}:role:${vm.role}`,
+      });
       ctx.accepts?.applied(acceptKey, name);
       logger.info("computevm_applied", { name, handle, guestHostAddress: hostAddress, cpus: vm.cpus, mem: vm.mem });
       const running = await untilRunning(name);
@@ -624,6 +549,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
   async function destroy(id: string | number): Promise<void> {
     const name = String(id);
     releasing.add(name);
+    ctx.identities.forget(name);
     if (await client.delete(name)) await untilAbsent(name);
     logger.info("computevm_released", { name });
   }
