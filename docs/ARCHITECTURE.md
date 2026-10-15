@@ -7957,7 +7957,9 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   by DID, `/keys` listed none, added one (a record in the user's repo), listed it, deleted it (applyWrites
   with the union `$type`), sign-out revoked. The web app's DenoPod arguments and run logs hold neither the
   cookie token nor `refresh_token`/`dpopPrivate`; the process memory was not scanned. Nodes join the tenant cluster through the bao-issued guest identity (see the node
-  join profile above).
+  join profile above): in TestTenantClusterScalesFromZeroOnMarketVMsAndBack two pods made two NodeClaims at
+  +29.2 s, both claims were Joining at +47.9 s, both nodes and pods were Ready at +64.7 s, and scale-in
+  reached zero nodes 20.9 s after the last pod went.
 
 - **Every child object hangs from an owner that ends, and each root reports what does not (plan 0013
   M2-OWNERSHIP-TREE, 2026-10-15).** kcp's garbage collector cascades `ownerReferences` inside one
