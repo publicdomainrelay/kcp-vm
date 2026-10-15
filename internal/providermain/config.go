@@ -36,6 +36,8 @@ const (
 
 	envStateDir = "SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"
 
+	envVaultStateDir = "SOCIALWEB_CLUSTERPROVIDER_VAULT_STATE_DIR"
+
 	envUnitPrefix           = "SOCIALWEB_CLUSTERPROVIDER_UNIT_PREFIX"
 	envHostProcessWorkspace = "SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE"
 	envDatastoreHasRow      = "SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW"
@@ -115,6 +117,8 @@ type Config struct {
 
 	StateDir string
 
+	VaultStateDir string
+
 	UnitPrefix string
 
 	HostProcessWorkspace string
@@ -190,6 +194,7 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 		Join:                   strings.TrimSpace(get(envJoin)),
 		Datastore:              strings.TrimSpace(get(envDatastore)),
 		StateDir:               strings.TrimSpace(get(envStateDir)),
+		VaultStateDir:          strings.TrimSpace(get(envVaultStateDir)),
 		UnitPrefix:             strings.TrimSpace(get(envUnitPrefix)),
 		HostProcessWorkspace:   strings.TrimSpace(get(envHostProcessWorkspace)),
 		AdvertiseAddress:       strings.TrimSpace(get(envAdvertiseAddress)),

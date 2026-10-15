@@ -203,13 +203,14 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	tokens := newTokenStore(cfg.StateDir, log)
 
 	units, err := clusterprovider.NewUnitsHost(clusterprovider.UnitsConfig{
-		RestConfig: restCfg,
-		Host:       cfg.KCPHost,
-		Workspace:  cfg.HostProcessWorkspace,
-		Prefix:     cfg.UnitPrefix,
-		StateDir:   cfg.StateDir,
-		Resolve:    cfg.lookPath,
-		Log:        log,
+		RestConfig:    restCfg,
+		Host:          cfg.KCPHost,
+		Workspace:     cfg.HostProcessWorkspace,
+		Prefix:        cfg.UnitPrefix,
+		StateDir:      cfg.StateDir,
+		VaultStateDir: cfg.VaultStateDir,
+		Resolve:       cfg.lookPath,
+		Log:           log,
 	})
 	if err != nil {
 		return Deps{}, err
@@ -382,6 +383,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Registry:    registry,
 		Decider:     decider,
 		Allocator:   alloc,
+		Networks:    networks,
+		Tokens:      tokens,
 		Tenant:      tenantConfig,
 		Units:       units,
 		NewInstance: minter,

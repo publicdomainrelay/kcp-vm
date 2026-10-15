@@ -15,6 +15,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scaledriver"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/subnetallocator"
 )
 
 type Deps struct {
@@ -29,6 +30,10 @@ type Deps struct {
 	Units *clusterprovider.UnitsHost
 
 	Allocator *portallocator.Allocator
+
+	Networks *subnetallocator.Allocator
+
+	Tokens *tokenStore
 
 	NodeScale *scaledriver.Driver
 
@@ -65,6 +70,8 @@ type Provider struct {
 	cfg      Config
 	provider *clusterprovider.Provider
 	alloc    *portallocator.Allocator
+	networks *subnetallocator.Allocator
+	tokens   *tokenStore
 	registry clusterprovider.Clusters
 
 	units *clusterprovider.UnitsHost
@@ -115,6 +122,36 @@ func (p *Provider) removeStore(ctx context.Context, key string) {
 		p.log.Warn("cluster provider: purging the data directory of a deleted cluster did not complete",
 			"key", key, "error", err.Error())
 	}
+	if p.tokens != nil {
+		p.tokens.forget(key)
+	}
+}
+
+func (p *Provider) finishDelete(ctx context.Context, ref clusterprovider.Ref, key string) error {
+	if p.units == nil {
+		return nil
+	}
+	gone, err := p.units.StoreGone(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !gone {
+		return nil
+	}
+	if err := p.alloc.Release(key); err != nil {
+		return err
+	}
+	if p.networks != nil {
+		if err := p.networks.Release(key); err != nil {
+			return err
+		}
+	}
+	if err := p.registry.RemoveFinalizer(ctx, ref); err != nil {
+		return err
+	}
+	p.log.Info("cluster provider: the deleted cluster is gone: ports and subnet released, finalizer removed",
+		"cluster", ref.Name, "key", key, "home", ref.Home)
+	return nil
 }
 
 func (p *Provider) reapNodeHosts(ctx context.Context) error {
@@ -197,6 +234,8 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Provider, error) {
 		cfg:         cfg,
 		provider:    provider,
 		alloc:       d.Allocator,
+		networks:    d.Networks,
+		tokens:      d.Tokens,
 		registry:    d.Registry,
 		units:       d.Units,
 		nodeScale:   d.NodeScale,
@@ -411,6 +450,7 @@ func (p *Provider) one(ctx context.Context, ref clusterprovider.Ref) error {
 		if cl.DeletionTimestamp != nil {
 			p.removeLinks(ctx, ref, key)
 			p.removeStore(ctx, key)
+			return p.finishDelete(ctx, ref, key)
 		}
 		return nil
 	}

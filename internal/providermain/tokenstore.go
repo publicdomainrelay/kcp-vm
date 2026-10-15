@@ -49,6 +49,12 @@ func (s *tokenStore) token(cluster string) instance.Token {
 	return t
 }
 
+func (s *tokenStore) forget(cluster string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.by, cluster)
+}
+
 func (s *tokenStore) path(cluster string) (string, error) {
 	dir, err := clusterprovider.ClusterDataDir(s.stateDir, cluster)
 	if err != nil {

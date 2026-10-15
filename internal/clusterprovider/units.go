@@ -67,6 +67,8 @@ type UnitsConfig struct {
 
 	StateDir string
 
+	VaultStateDir string
+
 	Resolve func(name string) (string, error)
 
 	PlaceTimeout time.Duration
@@ -411,15 +413,32 @@ func (h *UnitsHost) DeleteStore(ctx context.Context, key string) error {
 	return nil
 }
 
+func (h *UnitsHost) StoreGone(ctx context.Context, key string) (bool, error) {
+	_, err := h.pgs.Get(ctx, StoreName(key), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	return false, err
+}
+
 func (h *UnitsHost) PurgeData(key string) error {
 	dir, err := ClusterDataDir(h.c.StateDir, key)
 	if err != nil {
 		return err
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("clusterprovider: purging the data directory %s of deleted cluster %s: %w", dir, key, err)
+	dirs := []string{dir}
+	if h.c.VaultStateDir != "" {
+		dirs = append(dirs, openbaoctl.ServerDir(h.c.VaultStateDir, h.VaultServerName(key)))
 	}
-	h.c.Log.Info("cluster provider: identity bundle purged", "cluster", key, "dataDir", dir)
+	for _, d := range dirs {
+		if _, err := os.Lstat(d); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err := os.RemoveAll(d); err != nil {
+			return fmt.Errorf("clusterprovider: purging %s of deleted cluster %s: %w", d, key, err)
+		}
+		h.c.Log.Info("cluster provider: identity bundle purged", "cluster", key, "dir", d)
+	}
 	return nil
 }
 

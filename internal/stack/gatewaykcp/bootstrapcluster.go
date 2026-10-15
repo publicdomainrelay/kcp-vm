@@ -121,8 +121,9 @@ func bootstrapCluster(ctx context.Context, kubeconfig, did, cluster string, log 
 	if err != nil {
 		return err
 	}
-	obj := map[string]any{"apiVersion": v1alpha1.GroupVersion.String(), "kind": "Cluster", "metadata": map[string]any{"name": cluster},
-		"spec": map[string]any{"account": did, "running": true}}
+	obj := map[string]any{"apiVersion": v1alpha1.GroupVersion.String(), "kind": "Cluster",
+		"metadata": map[string]any{"name": cluster, "finalizers": []any{v1alpha1.FinalizerCluster}},
+		"spec":     map[string]any{"account": did, "running": true}}
 	if err := retry(ctx, "cluster", func() error { return ssa(ctx, home.Resource(clusterGVR), obj) }); err != nil {
 		return err
 	}
