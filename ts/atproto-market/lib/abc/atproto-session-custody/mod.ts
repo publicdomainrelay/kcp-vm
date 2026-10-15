@@ -70,6 +70,27 @@ export interface SessionCustody {
   signOut(did: string): Promise<SignOutResult>;
 }
 
+export interface CustodyIdentity {
+  did: string;
+  handle: string;
+  pds: string;
+  policies: string[];
+  ttlSeconds: number;
+  renewable: boolean;
+}
+
+export interface TokenCustody extends SessionCustody {
+  identity(): Promise<CustodyIdentity | null>;
+  renew(incrementSeconds?: number): Promise<number>;
+  revokeToken(): Promise<void>;
+}
+
+export interface SessionCustodyConnector {
+  own: SessionCustody;
+  forToken(token: string): TokenCustody;
+  clientMetadata(): Promise<Record<string, unknown>>;
+}
+
 export class SessionCustodyError extends Error {
   readonly status: number;
   readonly detail: string;
