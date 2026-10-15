@@ -195,6 +195,8 @@ type FrontConfig struct {
 	Log     string
 }
 
+const FrontMemoryMax = 256 << 20
+
 func FrontSpec(c FrontConfig) (hostsvc.UnitSpec, error) {
 	if !filepath.IsAbs(c.Exe) {
 		return hostsvc.UnitSpec{}, fmt.Errorf("kcpserver: the front executable must be an absolute path, got %q", c.Exe)
@@ -213,6 +215,7 @@ func FrontSpec(c FrontConfig) (hostsvc.UnitSpec, error) {
 		KillSignal:  syscall.SIGTERM,
 		StopTimeout: FrontStopTimeout,
 		FDStore:     1,
+		Limits:      hostsvc.Limits{MemoryMax: FrontMemoryMax},
 	}
 	if c.Log != "" {
 		spec.Output = hostsvc.Output{StdoutFile: c.Log, StderrFile: c.Log}

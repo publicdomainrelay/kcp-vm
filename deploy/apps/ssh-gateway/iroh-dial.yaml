@@ -8,6 +8,8 @@ spec:
     name: socialweb-computer
     sha256: ""
   argv: ["internal", "iroh-dial", "--socket", "{{.IrohDial.Socket}}", "--dumbpipe-path", "{{.IrohDial.Dumbpipe}}"]
+  limits:
+    memoryMax: "134217728"
   restartPolicy: Always
   stop:
     signal: SIGTERM

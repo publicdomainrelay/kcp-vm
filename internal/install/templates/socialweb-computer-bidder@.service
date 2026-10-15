@@ -14,6 +14,8 @@ ExecStart={{.State}}/bin/current/socialweb-computer run bidder --handle %i --fg
 Restart=always
 RestartSec=5
 KillMode=control-group
+Delegate=yes
+OOMPolicy=continue
 LogRateLimitIntervalSec=30s
 LogRateLimitBurst=10000
 

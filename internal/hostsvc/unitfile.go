@@ -132,6 +132,9 @@ func RenderInstalled(spec UnitSpec, o InstallOptions) (InstalledFile, error) {
 		line("MemoryMax", strconv.FormatUint(spec.Limits.MemoryMax, 10))
 		line("MemorySwapMax", "0")
 	}
+	if spec.Delegate {
+		line("Delegate", "yes")
+	}
 	if spec.Limits.TasksMax > 0 {
 		line("TasksMax", strconv.FormatUint(spec.Limits.TasksMax, 10))
 	}

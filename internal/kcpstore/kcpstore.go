@@ -83,6 +83,8 @@ func KinePostgresArgv(c KineConfig) ([]string, error) {
 	return kineArgv(c, PostgresDSN(c.PostgresSocketDir))
 }
 
+const KineMemoryMax = 512 << 20
+
 func kineSpec(c KineConfig, argv []string, desc string) hostsvc.UnitSpec {
 	return hostsvc.UnitSpec{
 		Name:        c.Unit,
@@ -93,6 +95,7 @@ func kineSpec(c KineConfig, argv []string, desc string) hostsvc.UnitSpec {
 		Restart:     hostsvc.RestartOnFailure,
 		KillSignal:  syscall.SIGTERM,
 		StopTimeout: KineStopTimeout,
+		Limits:      hostsvc.Limits{MemoryMax: KineMemoryMax},
 	}
 }
 

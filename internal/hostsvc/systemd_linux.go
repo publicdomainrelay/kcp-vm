@@ -242,6 +242,9 @@ func unitProperties(spec UnitSpec) []sd.Property {
 	if spec.Limits.MemoryMax > 0 {
 		props = append(props, u64("MemoryMax", spec.Limits.MemoryMax), u64("MemorySwapMax", 0))
 	}
+	if spec.Delegate {
+		props = append(props, sd.Property{Name: "Delegate", Value: dbus.MakeVariant(true)})
+	}
 	if spec.Limits.TasksMax > 0 {
 		props = append(props, u64("TasksMax", spec.Limits.TasksMax))
 	}

@@ -173,7 +173,7 @@ func (p Params) Spec(e table.Entry, frontURL string) (hostsvc.UnitSpec, error) {
 		spec = hostsvc.UnitSpec{Name: e.Unit, Description: "dev core of " + p.Owner,
 			Exec:    []string{p.Exe, "internal", "dev-core", "--instance-dir", p.InstanceDir, "--ready-timeout", timeout.String()},
 			WorkDir: p.InstanceDir, Slice: n.CoreSlice(), Restart: hostsvc.RestartOnFailure, KillSignal: syscall.SIGTERM,
-			StopTimeout: CoreStopTimeout, After: e.After, Wants: e.Wants}
+			StopTimeout: CoreStopTimeout, After: e.After, Wants: e.Wants, Delegate: true, OOMPolicy: "continue"}
 	default:
 		return hostsvc.UnitSpec{}, fmt.Errorf("bootstrap: unknown kind %q", e.Kind)
 	}

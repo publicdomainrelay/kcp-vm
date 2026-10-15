@@ -134,6 +134,8 @@ func WriteAuditPolicy(root string) error {
 	return os.WriteFile(filepath.Join(root, "audit-policy.yaml"), []byte(AuditPolicy), 0o600)
 }
 
+const SlotMemoryMax = 3 << 30
+
 func SlotSpec(c SlotConfig) (hostsvc.UnitSpec, error) {
 	argv, err := SlotArgv(c)
 	if err != nil {
@@ -148,6 +150,7 @@ func SlotSpec(c SlotConfig) (hostsvc.UnitSpec, error) {
 		Restart:     hostsvc.RestartOnFailure,
 		KillSignal:  syscall.SIGTERM,
 		StopTimeout: SlotStopTimeout,
+		Limits:      hostsvc.Limits{MemoryMax: SlotMemoryMax},
 		After:       c.Wants,
 		Wants:       c.Wants,
 	}, nil

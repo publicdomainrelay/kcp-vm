@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -174,6 +175,8 @@ func unstructuredOf(o any, kind string) (*unstructured.Unstructured, error) {
 	return u, nil
 }
 
+const MemoryMax = 512 << 20
+
 func (c *Controller) childSpec(o v1alpha1.OpenBaoServer, dir, key string) v1alpha1.HostProcessSpec {
 	rp := o.Spec.RestartPolicy
 	if rp == "" {
@@ -182,7 +185,8 @@ func (c *Controller) childSpec(o v1alpha1.OpenBaoServer, dir, key string) v1alph
 	spec := v1alpha1.HostProcessSpec{Unit: c.unit(o), Exec: o.Spec.Exec, Argv: []string{"server", "-config", rootvault.ConfigPath(dir)},
 		WorkDir: rootvault.Dir(dir), RestartPolicy: rp, Stop: &v1alpha1.HostProcessStop{Signal: "SIGTERM", GraceSeconds: 15},
 		Placement: v1alpha1.HostProcessPlacementSupervisor, Slice: o.Spec.Slice, RestartKey: key,
-		After: append([]string(nil), o.Spec.After...), Wants: append([]string(nil), o.Spec.Wants...)}
+		Limits: &v1alpha1.HostProcessLimits{MemoryMax: strconv.FormatUint(MemoryMax, 10)},
+		After:  append([]string(nil), o.Spec.After...), Wants: append([]string(nil), o.Spec.Wants...)}
 	if o.Spec.Asset != nil {
 		a := *o.Spec.Asset
 		spec.Asset = &a

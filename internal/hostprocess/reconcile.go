@@ -75,6 +75,8 @@ func signal(s string) syscall.Signal {
 	return syscall.SIGTERM
 }
 
+const DefaultMemoryMax = 2 << 30
+
 func UnitSpec(o v1alpha1.HostProcess, exec string) (hostsvc.UnitSpec, error) {
 	s := o.Spec
 	if exec == "" {
@@ -101,8 +103,9 @@ func UnitSpec(o v1alpha1.HostProcess, exec string) (hostsvc.UnitSpec, error) {
 		spec.KillSignal = signal(s.Stop.Signal)
 		spec.StopTimeout = time.Duration(s.Stop.GraceSeconds) * time.Second
 	}
+	spec.Limits.MemoryMax = DefaultMemoryMax
 	if s.Limits != nil {
-		spec.Limits = hostsvc.Limits{CPUWeight: uint64(s.Limits.CpuWeight), CPUQuotaPercent: int(s.Limits.CpuQuotaPercent),
+		spec.Limits = hostsvc.Limits{MemoryMax: DefaultMemoryMax, CPUWeight: uint64(s.Limits.CpuWeight), CPUQuotaPercent: int(s.Limits.CpuQuotaPercent),
 			TasksMax: uint64(s.Limits.TasksMax)}
 		if s.Limits.MemoryMax != "" {
 			n, err := strconv.ParseUint(s.Limits.MemoryMax, 10, 64)

@@ -182,13 +182,16 @@ func (i Install) Argv(s Server) ([]string, error) {
 	return argv, nil
 }
 
+const MemoryMax = 1 << 30
+
 func (i Install) UnitSpec(unit, slice, desc string, s Server) (hostsvc.UnitSpec, error) {
 	argv, err := i.Argv(s)
 	if err != nil {
 		return hostsvc.UnitSpec{}, err
 	}
 	return hostsvc.UnitSpec{Name: unit, Description: desc, Exec: argv, Env: i.Env, WorkDir: s.Data, Slice: slice,
-		Restart: hostsvc.RestartOnFailure, KillSignal: syscall.SIGINT, StopTimeout: StopTimeout}, nil
+		Restart: hostsvc.RestartOnFailure, KillSignal: syscall.SIGINT, StopTimeout: StopTimeout,
+		Limits: hostsvc.Limits{MemoryMax: MemoryMax}}, nil
 }
 
 func DSN(socketDir, user, db string) string {

@@ -139,6 +139,7 @@ type UnitSpec struct {
 	Restart         Restart
 	PrivateHostname string
 	FDStore         int
+	Delegate        bool
 }
 
 type UnitStatus struct {

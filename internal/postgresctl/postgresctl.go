@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,7 +139,8 @@ func (ct *Controller) childSpec(o v1alpha1.Postgres, in pgunit.Install, s pgunit
 	spec := v1alpha1.HostProcessSpec{Unit: ct.UnitName(o.Name), Exec: argv[0], Argv: argv[1:], WorkDir: s.Data,
 		RestartPolicy: v1alpha1.HostProcessRestartOnFailure, Slice: ct.c.Slice,
 		Stop:      &v1alpha1.HostProcessStop{Signal: "SIGINT", GraceSeconds: int32(pgunit.StopTimeout / time.Second)},
-		Readiness: &v1alpha1.HostProcessReadiness{PgxSocketDir: s.SocketDir}, Placement: v1alpha1.HostProcessPlacementSupervisor}
+		Readiness: &v1alpha1.HostProcessReadiness{PgxSocketDir: s.SocketDir}, Placement: v1alpha1.HostProcessPlacementSupervisor,
+		Limits: &v1alpha1.HostProcessLimits{MemoryMax: strconv.FormatUint(pgunit.MemoryMax, 10)}}
 	for _, kv := range in.Env {
 		k, v, _ := strings.Cut(kv, "=")
 		spec.Env = append(spec.Env, v1alpha1.HostProcessEnv{Name: k, Value: v})

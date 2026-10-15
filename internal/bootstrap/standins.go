@@ -51,12 +51,14 @@ func ReadStandIns(path string) ([]devinstance.StandIn, error) {
 	return s, nil
 }
 
+const StandInMemoryMax = 1 << 30
+
 func (c Config) standInSpec(s devinstance.StandIn) hostsvc.UnitSpec {
 	l := c.Layout
 	log := filepath.Join(l.Logs, s.Role+".log")
 	return hostsvc.UnitSpec{Name: StandInUnit(l, s.Role), Description: "stand-in " + s.Role + " of " + l.ID, Exec: s.Exec,
 		Env: s.Env, WorkDir: l.StateDir, Slice: l.KcpSlice(), Restart: hostsvc.RestartNo, KillSignal: syscall.SIGTERM,
-		StopTimeout: StandInStopGrace, Output: hostsvc.Output{StdoutFile: log, StderrFile: log}}
+		StopTimeout: StandInStopGrace, Limits: hostsvc.Limits{MemoryMax: StandInMemoryMax}, Output: hostsvc.Output{StdoutFile: log, StderrFile: log}}
 }
 
 func ensureStandIns(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance.Record) error {
