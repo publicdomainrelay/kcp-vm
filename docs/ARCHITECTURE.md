@@ -7879,8 +7879,72 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   session and the proof of another DID 403; `auth/atproto/config` and a kv list 403. With the
   `requester` client's cert token: session read 200, proof 200, delete 403; with the web app
   client's: all three 403. The web app client's policy `client-socialweb-computer-k8s` lists only
-  its own `data` and `metadata` paths. Not closed: the web app still writes `oauth-sessions/<did>`
-  into its own kv until M2-WEB-APP-SIGNIN removes that path.
+  its own `data` and `metadata` paths. The web app's `oauth-sessions/<did>` path went with plan 0014
+  M2-WEB-APP-SIGNIN (next entry).
+
+- **The web apps sign users in through the OpenBao atproto plugin; the browser holds a cookie, not a
+  session (plan 0014 M2-WEB-APP-SIGNIN, 2026-10-15).** `socialweb-computer-k8s/hono-socialweb-computer-k8s`
+  and `ts/socialweb-computer-ssh/hono-socialweb-computer-ssh` hold no OAuth session, no DPoP key and no
+  refresh token. The client_id is the public-origin option plus `/oauth-client-metadata.json`, which the
+  web app serves from the plugin's `client-metadata` path (cached 60 s); the redirect URI is
+  `/oauth/callback`. `POST /oauth/start` takes a handle or a DID, calls `login/start` (role `user`) and
+  answers the authorization URL, and sets a short-lived HttpOnly SameSite=Lax state cookie that the
+  callback must match (a sign-in started in another browser is refused); `GET /oauth/callback` forwards
+  {state, code, iss} to `login`, writes the MarketIdentity (sessionRef = mount `auth/atproto`, path
+  `session/<did>`) and sets the bao token as the cookie `swc_session` (HttpOnly, Secure when the origin is
+  https, SameSite=Strict, Max-Age 30 d; the token itself has ttl 1 h and is renewed on use, up to the role's
+  max). `GET /session` answers the DID, `DELETE /session` deletes the session in the plugin (which revokes
+  the refresh token at the authorization server's revocation endpoint), revokes the cookie's token and sets
+  the MarketIdentity condition SignedIn False. Every request that changes state must carry an Origin equal to
+  the public origin. The web app calls bao with the user's own token only (`createOpenBaoCustodyConnector`
+  `forToken`: lookup-self for the DID, renew-self, a custody agent for the PDS calls, `getServiceAuth` for
+  the cluster gateway), and its own client policy reads no session path. The gateway `requester` DenoPod
+  and the ssh gateway act for any DID through `atproto-session-proxy` (`socialweb-computer-account-agents`
+  now builds `createCustodyAgent` agents from the plugin's session read; the requester takes
+  `--account-custody-mount atproto`). The ssh gateway's page lists, adds and removes its key records
+  through `/keys` (`hono-factory-socialweb-computer-keys`), and its co/core pairing identifies the user by
+  the cookie. Packages: `socialweb-computer-web-signin-openbao` (the `WebSignIn` implementation, new),
+  `hono-factory-socialweb-computer-oauth` (the sign-in routes and the cookie authenticator). Deleted:
+  `socialweb-computer-oauth-session-fs`, `-session-vault`, `socialweb-computer-oauth-atproto` (the deposited
+  session verifier), `socialweb-computer-k8s-request-proof`, `key-file-fs`, POST /session, the browser-side
+  OAuth client and DPoP key (web/lib/atproto-oauth.js, pds.js), `OAuthSessionData`, the file fallback of
+  accountState (`--openbao-server` is required in both web apps), the generated web scope, the
+  `--oauth-client-id` option of both web apps, and the tests these broke. The sign-in scope now lives in
+  Go (`appctl.GatewayAtprotoScope`, `SshGatewayAtprotoScope`), the one place that writes the plugin config.
+  The web apps are probed at `/healthz`. A custody agent now speaks the spec to a real PDS: getServiceAuth
+  is a GET with a query and applyWrites writes carry the `$type` of the lexicon union. hono-pds's test OAuth
+  server gained `GET /oauth/authorize` (a sign-in form for a scripted browser), `POST /oauth/revoke`, and
+  names itself by its publicHostname when it is reached by a loopback address (DPoP htu of a client that
+  dialled the name). `scripts/oauth-signin.ts` signs a handle or DID in through the web app's form, takes
+  Chrome arguments, and prints the cookie attributes, never the values. One defect of the base was found in
+  the live run and fixed: `grantingCapability` of the node contract dropped `rbacRecord`, so a gateway
+  requester never published the record the bidder turns into the guest's identity grant (the guest was
+  refused its OIDC token, 403, and never fetched its join secrets).
+  Readings (market network m2w1, `dev up --profile market-network --bidders 1 --with-gateway`, gateway
+  option public-origin `https://127.0.0.1:43117` fronted by a TLS forwarder with a pod leaf of the network,
+  `run gateway ssh` for the ssh gateway, headless Chrome with the PDS name mapped, UTC 19:52-20:16): the PDS
+  fetched the client metadata from the web app (jwks with one public key, no `d`); `oauth-signin.ts` signed a
+  DID in and the page showed the cluster list; the cookie attributes were name swc_session, httpOnly true,
+  secure true, sameSite Strict. Vault, read with each client's certificate: the web app's kv mount lists
+  only `contracts/` (no `oauth-sessions`), the web app reading `auth/atproto/session/<did>` is 403, the
+  requester reading it is 200 with ten keys and none a token or key, and 403 on the web app's old session
+  path. A second user (an account made on alice's PDS, not in the owner-sessions file) created the cluster
+  `web1` through the web app (200, service auth from a bao proof), and a pod applied to it at 20:06:32 made
+  the NodeClaim, ComputeContract `nodeclaim-d7de...`, an RFP record in the user's repo, a bid, an accept,
+  the secrets record `capability_rbac_created`, and at 20:06:56 `requester_secrets_fetched` (the guest
+  fetched its join secrets), `Held` at 20:06:58: all as proofs from bao, no refresh token or DPoP key in the
+  requester. After `dev restart` of the web app DenoPod (pid changed, run during a claim) the same cookie
+  answered `GET /session` 200 and listed clusters; the claim kept posting. Sign-out: `DELETE /session`
+  answered `{"revoked":true}`, the same cookie then 401, the session read 404, the MarketIdentity read
+  SessionExpired with SignedIn False, and the other user's session stayed `active`. The ssh gateway: sign-in
+  by DID, `/keys` listed none, added one (a record in the user's repo), listed it, deleted it (applyWrites
+  with the union `$type`), sign-out revoked. The web app's DenoPod arguments and run logs hold neither the
+  cookie token nor `refresh_token`/`dpopPrivate`; the process memory was not scanned. Not read: nodes
+  joining the tenant cluster. The guest's `socialweb-node-secrets` loops "no workload identity issuer"
+  (`cloud-init-plugin-k3s-join` reads `bid_config.url_path`, a file the bao-issued guest identity of plan
+  0009 M3-GUEST-IDENTITY-OPENBAO no longer writes), so the claim stays Joining on a base that has nothing
+  to do with the sign-in; a gateway upgrade with the same cookie was not run (`dev restart` of the child core
+  is not available to a child of a network).
 
 ## 16. Vocabulary
 
