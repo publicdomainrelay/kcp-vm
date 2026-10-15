@@ -10,6 +10,14 @@ import {
   withOnNetworkBaseUrl,
   withOnNetworkReporter,
 } from "@publicdomainrelay/compute-provider-common";
+import {
+  GUEST_ENTITY_PREFIX,
+  GUEST_KCP_API,
+  GUEST_OIDC_SUBJECT_CLAIM,
+  guestAudience,
+  guestOidcIssuer,
+} from "@publicdomainrelay/guest-identity-common";
+import { GUEST_LOGIN_TOKEN_PATH } from "@publicdomainrelay/cloud-init-common";
 import type {
   AdoptResult,
   ComputeProvider,
@@ -18,7 +26,6 @@ import type {
   GuestHostKeysHandler,
   GuestHostKeysRelay,
   ProvisionResult,
-  RbacProvisioner,
   StrongRef,
   VM,
 } from "@publicdomainrelay/compute-provider-abc";
@@ -51,10 +58,12 @@ import {
   type ComputeVMMarket,
   FIELD_MANAGER_COMPUTE_VM_CONTRACT,
   FIELD_MANAGER_COMPUTE_VM_PROVIDER,
+  type GuestIdentityGrant,
+  GUEST_IDENTITY_GRANT_RESOURCE,
   parseComputeVM,
+  parseGuestIdentityGrant,
 } from "@publicdomainrelay/compute-provider-kcp-common";
-import type { GuestKv, OidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-abc";
-import { parseAtUri } from "@publicdomainrelay/atproto-helpers";
+import type { GuestKv } from "@publicdomainrelay/oidc-issuer-abc";
 import { DEFAULT_ACCEPT_PATH_VM } from "@publicdomainrelay/secrets-common";
 import { type KcpClient, kcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
 import { absentOnNotFound, type KcpList, type KcpWatchEvent } from "@publicdomainrelay/kcp-client-common";
@@ -123,6 +132,44 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
   };
 }
 
+export const FIELD_MANAGER_GUEST_IDENTITY_GRANT = "compute-provider-kcp-grants";
+
+export interface KcpGuestIdentityGrantClient {
+  apply(grant: GuestIdentityGrant): Promise<GuestIdentityGrant>;
+  list(): Promise<KcpList<GuestIdentityGrant>>;
+  delete(name: string): Promise<boolean>;
+}
+
+export function createKcpGuestIdentityGrantClient(opts: {
+  credentials: KcpCredentials;
+  kcp?: KcpClient;
+  fetch?: typeof fetch;
+}): KcpGuestIdentityGrantClient {
+  const creds = opts.credentials;
+  const kcp = opts.kcp ??
+    createKcpRestClient(
+      { server: creds.server, token: creds.token, tokenFile: creds.tokenFile, caFile: creds.caFile },
+      { fetch: opts.fetch },
+    );
+  const grants = kcpResourceClient(kcp, { resource: GUEST_IDENTITY_GRANT_RESOURCE, workspace: creds.workspace }, parseGuestIdentityGrant);
+  return {
+    apply: (grant) =>
+      grants.patch(grant.metadata!.name!, {
+        type: "apply",
+        body: grant,
+        fieldManager: FIELD_MANAGER_GUEST_IDENTITY_GRANT,
+        force: true,
+      }),
+    list: () => grants.list(),
+    delete: (name) => grants.delete(name),
+  };
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export interface ComputeVMMarketRecorder {
   record(name: string, patch: ComputeVMMarket): Promise<boolean>;
 }
@@ -183,14 +230,13 @@ export interface ComputeProviderKcpCtx extends ComputeProviderCtx {
   guestTlsPort?: number;
   reuseStale?: boolean;
   stopGraceSeconds?: number;
-  guestLoginMount?: string;
+  guestLoginMount: string;
+  grants: KcpGuestIdentityGrantClient;
   bootTimeoutMs?: number;
   releaseTimeoutMs?: number;
   pollIntervalMs?: number;
   resyncBackoffMs?: number;
-  provisioningEnricher?: OidcProvisioningEnricher;
   hostKeys?: GuestHostKeysRelay;
-  rbacProvisioner?: RbacProvisioner;
   accepts?: ComputeVMAccepts;
   contractStoreReleases?: boolean;
   onChange?: (change: ComputeVMChange) => void;
@@ -227,22 +273,11 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
   const releasing = new Set<string>();
   const reportedGone = new Set<string>();
   const goneListeners = new Set<(gone: GuestGone) => void>();
-  const rbacByGuest = new Map<string, StrongRef>();
   let syncStarted: Promise<void> | undefined;
   let syncAbort: AbortController | undefined;
   let syncLoop: Promise<void> | undefined;
 
-  async function releaseRbac(name: string): Promise<void> {
-    const ref = rbacByGuest.get(name);
-    if (!ref) return;
-    rbacByGuest.delete(name);
-    const { collection, rkey } = parseAtUri(ref.uri);
-    await atproto.deleteRecord(collection, rkey).catch(() => {});
-  }
-
   async function releaseGone(name: string, vm: ComputeVM | undefined): Promise<void> {
-    ctx.hostKeys?.forget(name);
-    await releaseRbac(name);
     if (ctx.contractStoreReleases && contractReceiptOf(vm)) {
       logger.info("computevm_kept_for_its_contract", { name, receiptUri: contractReceiptOf(vm), phase: phaseOf(vm) });
       return;
@@ -419,7 +454,6 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
 
   async function abandon(name: string): Promise<void> {
     releasing.add(name);
-    ctx.hostKeys?.forget(name);
     await client.delete(name).catch((err: unknown) =>
       logger.warn("computevm_release_failed", { name, error: String(err) })
     );
@@ -430,13 +464,12 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     return await atproto.createRecord(WIF_SIMPLE_NSID, {
       $type: WIF_SIMPLE_NSID,
       accept_path: acceptPathVm,
-      issuer_uri: ctx.getIssuerUrl(),
-      to_issue: "exchange-firecracker-oidc",
+      issuer_uri: guestOidcIssuer(ctx.getIssuerUrl()),
+      to_issue: "openbao-identity-oidc",
       actx: agentDid.split(":").slice(-1)[0],
-      actx_path: `${SECRETS_PREFIX}/team_uuid`,
-      token_path: `${SECRETS_PREFIX}/token`,
+      token_path: GUEST_LOGIN_TOKEN_PATH,
       url_path: `${SECRETS_PREFIX}/base_url`,
-      url_route: "/v1/oidc/issue",
+      url_route: "/v1/identity/oidc/token",
       subject: "actx:{actx}:plc:{did-plc-key}:role:{role}",
       createdAt: nowIso,
     });
@@ -448,7 +481,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bindSecret)));
     const bindSecretSha256 = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
     logger.info("computevm_guest_login", { name, mount: ctx.guestLoginMount });
-    return { mount: ctx.guestLoginMount!, bindSecret, bindSecretSha256 };
+    return { mount: ctx.guestLoginMount, bindSecret, bindSecretSha256 };
   }
 
   async function releaseOrphansOfAccept(acceptKey: string): Promise<void> {
@@ -463,6 +496,43 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
         why: "this process now holds the Bid claim for the accept; a ComputeVM for it with no receipt was started by a bidder process that stopped",
       });
       await abandon(name);
+    }
+  }
+
+  async function grantIdentities(
+    owner: ComputeVM,
+    name: string,
+    requesterDid: string,
+    teamUuid: string,
+    role: string,
+  ): Promise<void> {
+    const ownerReferences = [{
+      apiVersion: COMPUTE_VM_API_VERSION,
+      kind: COMPUTE_VM_RESOURCE.kind,
+      name,
+      uid: owner.metadata?.uid ?? "",
+      blockOwnerDeletion: true,
+    }];
+    const entity = `${GUEST_ENTITY_PREFIX}${name}`;
+    const requesterPlc = requesterDid.split(":").pop() ?? requesterDid;
+    const wanted = [
+      { api: GUEST_KCP_API, actx: name, scopes: ["on-network"], claims: [] as { name: string; value: string }[] },
+      {
+        api: "ATProto",
+        actx: requesterDid,
+        scopes: ["secrets"],
+        claims: [{ name: GUEST_OIDC_SUBJECT_CLAIM, value: `actx:${teamUuid}:plc:${requesterPlc}:role:${role}` }],
+      },
+    ];
+    for (const g of wanted) {
+      const key = (await sha256Hex(guestAudience(g.api, g.actx))).slice(0, 12);
+      await ctx.grants.apply({
+        apiVersion: `${GUEST_IDENTITY_GRANT_RESOURCE.group}/${GUEST_IDENTITY_GRANT_RESOURCE.version}`,
+        kind: GUEST_IDENTITY_GRANT_RESOURCE.kind,
+        metadata: { name: `${name}-${key}`, ownerReferences },
+        spec: { computevm: name, entity, api: g.api, actx: g.actx, scopes: g.scopes, ...(g.claims.length ? { claims: g.claims } : {}) },
+      });
+      logger.info("computevm_guest_identity_granted", { name, api: g.api, actx: g.actx });
     }
   }
 
@@ -488,16 +558,18 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     if (acceptKey) await releaseOrphansOfAccept(acceptKey);
     const name = `fc-${shortId(requesterDid)}-${crypto.randomUUID().slice(0, 8)}`;
     const teamUuid = atproto.getAgentDid().split(":").slice(-1)[0];
-    const enriched = ctx.provisioningEnricher
-      ? await ctx.provisioningEnricher.enrich(vm.user_data, teamUuid)
-      : { userData: vm.user_data, nonce: "", associateWithDroplet: (_id: string) => Promise.resolve() };
-    ctx.hostKeys?.bindNonce(enriched.nonce, name);
     const issuerUrl = ctx.getIssuerUrl();
-    const login = ctx.guestLoginMount ? await guestLoginFor(name) : undefined;
-    const withLogin = login
-      ? withGuestLogin(enriched.userData, { url: `${issuerUrl}${GUEST_LOGIN_ROUTE}`, role: name, bindSecret: login.bindSecret })
-      : enriched.userData;
-    const reported = withOnNetworkBaseUrl(withOnNetworkReporter(withLogin, issuerUrl, acceptPathVm), issuerUrl);
+    const login = await guestLoginFor(name);
+    const withLogin = withGuestLogin(vm.user_data, {
+      url: `${issuerUrl}${GUEST_LOGIN_ROUTE}`,
+      role: name,
+      bindSecret: login.bindSecret,
+      mount: login.mount,
+    });
+    const reported = withOnNetworkBaseUrl(
+      withOnNetworkReporter(withLogin, issuerUrl, acceptPathVm, { audience: guestAudience(GUEST_KCP_API, name) }),
+      issuerUrl,
+    );
     const hostAddress = addressTheRequesterNamed(reported) ?? ctx.guestHostAddress;
     const userData = pointGuestAtHost(reported, hostAddress, ctx.guestTlsPort);
     const desired = computeVMFor({
@@ -508,7 +580,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       vault: { server: ctx.guestVault.server, mount: ctx.guestVault.mount },
       reuseStale: ctx.reuseStale,
       stopGraceSeconds: ctx.stopGraceSeconds,
-      guestLogin: login ? { mount: login.mount, bindSecretSha256: login.bindSecretSha256 } : undefined,
+      guestLogin: { mount: login.mount, bindSecretSha256: login.bindSecretSha256 },
       acceptKey,
     });
 
@@ -516,23 +588,13 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     let applied: ComputeVM | undefined;
     try {
       await ctx.guestVault.kv.write(userDataPath(name), userDataEntry(userData));
-      await enriched.associateWithDroplet(name);
       applied = await client.apply(desired);
       cache.upsert(applied);
+      await grantIdentities(applied, name, requesterDid, teamUuid, vm.role);
       ctx.accepts?.applied(acceptKey, name);
       logger.info("computevm_applied", { name, handle, guestHostAddress: hostAddress, cpus: vm.cpus, mem: vm.mem });
       const running = await untilRunning(name);
       provisioning.delete(name);
-
-      if (ctx.rbacProvisioner) {
-        const created = await ctx.rbacProvisioner.provision({ role: vm.role }, requesterDid, {
-          getAgentDid: () => atproto.getAgentDid(),
-          getIssuerUrl: () => ctx.getIssuerUrl(),
-          createRecord: async (collection, record) => await atproto.createRecord(collection, record),
-          parseAtUri,
-        });
-        if (created) rbacByGuest.set(name, { $type: "com.atproto.repo.strongRef", uri: created.uri, cid: "" });
-      }
 
       const status = running.status ?? {};
       logger.info("computevm_running", { name, guestIp: status.network?.guestIP, image: status.image?.ref });
@@ -554,7 +616,6 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     } catch (err) {
       provisioning.delete(name);
       if (applied) await abandon(name);
-      else ctx.hostKeys?.forget(name);
       logger.warn("computevm_provision_failed", { name, error: String(err) });
       throw err;
     }
@@ -563,8 +624,6 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
   async function destroy(id: string | number): Promise<void> {
     const name = String(id);
     releasing.add(name);
-    ctx.hostKeys?.forget(name);
-    await releaseRbac(name);
     if (await client.delete(name)) await untilAbsent(name);
     logger.info("computevm_released", { name });
   }

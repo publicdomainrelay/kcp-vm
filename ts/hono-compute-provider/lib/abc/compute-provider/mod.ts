@@ -90,54 +90,14 @@ export interface ComputeProvider {
   teardown?(): Promise<void>;
 }
 
-export type ComputeProviderMode = "local" | "digitalocean";
-
-export interface RbacProvisioner {
-  provision(vm: { role: string }, requesterDid: string, ctx: {
-    getAgentDid: () => string;
-    getIssuerUrl: () => string;
-    createRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string }>;
-    parseAtUri: (uri: string) => { repo: string; collection: string; rkey: string };
-    /** Override actx for providers where actx != agent's PLC (e.g. DigitalOcean uses team UUID). */
-    actx?: string;
-  }): Promise<{ uri: string } | undefined>;
-}
-
-export type GuestOfNonce = (nonce: string) => Promise<string | number | undefined>;
-
 export class GuestHostKeysRelay {
-  readonly #guestByNonce = new Map<string, string | number>();
   #handler: GuestHostKeysHandler | undefined;
-
-  constructor(readonly resolve?: GuestOfNonce) {}
-
-  bindNonce(nonce: string, id: string | number): void {
-    if (nonce) this.#guestByNonce.set(nonce, id);
-  }
-
-  async guestOf(nonce: string): Promise<string | number | undefined> {
-    const held = this.#guestByNonce.get(nonce);
-    if (held !== undefined || !this.resolve) return held;
-    const found = await this.resolve(nonce);
-    if (found !== undefined) this.#guestByNonce.set(nonce, found);
-    return found;
-  }
-
-  forget(id: string | number): void {
-    for (const [nonce, guest] of this.#guestByNonce) if (String(guest) === String(id)) this.#guestByNonce.delete(nonce);
-  }
 
   onHostKeys(handler: GuestHostKeysHandler): () => void {
     this.#handler = handler;
     return () => {
       if (this.#handler === handler) this.#handler = undefined;
     };
-  }
-
-  async forward(report: { nonce: string; keys: GuestHostKey[] }, observedAt: string): Promise<GuestHostKeysAck & { id?: string | number }> {
-    const id = await this.guestOf(report.nonce);
-    if (id === undefined) return { ok: false, status: 404, reason: "no guest holds this provisioning token" };
-    return await this.deliver(id, report.keys, observedAt);
   }
 
   async deliver(id: string | number, keys: GuestHostKey[], observedAt: string): Promise<GuestHostKeysAck & { id: string | number }> {

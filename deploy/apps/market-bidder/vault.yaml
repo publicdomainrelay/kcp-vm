@@ -9,6 +9,7 @@ spec:
   clients:
     - name: bidder
       kvMount: bidder
+      policies: ["bidder-oidc-rotate"]
     - name: computevm
       policies: ["computevm-guest-user-data", "computevm-guest-login"]
     - name: guest-kcp
@@ -19,14 +20,14 @@ spec:
         rules:
           - path: bidder/data/relay-keypair/kcp
             capabilities: ["create", "read", "update"]
-          - path: bidder/data/oidc-jwk/kcp
+          - path: identity/oidc/config
             capabilities: ["create", "read", "update"]
-          - path: bidder/data/guests/+/provisioning
-            capabilities: ["create", "read", "update"]
-          - path: bidder/metadata/guests
-            capabilities: ["list"]
-          - path: bidder/metadata/guests/
-            capabilities: ["list"]
+          - path: auth/sshsig/role/*
+            capabilities: ["read"]
+      - name: bidder-oidc-rotate
+        rules:
+          - path: identity/oidc/key/guest/rotate
+            capabilities: ["update"]
       - name: computevm-guest-user-data
         rules:
           - path: bidder/data/guests/+/user-data
@@ -35,6 +36,8 @@ spec:
         rules:
           - path: auth/sshsig/role/*
             capabilities: ["create", "read", "update", "delete"]
+    identityOIDC:
+      key: guest
   plugins:
     - name: sshsig
       type: auth
@@ -69,6 +72,9 @@ rules:
   - apiGroups: ["socialweb.computer"]
     resources: ["bids/status"]
     verbs: ["get", "patch", "update"]
+  - apiGroups: ["socialweb.computer"]
+    resources: ["guestidentitygrants"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
   - apiGroups: ["socialweb.computer"]
     resources: ["marketidentities"]
     verbs: ["get", "list", "watch", "patch", "update"]

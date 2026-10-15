@@ -1,18 +1,18 @@
 import { Hono } from "@hono/hono";
 import { createFactory } from "@hono/hono/factory";
-import { EVENT_NSID, GUEST_LOGIN_ROUTE, ON_NETWORK_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/compute-provider-common";
+import { EVENT_NSID, ON_NETWORK_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/compute-provider-common";
 import {
   type ComputeAtproto,
   type ComputeProvider,
   type ComputeProviderCtx,
   type GuestHostKeysAck,
   GuestHostKeysRelay,
-  type RbacProvisioner,
 } from "@publicdomainrelay/compute-provider-abc";
 import {
   createComputeProviderKcp,
   createComputeVMMarketRecorder,
   createKcpComputeVMClient,
+  createKcpGuestIdentityGrantClient,
   type GuestVault,
   type KcpComputeVMClient,
   type KcpCredentials,
@@ -20,8 +20,6 @@ import {
 import {
   ComputeVMAccepts,
   type ComputeVMChange,
-  dropletOf,
-  GUEST_PROVISIONING,
   hasEnded,
   isReleasing,
 } from "@publicdomainrelay/compute-provider-kcp-abc";
@@ -31,9 +29,18 @@ import {
   FIELD_MANAGER_COMPUTE_VM_GUEST,
   GUEST_HOST_ADDRESS,
 } from "@publicdomainrelay/compute-provider-kcp-common";
-import { type GuestLogin, guestLoginBody, isGuestLoginStep } from "@publicdomainrelay/guest-login-abc";
-import { createKvNonceStore, type GuestKv, type JwkStore, type NonceStore, type OidcIssuer } from "@publicdomainrelay/oidc-issuer-abc";
-import { createOidcIssuer, type HostKeysReportAck, type HostKeysReported } from "@publicdomainrelay/oidc-issuer-hono";
+import {
+  type GuestIdentity,
+  guestLoginBody,
+  type GuestTokenVerifier,
+  isGuestLoginStep,
+  TokenBuckets,
+} from "@publicdomainrelay/guest-identity-abc";
+import {
+  GUEST_COMPUTEVM_PATTERN,
+  GUEST_ROLE_PATTERN,
+  GUEST_VAULT_TOKEN_HEADER,
+} from "@publicdomainrelay/guest-identity-common";
 
 export const PROVIDER_MARKET_FIELDS: ReadonlyArray<keyof ComputeVMMarket> = ["onNetworkUri", "hostKeysUri"];
 export const GUEST_MARKET_FIELDS: ReadonlyArray<keyof ComputeVMMarket> = ["address", "reportedAt", "hostKeys"];
@@ -52,14 +59,10 @@ export interface ComputeProviderKcpFactoryOptions extends ComputeProviderCtx {
   guestTlsPort?: number;
   reuseStale?: boolean;
   stopGraceSeconds?: number;
-  guestLoginMount?: string;
+  guestLoginMount: string;
   bootTimeoutMs?: number;
   releaseTimeoutMs?: number;
-  oidcProvisioning?: boolean;
-  oidcJwkStore?: JwkStore;
-  oidcNonceStore?: NonceStore;
   contractStoreReleases?: boolean;
-  rbacProvisioner?: RbacProvisioner;
   createSignedRepoRecord?: (
     collection: string,
     record: Record<string, unknown>,
@@ -75,16 +78,15 @@ export interface ComputeProviderKcpFactoryOptions extends ComputeProviderCtx {
 
 export interface ComputeProviderKcpFactory {
   provider: ComputeProvider;
-  oidcIssuer: OidcIssuer;
   client: KcpComputeVMClient;
   accepts: ComputeVMAccepts;
 }
 
 export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryOptions): ComputeProviderKcpFactory {
   const { logger, atproto } = opts;
-  const nonceStore = opts.oidcNonceStore ?? createKvNonceStore({ kv: opts.guestVault.kv, ...GUEST_PROVISIONING });
-  const hostKeys = new GuestHostKeysRelay((nonce) => nonceStore.dropletOfNonce(nonce));
+  const hostKeys = new GuestHostKeysRelay();
   const client = createKcpComputeVMClient({ credentials: opts.credentials, fetch: opts.fetch });
+  const grants = createKcpGuestIdentityGrantClient({ credentials: opts.credentials, fetch: opts.fetch });
   const accepts = new ComputeVMAccepts();
   const market = createComputeVMMarketRecorder({ client, logger, fields: PROVIDER_MARKET_FIELDS });
   const latest = new Map<string, ComputeVM>();
@@ -185,30 +187,16 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     reuseStale: opts.reuseStale,
     stopGraceSeconds: opts.stopGraceSeconds,
     guestLoginMount: opts.guestLoginMount,
+    grants,
     bootTimeoutMs: opts.bootTimeoutMs,
     releaseTimeoutMs: opts.releaseTimeoutMs,
-    provisioningEnricher: opts.oidcProvisioning
-      ? { enrich: (userData, teamUuid) => oidcIssuer.provisioningEnricher.enrich(userData, teamUuid) }
-      : undefined,
     hostKeys,
-    rbacProvisioner: opts.rbacProvisioner,
     accepts,
     contractStoreReleases: opts.contractStoreReleases,
     onChange,
   });
 
-  const oidcIssuer = createOidcIssuer({
-    getIssuerUrl: opts.getIssuerUrl,
-    getDroplet: (id: string) => provider.getDroplet?.(id),
-    store: opts.oidcJwkStore,
-    nonceStore,
-    log: (level: string, msg: string, extra?: Record<string, unknown>) => {
-      const at = level as "info" | "warn" | "error" | "debug";
-      if (typeof logger?.[at] === "function") logger[at](msg, extra);
-    },
-  });
-
-  return { provider, oidcIssuer, client, accepts };
+  return { provider, client, accepts };
 }
 
 export interface ComputeProviderKcpGuestFactoryOptions {
@@ -216,31 +204,32 @@ export interface ComputeProviderKcpGuestFactoryOptions {
   credentials: KcpCredentials;
   fetch?: typeof fetch;
   handle: string;
-  guestKv: GuestKv;
-  getIssuerUrl: () => string;
-  oidcJwkStore?: JwkStore;
-  plcDirectoryUrl?: string;
-  guestLogin?: GuestLogin;
+  guestIdentity: GuestIdentity;
+  verifier: GuestTokenVerifier;
+  loginMount: string;
 }
 
 export interface ComputeProviderKcpGuestFactory {
-  oidcIssuer: OidcIssuer;
   client: KcpComputeVMClient;
   createApp(): Hono;
 }
 
-function sameHostKeys(a: ComputeVMMarket["hostKeys"], b: ComputeVMMarket["hostKeys"]): boolean {
-  const key = (k: { type: string; publicKey: string }) => `${k.type} ${k.publicKey}`;
-  const left = (a ?? []).map(key).sort();
-  const right = (b ?? []).map(key).sort();
-  return left.length === right.length && left.every((v, i) => v === right[i]);
+const HOST_KEY_RECORD_RETRY_MS = 5_000;
+const HOST_KEY_RECORD_ATTEMPTS = 24;
+
+async function fingerprintOf(blobBase64: string): Promise<string> {
+  const blob = Uint8Array.from(atob(blobBase64), (c) => c.charCodeAt(0));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", blob));
+  return "SHA256:" + btoa(String.fromCharCode(...digest)).replace(/=+$/, "");
 }
 
 export function createComputeProviderKcpGuestFactory(opts: ComputeProviderKcpGuestFactoryOptions): ComputeProviderKcpGuestFactory {
-  const { logger, handle } = opts;
-  const nonceStore = createKvNonceStore({ kv: opts.guestKv, ...GUEST_PROVISIONING });
+  const { logger, handle, guestIdentity, verifier } = opts;
   const client = createKcpComputeVMClient({ credentials: opts.credentials, fetch: opts.fetch, fieldManager: FIELD_MANAGER_COMPUTE_VM_GUEST });
   const market = createComputeVMMarketRecorder({ client, logger, fields: GUEST_MARKET_FIELDS });
+  const loginLimit = new TokenBuckets(30, 1);
+  const tokenLimit = new TokenBuckets(20, 0.5);
+  const publicLimit = new TokenBuckets(60, 10);
 
   async function guestVM(name: string): Promise<ComputeVM | undefined> {
     const vm = await client.get(name);
@@ -248,43 +237,30 @@ export function createComputeProviderKcpGuestFactory(opts: ComputeProviderKcpGue
     return vm;
   }
 
-  async function recordHostKeys(report: HostKeysReported): Promise<HostKeysReportAck> {
-    const name = await nonceStore.dropletOfNonce(report.nonce);
-    if (name === undefined) return { ok: false, status: 404, reason: "no guest holds this provisioning token" };
+  async function recordBoundHostKey(name: string): Promise<boolean> {
     const vm = await guestVM(name);
-    if (!vm) return { ok: false, status: 404, reason: `no live ComputeVM ${name} of ${handle}` };
-    const keys = report.keys.map((k) => ({ type: k.type, publicKey: k.publicKey, ...(k.fingerprint ? { fingerprint: k.fingerprint } : {}) }));
-    const held = vm.status?.market?.hostKeys;
-    if (held?.length) {
-      if (sameHostKeys(held, keys)) {
-        logger.info("guest_hostkeys_duplicate_report", { name });
-        return { ok: true };
-      }
-      logger.warn("guest_hostkeys_second_report_refused", { name });
-      return { ok: false, status: 409, reason: "host keys already reported for this guest" };
-    }
-    if (!(await market.record(name, { hostKeys: keys }))) {
-      return { ok: false, status: 503, reason: "the host keys could not be recorded on the ComputeVM" };
-    }
-    logger.info("guest_hostkeys_recorded", { name, types: keys.map((k) => k.type) });
-    return { ok: true };
+    if (!vm) return false;
+    if (vm.status?.market?.hostKeys?.length) return true;
+    const bound = await guestIdentity.boundHostKey(name);
+    if (!bound) return false;
+    const [type, publicKey] = bound.split(/\s+/);
+    if (!type || !publicKey) return false;
+    const key = { type, publicKey, fingerprint: await fingerprintOf(publicKey) };
+    if (!(await market.record(name, { hostKeys: [key] }))) return false;
+    logger.info("guest_hostkeys_recorded", { name, types: [type] });
+    return true;
   }
 
-  const oidcIssuer = createOidcIssuer({
-    getIssuerUrl: opts.getIssuerUrl,
-    getDroplet: async (id: string) => {
-      const vm = await guestVM(id);
-      return vm ? dropletOf(vm) : undefined;
-    },
-    onHostKeys: recordHostKeys,
-    store: opts.oidcJwkStore,
-    nonceStore,
-    plcDirectoryUrl: opts.plcDirectoryUrl,
-    log: (level: string, msg: string, extra?: Record<string, unknown>) => {
-      const at = level as "info" | "warn" | "error" | "debug";
-      if (typeof logger?.[at] === "function") logger[at](msg, extra);
-    },
-  });
+  function recordBoundHostKeyUntilDone(name: string, attempt = 0): void {
+    recordBoundHostKey(name).catch((err: unknown) => {
+      logger.warn("guest_hostkeys_record_failed", { name, error: String(err) });
+      return false;
+    }).then((done) => {
+      if (done || attempt + 1 >= HOST_KEY_RECORD_ATTEMPTS) return;
+      const retry = setTimeout(() => recordBoundHostKeyUntilDone(name, attempt + 1), HOST_KEY_RECORD_RETRY_MS);
+      Deno.unrefTimer(retry);
+    });
+  }
 
   function onNetworkRoutes(): Hono {
     const events = new Hono();
@@ -292,7 +268,10 @@ export function createComputeProviderKcpGuestFactory(opts: ComputeProviderKcpGue
       const authHeader = c.req.header("Authorization");
       const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
       if (!token) return c.json({ error: "AuthenticationRequired" }, 401);
-      const validated = await oidcIssuer.validateToken(token).catch(() => null);
+      const validated = await verifier.verify(token).catch((err: unknown) => {
+        logger.warn("guest.onNetwork: the token is refused", { error: String(err) });
+        return null;
+      });
       if (!validated) return c.json({ error: "InvalidToken" }, 401);
       let body: Record<string, unknown>;
       try {
@@ -306,15 +285,9 @@ export function createComputeProviderKcpGuestFactory(opts: ComputeProviderKcpGue
       if (!acceptUri || !acceptCid || typeof address !== "string" || !address) {
         return c.json({ error: "InvalidRequest", message: "acceptUri, acceptCid and address are required" }, 400);
       }
-      const dropletId = validated.claims?.["droplet_id"];
-      const nonce = validated.claims?.["nonce"];
-      const name = typeof dropletId === "string" && dropletId
-        ? dropletId
-        : typeof nonce === "string"
-        ? await nonceStore.dropletOfNonce(nonce)
-        : undefined;
-      const vm = name === undefined ? undefined : await guestVM(name);
-      if (name === undefined || !vm) {
+      const name = validated.computevm;
+      const vm = await guestVM(name);
+      if (!vm) {
         logger.warn("guest.onNetwork: no live ComputeVM holds this token", { name, acceptUri });
         return c.json({ error: "UnknownGuest" }, 404);
       }
@@ -333,15 +306,38 @@ export function createComputeProviderKcpGuestFactory(opts: ComputeProviderKcpGue
     return events;
   }
 
-  function guestLoginRoutes(login: GuestLogin): Hono {
+  function identityRoutes(): Hono {
     const routes = new Hono();
-    routes.post(`${GUEST_LOGIN_ROUTE}/:step`, async (c) => {
+    routes.post(`/v1/auth/${opts.loginMount}/:step`, async (c) => {
       const step = c.req.param("step");
       if (!isGuestLoginStep(step)) return c.json({ errors: ["no such step"] }, 404);
       const body = guestLoginBody(step, await c.req.json().catch(() => null));
       if (!body) return c.json({ errors: ["the body names the step's fields as strings and nothing else"] }, 400);
-      const reply = await login.step(step, body).catch((err) => ({ status: 502, body: { errors: [String(err)] } }));
+      if (!GUEST_COMPUTEVM_PATTERN.test(body.role)) return c.json({ errors: ["the role is not a ComputeVM name"] }, 400);
+      if (!loginLimit.take(body.role, Date.now())) return c.json({ errors: ["too many requests"] }, 429);
+      const reply = await guestIdentity.step(step, body).catch((err) => ({ status: 502, body: { errors: [String(err)] } }));
       logger.info("guest_login_step", { step, role: body.role, status: reply.status });
+      if (step === "bind" && reply.status >= 200 && reply.status < 300) recordBoundHostKeyUntilDone(body.role);
+      return c.json(reply.body ?? {}, reply.status as 200);
+    });
+    routes.get("/v1/identity/oidc/token/:role", async (c) => {
+      const role = c.req.param("role");
+      const vaultToken = c.req.header(GUEST_VAULT_TOKEN_HEADER) ?? "";
+      if (!GUEST_ROLE_PATTERN.test(role)) return c.json({ errors: ["no such role"] }, 404);
+      if (!vaultToken || vaultToken.length > 512) return c.json({ errors: ["missing token"] }, 403);
+      if (!tokenLimit.take(vaultToken.slice(-24), Date.now())) return c.json({ errors: ["too many requests"] }, 429);
+      const reply = await guestIdentity.token(role, vaultToken).catch((err) => ({ status: 502, body: { errors: [String(err)] } }));
+      logger.info("guest_oidc_token", { role, status: reply.status });
+      return c.json(reply.body ?? {}, reply.status as 200);
+    });
+    routes.get("/v1/identity/oidc/.well-known/openid-configuration", async (c) => {
+      if (!publicLimit.take("discovery", Date.now())) return c.json({ errors: ["too many requests"] }, 429);
+      const reply = await guestIdentity.discovery().catch((err) => ({ status: 502, body: { errors: [String(err)] } }));
+      return c.json(reply.body ?? {}, reply.status as 200);
+    });
+    routes.get("/v1/identity/oidc/.well-known/keys", async (c) => {
+      if (!publicLimit.take("keys", Date.now())) return c.json({ errors: ["too many requests"] }, 429);
+      const reply = await guestIdentity.keys().catch((err) => ({ status: 502, body: { errors: [String(err)] } }));
       return c.json(reply.body ?? {}, reply.status as 200);
     });
     return routes;
@@ -349,11 +345,10 @@ export function createComputeProviderKcpGuestFactory(opts: ComputeProviderKcpGue
 
   const factory = createFactory({
     initApp: (app) => {
-      app.route("/", oidcIssuer.app as never);
+      app.route("/", identityRoutes());
       app.route("/", onNetworkRoutes());
-      if (opts.guestLogin) app.route("/", guestLoginRoutes(opts.guestLogin));
     },
   });
 
-  return { oidcIssuer, client, createApp: () => factory.createApp() as unknown as Hono };
+  return { client, createApp: () => factory.createApp() as unknown as Hono };
 }

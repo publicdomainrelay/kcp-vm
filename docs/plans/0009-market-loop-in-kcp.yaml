@@ -260,7 +260,7 @@ items:
     files: ["ts/hono-compute-provider/lib/oidc-issuer-hono", "ts/atproto-market/hono-bidder-guest", "ts/atproto-market/lib/common/cloud-init-common", "ts/atproto-market/lib/secrets-oidc", "deploy/apps/market-bidder/vault.yaml"]
     done_when: "`run request --secrets` delivers the secret to a guest whose only token came from the bidder's OpenBao through guest-kcp; a guest request to any other bao path through guest-kcp is refused; the issuer URL and the requester's verification are unchanged; a bao key rotation during a contract leaves the guest's next exchange working."
     risks: ["The issuer URL must stay the bidder's ingress host so existing verifiers keep working; bao's issuer config is set to it and the discovery document is served through the proxy."]
-    status: todo
+    status: done
     evidence:
   - id: M3-RBAC-TO-OPENBAO
     milestone: M3

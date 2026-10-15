@@ -7,6 +7,7 @@
     "jose": "npm:jose@^5",
     "@publicdomainrelay/secrets-common": "jsr:@publicdomainrelay/secrets-common@^0",
     "@publicdomainrelay/rbac-atproto": "jsr:@publicdomainrelay/rbac-atproto@^0",
+    "@publicdomainrelay/guest-identity-common": "jsr:@publicdomainrelay/guest-identity-common@^0",
     "@publicdomainrelay/oidc-issuer-abc": "jsr:@publicdomainrelay/oidc-issuer-abc@^0"
   }
 }

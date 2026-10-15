@@ -55,8 +55,7 @@
     "npm:@noble/hashes@^1.8.0": "1.8.0",
     "npm:@peculiar/x509@^1.12.3": "1.14.3",
     "npm:@types/ssh2@1": "1.15.6",
-    "npm:hono@4": "4.12.27",
-    "npm:hono@^4.12.23": "4.12.27",
+    "npm:hono@^4.12.23": "4.13.13",
     "npm:jose@5": "5.10.0",
     "npm:multiformats@13": "13.4.2",
     "npm:multiformats@^13.3.0": "13.4.2",
@@ -1236,8 +1235,8 @@
         "function-bind"
       ]
     },
-    "hono@4.12.27": {
-      "integrity": "sha512-1yrb/+w6HWQJrUCLkJ2IF5jNIPvvFkblV5RNOYl6bV+OA6p9GLcMpHFFGTosSvHvcAUibuUukRqhlYI4z32C7Q=="
+    "hono@4.13.13": {
+      "integrity": "sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA=="
     },
     "http-errors@2.0.1": {
       "integrity": "sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==",
@@ -2126,7 +2125,6 @@
           "jsr:@publicdomainrelay/oidc-issuer-abc@0",
           "jsr:@publicdomainrelay/openbao-server-kcp@0",
           "jsr:@publicdomainrelay/policy-engine-cli-options@0",
-          "jsr:@publicdomainrelay/rbac-atproto@0",
           "jsr:@publicdomainrelay/relay-visibility-xrpc@0",
           "jsr:@publicdomainrelay/serve@0",
           "jsr:@publicdomainrelay/utils-attestation-key@0",
@@ -2136,7 +2134,8 @@
       "ts/atproto-market/lib/hono-factory-market-bidder-guest-app": {
         "dependencies": [
           "jsr:@publicdomainrelay/did-key-ingress-proxy@0",
-          "jsr:@publicdomainrelay/guest-login-openbao@0",
+          "jsr:@publicdomainrelay/guest-identity-common@0",
+          "jsr:@publicdomainrelay/guest-identity-openbao@0",
           "jsr:@publicdomainrelay/hono-factory-compute-provider-kcp@0",
           "jsr:@publicdomainrelay/logger@0",
           "jsr:@publicdomainrelay/market-bidder-vault-keys@0",
@@ -2324,6 +2323,7 @@
       },
       "ts/atproto-market/lib/secrets-oidc": {
         "dependencies": [
+          "jsr:@publicdomainrelay/guest-identity-common@0",
           "jsr:@publicdomainrelay/oidc-issuer-abc@0",
           "jsr:@publicdomainrelay/rbac-atproto@0",
           "jsr:@publicdomainrelay/secrets-common@0",
@@ -2488,9 +2488,9 @@
           "jsr:@publicdomainrelay/container-backend-common@0"
         ]
       },
-      "ts/hono-compute-provider/lib/abc/oidc-issuer": {
+      "ts/hono-compute-provider/lib/abc/guest-identity": {
         "dependencies": [
-          "jsr:@publicdomainrelay/logger@0"
+          "jsr:@publicdomainrelay/guest-identity-common@0"
         ]
       },
       "ts/hono-compute-provider/lib/common/compute-provider-common": {
@@ -2500,48 +2500,19 @@
           "npm:yaml@^2.7.0"
         ]
       },
-      "ts/hono-compute-provider/lib/compute-provider-digitalocean": {
-        "dependencies": [
-          "jsr:@publicdomainrelay/atproto-helpers@0",
-          "jsr:@publicdomainrelay/compute-provider-abc@0",
-          "jsr:@publicdomainrelay/oidc-issuer-hono@0",
-          "jsr:@publicdomainrelay/serve@0",
-          "npm:yaml@^2.7.0"
-        ]
-      },
-      "ts/hono-compute-provider/lib/compute-provider-firecracker": {
-        "dependencies": [
-          "jsr:@hono/hono@4",
-          "jsr:@publicdomainrelay/atproto-helpers@0",
-          "jsr:@publicdomainrelay/compute-provider-abc@0",
-          "jsr:@publicdomainrelay/compute-provider-common@0",
-          "jsr:@publicdomainrelay/microvm-abc@0",
-          "jsr:@publicdomainrelay/oidc-issuer-abc@0",
-          "jsr:@publicdomainrelay/oidc-issuer-hono@0",
-          "jsr:@publicdomainrelay/secrets-common@0"
-        ]
-      },
       "ts/hono-compute-provider/lib/compute-provider-kcp": {
         "dependencies": [
-          "jsr:@publicdomainrelay/atproto-helpers@0",
+          "jsr:@publicdomainrelay/cloud-init-common@0",
           "jsr:@publicdomainrelay/compute-provider-abc@0",
           "jsr:@publicdomainrelay/compute-provider-common@0",
           "jsr:@publicdomainrelay/compute-provider-kcp-abc@0",
           "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
+          "jsr:@publicdomainrelay/guest-identity-common@0",
           "jsr:@publicdomainrelay/kcp-client-abc@0",
           "jsr:@publicdomainrelay/kcp-client-common@0",
           "jsr:@publicdomainrelay/kcp-client-rest@0",
           "jsr:@publicdomainrelay/oidc-issuer-abc@0",
           "jsr:@publicdomainrelay/secrets-common@0"
-        ]
-      },
-      "ts/hono-compute-provider/lib/compute-provider-local": {
-        "dependencies": [
-          "jsr:@publicdomainrelay/atproto-helpers@0",
-          "jsr:@publicdomainrelay/compute-provider-abc@0",
-          "jsr:@publicdomainrelay/oidc-issuer-hono@0",
-          "jsr:@publicdomainrelay/serve@0",
-          "npm:yaml@^2.7.0"
         ]
       },
       "ts/hono-compute-provider/lib/container-backend-docker": {
@@ -2550,9 +2521,11 @@
           "jsr:@publicdomainrelay/container-backend-common@0"
         ]
       },
-      "ts/hono-compute-provider/lib/guest-login-openbao": {
+      "ts/hono-compute-provider/lib/guest-identity-openbao": {
         "dependencies": [
-          "jsr:@publicdomainrelay/guest-login-abc@0"
+          "jsr:@publicdomainrelay/guest-identity-abc@0",
+          "jsr:@publicdomainrelay/guest-identity-common@0",
+          "npm:jose@5"
         ]
       },
       "ts/hono-compute-provider/lib/hono-factory-compute-provider-kcp": {
@@ -2563,9 +2536,8 @@
           "jsr:@publicdomainrelay/compute-provider-kcp-abc@0",
           "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
           "jsr:@publicdomainrelay/compute-provider-kcp@0",
-          "jsr:@publicdomainrelay/guest-login-abc@0",
-          "jsr:@publicdomainrelay/oidc-issuer-abc@0",
-          "jsr:@publicdomainrelay/oidc-issuer-hono@0"
+          "jsr:@publicdomainrelay/guest-identity-abc@0",
+          "jsr:@publicdomainrelay/guest-identity-common@0"
         ]
       },
       "ts/hono-compute-provider/lib/microvm-vmruntime": {
@@ -2573,19 +2545,8 @@
           "jsr:@publicdomainrelay/microvm-abc@0"
         ]
       },
-      "ts/hono-compute-provider/lib/oidc-issuer-hono": {
-        "dependencies": [
-          "jsr:@publicdomainrelay/logger@0.2",
-          "jsr:@publicdomainrelay/oidc-issuer-abc@0",
-          "jsr:@publicdomainrelay/rbac-atproto@0",
-          "npm:hono@4",
-          "npm:jose@5",
-          "npm:yaml@^2.7.0"
-        ]
-      },
       "ts/hono-compute-provider/lib/rbac-atproto": {
         "dependencies": [
-          "jsr:@publicdomainrelay/compute-provider-abc@0",
           "jsr:@publicdomainrelay/oidc-issuer-abc@0"
         ]
       },

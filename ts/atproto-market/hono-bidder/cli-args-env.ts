@@ -223,7 +223,7 @@ export default {
     },
     "compute-provider-kcp-guest-login-mount": {
       type: "string" as const,
-      description: "Auth mount of the sshsig plugin on this bidder's OpenBao; each guest gets a role there (written by the ComputeVM controller from spec.guestLogin) and binds its ssh host key to it once through the RFP cloud-init; empty turns it off",
+      description: "Auth mount of the sshsig plugin on this bidder's OpenBao; each guest gets a role there (written by the ComputeVM controller from spec.guestLogin) and binds its ssh host key to it once through the RFP cloud-init",
       env: "COMPUTE_PROVIDER_KCP_GUEST_LOGIN_MOUNT",
       default: "sshsig",
     },

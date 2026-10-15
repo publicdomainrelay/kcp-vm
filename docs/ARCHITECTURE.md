@@ -70,14 +70,14 @@ only), `install`, the host contract, and the bootstrap layer that runs an instan
   `socialweb-computer` and kcp.
 - **The requester is a fresh kcp per invocation** whose state dir (kcp root + vault) persists;
   `run request release|resume <name>` restarts that kcp to finish the contract.
-- **Secrets only in the application's own OpenBao** - OAuth sessions, repo key, relay keypairs, OIDC JWK,
+- **Secrets only in the application's own OpenBao** - OAuth sessions, repo key, relay keypairs, the OIDC signing key (the identity engine of the bidder's own OpenBao),
   requester key, door keys; kcp objects hold references.
 - **Every listener reports into status** (DenoPod `status.listeners`: tcp, unix, relay ingress URL), so no
   peer or test scrapes stdout for a DID, a port or readiness.
 - **iroh is the only guest transport.** The ssh gateway moves to iroh; the tunnel, fedproxy-ssh,
   fedproxy-web and wootty modules, websocat ProxyCommand paths, the relay-FQDN guest addresses and the
   guest JSR registry are removed.
-- **Components:** the bidder's guest-facing endpoints (OIDC issuer, `/v1/on-network`, `/v1/host-keys`)
+- **Components:** the bidder's guest-facing endpoints (an allow-list proxy to the bidder's OpenBao for the guest's bind, login and identity token, and `/v1/on-network`)
   become one DenoPod per provider once its keys are in the vault; the
   door's node fulfiller stays inside the door.
 
@@ -800,7 +800,7 @@ kcp-libs f6911d2; a citation that no longer resolves points at code removed sinc
   lostReason, runtime {backend as a free string, ref, instance, pid, startTime, hostBootID, vmmID}, network,
   image, conditions, market) so the Windows and macOS backends need no schema revision.
 - **What the TypeScript provider writes and reads.** Packages `compute-provider-kcp-abc` (pure: the objects, the reason map, the cache),
-  `compute-provider-kcp` (kcp REST, no Hono) and `hono-factory-compute-provider-kcp` (OIDC issuer and
+  `compute-provider-kcp` (kcp REST, no Hono) and `hono-factory-compute-provider-kcp` (the guest proxy to the bidder's OpenBao and
   `POST /v1/on-network` mounted in `serve.onConnected`). provision enriches user_data once with the constant
   guest host address, server-side applies the ComputeVM (field manager `compute-provider-kcp`), then applies
   its user_data Secret once: namespace `default`, key `user-data` (`UserDataSecretNamespace`,
@@ -3740,6 +3740,56 @@ can outlive the work that closed it, and why one whose subject has been deleted 
 questions for hours without anyone stopping on it. The measurements stay with the entries rather than
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
+
+- **The guest's workload identity is issued by the bidder's OpenBao, on 2026-10-15 (plan 0009
+  M3-GUEST-IDENTITY-OPENBAO).** The OIDC issuer that guest-kcp ran in TypeScript is gone with its signing
+  key, JWKS, nonce store, rotation code, provisioning token, `/v1/oidc/prove`, `/v1/oidc/issue`, the RBAC
+  gate and the host-key reporter; `oidc-issuer-hono`, `compute-provider-digitalocean`,
+  `compute-provider-firecracker` and `compute-provider-local` left the workspace (nothing but the legacy
+  providers used the issuer). The bidder handle's OpenBaoServer (`deploy/apps/market-bidder/vault.yaml`)
+  now declares `identityOIDC` (key `guest`, RS256, `rotation_period` 24 h, `verification_ttl` 48 h) and the
+  openbao controller keeps the key, every `identity/oidc/role` and one policy per guest in its declaration
+  like its mounts (baosync collection `identity/oidc/role`, so a role no grant names is deleted). guest-kcp
+  writes `identity/oidc/config` `issuer` = its relay's ingress URL when it is ready, so a token's `iss` is
+  `<ingress>/v1/identity/oidc` (OpenBao appends that path to the configured issuer; the host and the bidder's
+  ingress are the ones verifiers already trust) and the bid's `wif.simple` config names exactly that
+  `issuer_uri`. guest-kcp is a path allow-list proxy with a token bucket per role, per token and for the
+  public paths: `POST /v1/auth/<mount>/{bind,challenge,login}`, `GET /v1/identity/oidc/token/<role>` (the
+  guest's own `X-Vault-Token`, role `guest-<computevm>-<16 hex of sha256(audience)>`), the discovery
+  document and the keys; every other path is a 404 and `POST /v1/on-network` stays. A successful bind makes
+  guest-kcp read the bound ed25519 key from `auth/sshsig/role/<computevm>` and write it as
+  `status.market.hostKeys` (retried until recorded), which the bidder publishes as `vm.hostKeys`; the guest
+  reports no other key type any more. The guest side is one script, `guest-login.sh` (cloud-init-common
+  `guestLoginModule`): no argument binds once and logs in, `login` logs in again, `token <audience>` prints
+  an identity JWT and logs in again when its token is refused; the secrets module and the on-network
+  reporter call it, and `POST /v1/on-network` takes a JWT for audience `api://guest-kcp?actx=<computevm>`
+  that guest-kcp verifies against the keys it proxies. What a guest may ask for is a new kind,
+  `GuestIdentityGrant` (spec computevm, entity `guest-<computevm>`, api, actx, scopes, claims; status
+  applied, role, audience, appliedAt, lastError; a name `<computevm>-<12 hex>`, an ownerReference to its
+  ComputeVM, and the ComputeVM controller also deletes them when it releases the guest): the bidder writes
+  two at accept, one for `guest-kcp` and one for `api://ATProto?actx=<requester did>` carrying claim
+  `wid_sub` = `actx:<bidder>:plc:<requester>:role:<role>`, and the openbao controller turns each into the
+  role (client_id = the audience, a static claim template, ttl 5 m) and lists its token path in the policy
+  `guest-<computevm>` that the guest's sshsig role carries as `token_policies` (the plugin's entity is named
+  by OpenBao, so the policy is per guest rather than templated by entity name). The `sub` of an OpenBao
+  token is the entity id, so a requester's authorizer (`secrets-oidc`) checks the claim `wid_sub` against
+  the subject its grant names and still verifies `iss`, `aud` and the signature against the issuer's
+  published keys. `spec.signingKeyRotation` of the MarketBidder now calls `identity/oidc/key/guest/rotate`
+  (the bidder client holds that one path); OpenBao publishes the next key ahead of its use.
+  Readings (market network, one bidder, test-0001, UTC): the
+  secrets run (`TestRequestSecretsReachTheGuestThroughTheRFPFlow`) PASS in 234 s, `dev up` Ready in 87.7 s,
+  the guest ran the command 74.4 s after `run request` started with the secret from `--secrets`, one
+  host key reported, release `vm.delete` 200 and no ComputeVM, VM unit or work dir left. On a held guest
+  of network gi9a: a token for the requester audience (kid f90616b7...), then GET of `/v1/sys/health`,
+  `/v1/auth/token/lookup-self`, `/v1/identity/oidc/key/guest`, `/v1/sys/policies/acl` and
+  `/v1/identity/oidc/role/x` through guest-kcp: 404 each, lookup-self with the guest's token: 404, a token
+  for a role of another guest: 403. `kubectl get guestidentitygrants`: two grants, both APPLIED true, roles
+  `guest-fc-6bede27ba239-11204dd5-0090f544101f70e6` and `...-09af04415a875a01`; the openbao controller
+  logged `put-policy guest-fc-...` and the two role writes at 18:55:27Z. `signingKeyRotation: 1` patched
+  at 18:56:08Z (appctl logged the rotate); the guest's next token had kid 8a0e9892... and its
+  `setup-secrets.service`, restarted, fetched the secret again from the requester's server. The release
+  at 18:57:01Z deleted both roles and the policy ("no declaration names it") and `kubectl get
+  guestidentitygrants` listed none.
 
 - **The bidder carries one compute provider, the kcp provider, and keeps its tombstones on the Bid, on
   2026-10-15 (plan 0009 M4-LEGACY-BIDDER-CUT).** `hono-factory-market-bidder-app` and `hono-bidder` no

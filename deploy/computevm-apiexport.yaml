@@ -14,3 +14,8 @@ spec:
       schema: v1alpha1-3.bids.socialweb.computer
       storage:
         crd: {}
+    - group: socialweb.computer
+      name: guestidentitygrants
+      schema: v1alpha1-1.guestidentitygrants.socialweb.computer
+      storage:
+        crd: {}

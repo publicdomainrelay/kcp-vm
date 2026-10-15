@@ -349,23 +349,7 @@ export function acceptBundleModule(
 }
 
 
-/**
- * secrets — fetch an operator-supplied secrets bundle from the requester's
- * ephemeral secrets server and write each entry to disk. Requires ctx.secretsUrl,
- * ctx.secretsRoute, ctx.secretsAud. Optional: ctx.secretsAcceptPath.
- *
- * Provider-specific values (token path, issuer base URL, exchange route) are read
- * at runtime from bid_config inside the bidder-injected accept.json, so nothing
- * about the winning provider has to be known when this cloud-config is built --
- * which happens before the RFP is even sent. The guest echoes back the subject
- * from its own provisioning token rather than re-rendering a template, so the
- * exchanged token carries exactly the identity the provider assigned it.
- *
- * Fails loud: the unit does not swallow errors, so units ordered After= it do not
- * start with missing secrets.
- */
 const secretsModule: UserDataModule = (ctx) => {
-  const acceptPath = ctx.secretsAcceptPath ?? "/root/secrets/publicdomainrelay.com/market/accept.json";
   return {
     packages: ["jq", "curl"],
     write_files: [
@@ -379,62 +363,30 @@ set -euo pipefail
 STAMP=/var/lib/setup-secrets.done
 [ -f "\${STAMP}" ] && exit 0
 
-ACCEPT_JSON="${acceptPath}"
 SECRETS_URL="${ctx.secretsUrl ?? ""}"
 SECRETS_ROUTE="${ctx.secretsRoute ?? ""}"
 SECRETS_AUD="${ctx.secretsAud ?? ""}"
+GUEST_LOGIN="${GUEST_LOGIN_SCRIPT}"
 
 if [ -z "\${SECRETS_URL}" ] || [ -z "\${SECRETS_AUD}" ]; then
   echo "secrets module misconfigured: missing url or aud" >&2
   exit 1
 fi
 
-for _ in \$(seq 1 30); do
-  [ -f "\${ACCEPT_JSON}" ] && break
+for _ in \$(seq 1 60); do
+  [ -x "\${GUEST_LOGIN}" ] && break
   sleep 2
 done
-[ -f "\${ACCEPT_JSON}" ] || { echo "accept.json never appeared at \${ACCEPT_JSON}" >&2; exit 1; }
-
-# The bidder writes bid_config as a strongRef wrapper ({uri, cid, value}); older
-# bidders inlined the record. Accept either.
-WIF="\$(jq -c '.bid_config.value // .bid_config // {}' "\${ACCEPT_JSON}")"
-TOKEN_PATH="\$(printf '%s' "\${WIF}" | jq -r '.token_path // empty')"
-URL_PATH="\$(printf '%s' "\${WIF}" | jq -r '.url_path // empty')"
-URL_ROUTE="\$(printf '%s' "\${WIF}" | jq -r '.url_route // "/v1/oidc/issue"')"
-[ -n "\${TOKEN_PATH}" ] || { echo "accept.json has no bid_config token_path" >&2; exit 1; }
-[ -n "\${URL_PATH}" ] || { echo "accept.json has no bid_config url_path" >&2; exit 1; }
-
-for _ in \$(seq 1 30); do
-  [ -s "\${TOKEN_PATH}" ] && [ -s "\${URL_PATH}" ] && break
-  sleep 2
-done
-[ -s "\${TOKEN_PATH}" ] || { echo "workload identity token never appeared at \${TOKEN_PATH}" >&2; exit 1; }
-
-WID_TOKEN="\$(cat "\${TOKEN_PATH}")"
-ISSUER_BASE="\$(cat "\${URL_PATH}")"
-
-# The provider assigned this subject at /v1/oidc/prove from the droplet tags.
-# Echo it back verbatim so the exchanged token keeps the same identity.
-PAYLOAD="\$(printf '%s' "\${WID_TOKEN}" | cut -d. -f2 | tr '_-' '/+')"
-case \$(( \${#PAYLOAD} % 4 )) in
-  2) PAYLOAD="\${PAYLOAD}==" ;;
-  3) PAYLOAD="\${PAYLOAD}=" ;;
-esac
-SUBJECT="\$(printf '%s' "\${PAYLOAD}" | base64 -d 2>/dev/null | jq -r .sub)" || SUBJECT=""
-[ -n "\${SUBJECT}" ] && [ "\${SUBJECT}" != "null" ] || { echo "could not read sub from workload identity token" >&2; exit 1; }
+[ -x "\${GUEST_LOGIN}" ] || { echo "the guest login helper \${GUEST_LOGIN} never appeared" >&2; exit 1; }
 
 EXCHANGED=""
 for attempt in \$(seq 1 10); do
-  EXCHANGED="\$(curl -sf \\
-    -H "Authorization: Bearer \${WID_TOKEN}" \\
-    -H "Content-Type: application/json" \\
-    -d "\$(jq -nc --arg aud "\${SECRETS_AUD}" --arg sub "\${SUBJECT}" '{aud: \$aud, sub: \$sub, ttl: 300}')" \\
-    "\${ISSUER_BASE}\${URL_ROUTE}" | jq -r '.token // empty')" || true
+  EXCHANGED="\$("\${GUEST_LOGIN}" token "\${SECRETS_AUD}")" || true
   [ -n "\${EXCHANGED}" ] && break
-  echo "token exchange failed (attempt \${attempt}); retrying" >&2
+  echo "workload identity token exchange failed (attempt \${attempt}); retrying" >&2
   sleep 5
 done
-[ -n "\${EXCHANGED}" ] || { echo "token exchange failed against \${ISSUER_BASE}\${URL_ROUTE}" >&2; exit 1; }
+[ -n "\${EXCHANGED}" ] || { echo "no workload identity token from the bidder's OpenBao for \${SECRETS_AUD}" >&2; exit 1; }
 
 BUNDLE=""
 for attempt in \$(seq 1 10); do
@@ -468,8 +420,8 @@ touch "\${STAMP}"
         content: [
           "[Unit]",
           "Description=Fetch compute contract secrets via workload identity exchange",
-          "After=network-online.target provisioning-token.service",
-          "Wants=network-online.target",
+          "After=network-online.target guest-login.service",
+          "Wants=network-online.target guest-login.service",
           "ConditionPathExists=!/var/lib/setup-secrets.done",
           "",
           "[Service]",
@@ -730,107 +682,17 @@ wait "\${DUMBPIPE_PID}"
   };
 };
 
-export const HOST_KEYS_REPORTER_SCRIPT = "/usr/local/bin/send-hostkeys.sh";
-export const HOST_KEYS_REPORTER_UNIT = "guest-hostkeys.service";
-
-export interface HostKeysReporterOptions {
-  url: string;
-  tokenPath: string;
-  sshDir?: string;
-  attempts?: number;
-  retryDelaySec?: number;
-}
-
-export function hostKeysReporterScript(opts: HostKeysReporterOptions): string {
-  const sshDir = opts.sshDir ?? "/etc/ssh";
-  const attempts = opts.attempts ?? 12;
-  const delay = opts.retryDelaySec ?? 5;
-  return [
-    "#!/usr/bin/env bash",
-    "set -uo pipefail",
-    `URL="${opts.url}"`,
-    `TOKEN_PATH="${opts.tokenPath}"`,
-    `SSH_DIR="${sshDir}"`,
-    'OUT="${TMPDIR:-/tmp}/guest-hostkeys.out"',
-    'ERR="${TMPDIR:-/tmp}/guest-hostkeys.err"',
-    'ED25519="${SSH_DIR}/ssh_host_ed25519_key"',
-    "for _ in $(seq 1 45); do",
-    '  [ -f "${ED25519}" ] && [ -f "${ED25519}.pub" ] && [ -s "${TOKEN_PATH}" ] && break',
-    "  sleep 2",
-    "done",
-    'if [ ! -f "${ED25519}" ]; then echo "guest-hostkeys: no ${ED25519}"; exit 1; fi',
-    'if [ ! -s "${TOKEN_PATH}" ]; then echo "guest-hostkeys: no provisioning token at ${TOKEN_PATH}"; exit 1; fi',
-    'TOKEN="$(cat "${TOKEN_PATH}")"',
-    "KEYS='[]'",
-    'for PUB in "${SSH_DIR}"/ssh_host_*_key.pub; do',
-    '  [ -f "${PUB}" ] || continue',
-    '  read -r TYPE BLOB _ < "${PUB}"',
-    '  FP="$(ssh-keygen -l -E sha256 -f "${PUB}" | awk \'{print $2}\')"',
-    '  KEYS="$(jq -c --arg t "${TYPE}" --arg k "${BLOB}" --arg f "${FP}" \'. + [{type: $t, publicKey: $k, fingerprint: $f}]\' <<<"${KEYS}")"',
-    "done",
-    'SIG="$(printf \'%s\' "${TOKEN}" | ssh-keygen -Y sign -n prove-sshd -f "${ED25519}")"',
-    'if [ -z "${SIG}" ]; then echo "guest-hostkeys: signing the token failed"; exit 1; fi',
-    'PAYLOAD="$(jq -nc --argjson keys "${KEYS}" --arg token "${TOKEN}" --arg sig "${SIG}" \'{keys: $keys, token: $token, signature: $sig}\')"',
-    'echo "guest-hostkeys: reporting $(jq -r \'[.[] | .type + " " + .fingerprint] | join(", ")\' <<<"${KEYS}")"',
-    `for _ in $(seq 1 ${attempts}); do`,
-    '  CODE="$(curl -sS -m 10 -o "${OUT}" -w \'%{http_code}\' -X POST "${URL}" -H \'Content-Type: application/json\' -d "${PAYLOAD}" 2>>"${ERR}" || echo 000)"',
-    '  echo "guest-hostkeys: http ${CODE} ${URL}"',
-    '  if [ "${CODE}" = "200" ]; then echo "guest-hostkeys: reported"; exit 0; fi',
-    '  case "${CODE}" in 400|403|409) echo "guest-hostkeys: refused: $(cat "${OUT}" 2>/dev/null)"; exit 1 ;; esac',
-    `  sleep ${delay}`,
-    "done",
-    'echo "guest-hostkeys: gave up; last response: $(cat "${OUT}" 2>/dev/null)"',
-    "exit 1",
-    "",
-  ].join("\n");
-}
-
-export function hostKeysReporterModule(opts: HostKeysReporterOptions): UserDataModule {
-  const unit = [
-    "[Unit]",
-    "Description=Report this guest's SSH host keys to its bidder",
-    "After=network-online.target ssh.service",
-    "Wants=network-online.target",
-    "",
-    "[Service]",
-    "Type=oneshot",
-    "RemainAfterExit=yes",
-    "TimeoutStartSec=180",
-    `ExecStart=${HOST_KEYS_REPORTER_SCRIPT}`,
-    "StandardOutput=journal+console",
-    "StandardError=journal+console",
-    "",
-    "[Install]",
-    "WantedBy=multi-user.target",
-    "",
-  ].join("\n");
-  return () => ({
-    write_files: [
-      {
-        path: HOST_KEYS_REPORTER_SCRIPT,
-        owner: "root:root",
-        permissions: "0700",
-        content: hostKeysReporterScript(opts),
-      },
-      { path: `/etc/systemd/system/${HOST_KEYS_REPORTER_UNIT}`, owner: "root:root", permissions: "0644", content: unit },
-    ],
-    runcmdPrepend: [
-      "systemctl daemon-reload",
-      `systemctl enable ${HOST_KEYS_REPORTER_UNIT}`,
-      `systemctl start --no-block ${HOST_KEYS_REPORTER_UNIT}`,
-    ],
-  });
-}
-
 export const GUEST_LOGIN_SCRIPT = "/usr/local/bin/guest-login.sh";
 export const GUEST_LOGIN_UNIT = "guest-login.service";
 export const GUEST_LOGIN_TOKEN_PATH = "/root/secrets/openbao/token";
 export const GUEST_LOGIN_NAMESPACE = "prove-sshd";
+export const GUEST_LOGIN_DEFAULT_MOUNT = "sshsig";
 
 export interface GuestLoginOptions {
   url: string;
   role: string;
   bindSecret: string;
+  mount?: string;
   sshDir?: string;
   tokenPath?: string;
   attempts?: number;
@@ -842,53 +704,88 @@ export function guestLoginScript(opts: GuestLoginOptions): string {
   const tokenPath = opts.tokenPath ?? GUEST_LOGIN_TOKEN_PATH;
   const attempts = opts.attempts ?? 30;
   const delay = opts.retryDelaySec ?? 4;
-  return [
-    "#!/usr/bin/env bash",
-    "set -uo pipefail",
-    `URL="${opts.url}"`,
-    `ROLE="${opts.role}"`,
-    `BIND_SECRET="${opts.bindSecret}"`,
-    `TOKEN_PATH="${tokenPath}"`,
-    `ED25519="${sshDir}/ssh_host_ed25519_key"`,
-    'OUT="${TMPDIR:-/tmp}/guest-login.out"',
-    "for _ in $(seq 1 150); do",
-    '  [ -f "${ED25519}" ] && [ -f "${ED25519}.pub" ] && break',
-    "  sleep 2",
-    "done",
-    'if [ ! -f "${ED25519}" ]; then echo "guest-login: no ${ED25519}"; exit 1; fi',
-    'HOST_KEY="$(awk \'{print $1" "$2}\' "${ED25519}.pub")"',
-    "post() {",
-    '  local step="$1" body="$2" code',
-    `  for _ in $(seq 1 ${attempts}); do`,
-    '    code="$(curl -sS -m 20 -o "${OUT}" -w \'%{http_code}\' -X POST "${URL}/${step}" -H \'Content-Type: application/json\' -d "${body}" 2>/dev/null || echo 000)"',
-    '    case "${code}" in',
-    "      200|204) return 0 ;;",
-    '      4??) echo "guest-login: ${step} refused (${code}): $(cat "${OUT}" 2>/dev/null)"; return 1 ;;',
-    "    esac",
-    '    echo "guest-login: ${step} http ${code}, retrying"',
-    `    sleep ${delay}`,
-    "  done",
-    '  echo "guest-login: ${step} gave up"',
-    "  return 1",
-    "}",
-    "sign() {",
-    `  printf '%s' "$1" | ssh-keygen -Y sign -n ${GUEST_LOGIN_NAMESPACE} -f "\${ED25519}"`,
-    "}",
-    'BIND_SIG="$(sign "${BIND_SECRET}")"',
-    'if [ -z "${BIND_SIG}" ]; then echo "guest-login: signing the bind secret failed"; exit 1; fi',
-    'post bind "$(jq -nc --arg r "${ROLE}" --arg s "${BIND_SECRET}" --arg k "${HOST_KEY}" --arg g "${BIND_SIG}" \'{role: $r, bind_secret: $s, host_key: $k, signature: $g}\')" || exit 1',
-    'echo "guest-login: bound $(jq -r \'.data.host_key_fingerprint // empty\' "${OUT}") to role ${ROLE}"',
-    'post challenge "$(jq -nc --arg r "${ROLE}" \'{role: $r}\')" || exit 1',
-    'CHALLENGE="$(jq -r \'.data.challenge // empty\' "${OUT}")"',
-    'if [ -z "${CHALLENGE}" ]; then echo "guest-login: no challenge in $(cat "${OUT}")"; exit 1; fi',
-    'post login "$(jq -nc --arg r "${ROLE}" --arg c "${CHALLENGE}" --arg g "$(sign "${CHALLENGE}")" \'{role: $r, challenge: $c, signature: $g}\')" || exit 1',
-    'TOKEN="$(jq -r \'.auth.client_token // empty\' "${OUT}")"',
-    'if [ -z "${TOKEN}" ]; then echo "guest-login: no token in the login reply"; exit 1; fi',
-    'install -d -m 0700 "$(dirname "${TOKEN_PATH}")"',
-    '( umask 077; printf \'%s\\n\' "${TOKEN}" > "${TOKEN_PATH}" )',
-    'echo "guest-login: logged in to the bidder\'s OpenBao as $(jq -r \'.auth.metadata.role // empty\' "${OUT}"), policies $(jq -c \'.auth.policies\' "${OUT}"), ttl $(jq -r \'.auth.lease_duration\' "${OUT}")s"',
-    "",
-  ].join("\n");
+  const mount = opts.mount ?? GUEST_LOGIN_DEFAULT_MOUNT;
+  return `#!/usr/bin/env bash
+set -uo pipefail
+URL="${opts.url}"
+ROLE="${opts.role}"
+MOUNT="${mount}"
+BIND_SECRET="${opts.bindSecret}"
+TOKEN_PATH="${tokenPath}"
+ED25519="${sshDir}/ssh_host_ed25519_key"
+OUT="\$(mktemp)"
+trap 'rm -f "\${OUT}"' EXIT
+wait_key() {
+  for _ in \$(seq 1 150); do
+    [ -f "\${ED25519}" ] && [ -f "\${ED25519}.pub" ] && return 0
+    sleep 2
+  done
+  echo "guest-login: no \${ED25519}" >&2
+  return 1
+}
+post() {
+  local step="\$1" body="\$2" code
+  for _ in \$(seq 1 ${attempts}); do
+    code="\$(curl -sS -m 20 -o "\${OUT}" -w '%{http_code}' -X POST "\${URL}/auth/\${MOUNT}/\${step}" -H 'Content-Type: application/json' -d "\${body}" 2>/dev/null || echo 000)"
+    case "\${code}" in
+      200|204) return 0 ;;
+      4??) echo "guest-login: \${step} refused (\${code}): \$(cat "\${OUT}" 2>/dev/null)" >&2; return 1 ;;
+    esac
+    echo "guest-login: \${step} http \${code}, retrying" >&2
+    sleep ${delay}
+  done
+  echo "guest-login: \${step} gave up" >&2
+  return 1
+}
+sign() {
+  printf '%s' "\$1" | ssh-keygen -Y sign -n ${GUEST_LOGIN_NAMESPACE} -f "\${ED25519}"
+}
+bind() {
+  local host_key sig
+  host_key="\$(awk '{print \$1" "\$2}' "\${ED25519}.pub")"
+  sig="\$(sign "\${BIND_SECRET}")"
+  [ -n "\${sig}" ] || { echo "guest-login: signing the bind secret failed" >&2; return 1; }
+  post bind "\$(jq -nc --arg r "\${ROLE}" --arg s "\${BIND_SECRET}" --arg k "\${host_key}" --arg g "\${sig}" '{role: \$r, bind_secret: \$s, host_key: \$k, signature: \$g}')" || return 1
+  echo "guest-login: bound \$(jq -r '.data.host_key_fingerprint // empty' "\${OUT}") to role \${ROLE}" >&2
+}
+login() {
+  local challenge sig token
+  post challenge "\$(jq -nc --arg r "\${ROLE}" '{role: \$r}')" || return 1
+  challenge="\$(jq -r '.data.challenge // empty' "\${OUT}")"
+  [ -n "\${challenge}" ] || { echo "guest-login: no challenge in \$(cat "\${OUT}")" >&2; return 1; }
+  sig="\$(sign "\${challenge}")"
+  post login "\$(jq -nc --arg r "\${ROLE}" --arg c "\${challenge}" --arg g "\${sig}" '{role: \$r, challenge: \$c, signature: \$g}')" || return 1
+  token="\$(jq -r '.auth.client_token // empty' "\${OUT}")"
+  [ -n "\${token}" ] || { echo "guest-login: no token in the login reply" >&2; return 1; }
+  install -d -m 0700 "\$(dirname "\${TOKEN_PATH}")"
+  ( umask 077; printf '%s\\n' "\${token}" > "\${TOKEN_PATH}" )
+  echo "guest-login: logged in to the bidder's OpenBao as \$(jq -r '.auth.metadata.role // empty' "\${OUT}"), policies \$(jq -c '.auth.policies' "\${OUT}"), ttl \$(jq -r '.auth.lease_duration' "\${OUT}")s" >&2
+}
+role_for() {
+  printf 'guest-%s-%s' "\${ROLE}" "\$(printf '%s' "\$1" | sha256sum | cut -c1-16)"
+}
+token() {
+  local name code
+  name="\$(role_for "\$1")"
+  [ -s "\${TOKEN_PATH}" ] || login || return 1
+  for _ in \$(seq 1 ${attempts}); do
+    code="\$(curl -sS -m 20 -o "\${OUT}" -w '%{http_code}' -H "X-Vault-Token: \$(cat "\${TOKEN_PATH}")" "\${URL}/identity/oidc/token/\${name}" 2>/dev/null || echo 000)"
+    case "\${code}" in
+      200) jq -r '.data.token // empty' "\${OUT}"; return 0 ;;
+      403) login || sleep ${delay} ;;
+      *) sleep ${delay} ;;
+    esac
+  done
+  echo "guest-login: no token for \$1 from the bidder's OpenBao (last http \${code})" >&2
+  return 1
+}
+case "\${1:-}" in
+  "") wait_key && { bind || echo "guest-login: the bind was refused; logging in with the key already bound" >&2; login; } ;;
+  login) wait_key && login ;;
+  token) wait_key && token "\${2:?an audience}" ;;
+  *) echo "usage: guest-login.sh [login|token <audience>]" >&2; exit 2 ;;
+esac
+`;
 }
 
 export function guestLoginModule(opts: GuestLoginOptions): UserDataModule {

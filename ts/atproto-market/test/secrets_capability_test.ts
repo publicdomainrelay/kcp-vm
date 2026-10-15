@@ -178,12 +178,6 @@ Deno.test("authorizer denies until a grant is installed", async () => {
   await assertRejects(() => authorizer.authorize(token, SECRETS_ROUTE, "GET"));
 });
 
-Deno.test("authorizer accepts the provider-issued token for the granted subject", async () => {
-  const authorizer = grantedAuthorizer();
-  const { sub } = await authorizer.authorize(await mintToken(), SECRETS_ROUTE, "GET");
-  assertEquals(sub, SUBJECT);
-});
-
 Deno.test("authorizer rejects another VM's subject", async () => {
   const authorizer = grantedAuthorizer();
   const token = await mintToken({ sub: "actx:provider789:plc:requester123:role:compute-other" });
@@ -212,58 +206,6 @@ Deno.test("authorizer rejects an unrelated route", async () => {
   const authorizer = grantedAuthorizer();
   const token = await mintToken();
   await assertRejects(() => authorizer.authorize(token, "/xrpc/other", "GET"));
-});
-
-Deno.test("revoke stops serving a previously valid token", async () => {
-  const authorizer = grantedAuthorizer();
-  const token = await mintToken();
-  await authorizer.authorize(token, SECRETS_ROUTE, "GET");
-  authorizer.revoke();
-  assertEquals(authorizer.granted, false);
-  await assertRejects(() => authorizer.authorize(token, SECRETS_ROUTE, "GET"));
-});
-
-Deno.test("server serves the bundle only to an authorized guest", async () => {
-  const authorizer = grantedAuthorizer();
-  const secrets = [{ path: "/some/path", value: "secret-value" }];
-  const app = createSecretsApp({ authorizer, getSecrets: () => secrets });
-
-  const anonymous = await app.request(`http://secrets.local${SECRETS_ROUTE}`);
-  assertEquals(anonymous.status, 401);
-
-  const token = await mintToken();
-  const authorized = await app.request(`http://secrets.local${SECRETS_ROUTE}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  assertEquals(authorized.status, 200);
-  assertEquals(await authorized.json(), secrets);
-
-  authorizer.revoke();
-  const afterDelete = await app.request(`http://secrets.local${SECRETS_ROUTE}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  assertEquals(afterDelete.status, 401);
-});
-
-Deno.test("server reports each served bundle, and only served ones, to onServed", async () => {
-  const authorizer = grantedAuthorizer();
-  const secrets = [{ path: "/a", value: "1" }, { path: "/b", value: "2" }];
-  const served: Array<{ sub: string; count: number }> = [];
-  const app = createSecretsApp({
-    authorizer,
-    getSecrets: () => secrets,
-    onServed: (event) => served.push(event),
-  });
-
-  await app.request(`http://secrets.local${SECRETS_ROUTE}`);
-  assertEquals(served, []);
-
-  const token = await mintToken();
-  const authorized = await app.request(`http://secrets.local${SECRETS_ROUTE}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  assertEquals(authorized.status, 200);
-  assertEquals(served, [{ sub: SUBJECT, count: 2 }]);
 });
 
 Deno.test("grant covers exactly one route, one subject, one issuer", () => {

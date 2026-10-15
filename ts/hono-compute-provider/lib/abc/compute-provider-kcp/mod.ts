@@ -6,7 +6,6 @@ import {
   type ComputeVMMarket,
   type ComputeVMPhase,
   type ComputeVMVaultRef,
-  GUEST_PROVISIONING_ENTRY,
   GUEST_USER_DATA_ENTRY,
   GUEST_USER_DATA_KEY,
   GUEST_VAULT_PREFIX,
@@ -70,8 +69,6 @@ export function userDataPath(name: string): string {
 export function userDataEntry(userData: string): Record<string, unknown> {
   return { [GUEST_USER_DATA_KEY]: userData };
 }
-
-export const GUEST_PROVISIONING = { prefix: GUEST_VAULT_PREFIX, entry: GUEST_PROVISIONING_ENTRY } as const;
 
 export interface GuestVaultRef {
   server: string;

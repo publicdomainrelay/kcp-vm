@@ -1,6 +1,6 @@
 {
   "name": "hono-bidder-guest",
-  "description": "The guest-facing endpoints of one provider of a bidder: its relay, its OIDC issuer, POST /v1/on-network and POST /v1/host-keys, recorded on the ComputeVM status",
+  "description": "The guest-facing endpoints of one provider of a bidder: its relay and a path allow-list proxy to the bidder OpenBao (sshsig bind, challenge and login, identity token and discovery) and POST /v1/on-network, recorded on the ComputeVM status",
   "options": {
     "service-name": {
       "type": "string",
@@ -10,13 +10,13 @@
     },
     "role": {
       "type": "string",
-      "description": "Provider this DenoPod answers guests for; names its relay keypair and OIDC signing key in the bidder vault",
+      "description": "Provider this DenoPod answers guests for; names its relay keypair in the bidder vault",
       "env": "GUEST_ROLE",
       "default": "kcp"
     },
     "plc-directory-url": {
       "type": "string",
-      "description": "PLC directory URL the issuer resolves the bidder's RBAC records through",
+      "description": "PLC directory URL of the market network",
       "env": "PLC_DIRECTORY_URL",
       "default": "https://plc.directory"
     },
@@ -45,7 +45,7 @@
     },
     "guest-login-mount": {
       "type": "string",
-      "description": "Auth mount of the sshsig plugin on the bidder's OpenBao; guests bind their ssh host key and log in through this DenoPod at /v1/sshsig/{bind,challenge,login}",
+      "description": "Auth mount of the sshsig plugin on the bidder's OpenBao; guests bind their ssh host key and log in through this DenoPod at /v1/auth/<mount>/{bind,challenge,login}",
       "env": "GUEST_LOGIN_MOUNT",
       "default": "sshsig"
     },

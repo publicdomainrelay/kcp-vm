@@ -33,7 +33,6 @@
     "@publicdomainrelay/oidc-issuer-abc": "jsr:@publicdomainrelay/oidc-issuer-abc@^0",
     "@publicdomainrelay/openbao-server-kcp": "jsr:@publicdomainrelay/openbao-server-kcp@^0",
     "@publicdomainrelay/policy-engine-cli-options": "jsr:@publicdomainrelay/policy-engine-cli-options@^0",
-    "@publicdomainrelay/rbac-atproto": "jsr:@publicdomainrelay/rbac-atproto@^0",
     "@publicdomainrelay/relay-visibility-xrpc": "jsr:@publicdomainrelay/relay-visibility-xrpc@^0",
     "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
     "@publicdomainrelay/utils-attestation-key": "jsr:@publicdomainrelay/utils-attestation-key@^0",

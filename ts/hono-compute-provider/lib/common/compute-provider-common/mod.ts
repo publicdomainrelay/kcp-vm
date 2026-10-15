@@ -4,6 +4,8 @@ import {
   buildUserData,
   getUserDataModules,
   type GuestLoginOptions,
+  GUEST_LOGIN_SCRIPT,
+  GUEST_LOGIN_UNIT,
   guestLoginModule,
   POWEROFF_ENDS_VM_MODULE,
 } from "@publicdomainrelay/cloud-init-common";
@@ -101,11 +103,17 @@ export function onNetworkTargets(userData: string, fallbackUrl: string): OnNetwo
   return targets;
 }
 
+export interface OnNetworkBearer {
+  audience: string;
+}
+
 export function onNetworkReporterModule(
   targets: OnNetworkTarget[],
   acceptPathVm: string = DEFAULT_ACCEPT_PATH_VM,
+  bearer?: OnNetworkBearer,
 ): UserDataModule {
   const attempts: string[] = [];
+  const auth = bearer ? ` -H "Authorization: Bearer \${TOKEN}"` : "";
   let index = 0;
   for (const target of targets) {
     index += 1;
@@ -113,7 +121,7 @@ export function onNetworkReporterModule(
     const resolve = target.resolve ? `--resolve "${target.resolve}" ` : "";
     attempts.push(
       `  ${name}="$(curl -sS -m 20 -o /tmp/guest-onnetwork.out -w '%{http_code}' ${resolve}\\`,
-      `    -X POST "${target.url}" -H 'Content-Type: application/json' -d "\${PAYLOAD}" \\`,
+      `    -X POST "${target.url}" -H 'Content-Type: application/json'${auth} -d "\${PAYLOAD}" \\`,
       "    2>>/tmp/guest-onnetwork.err || echo 000)\"",
       `  echo "guest-onnetwork: http \${${name}} ${target.url}"`,
       `  if [ "\${${name}}" = "200" ]; then echo "guest-onnetwork: reported \${FQDN}"; exit 0; fi`,
@@ -145,6 +153,12 @@ export function onNetworkReporterModule(
     "  '{acceptUri: $au, acceptCid: $ac, address: $addr}')" + '"',
     'echo "guest-onnetwork: reporting ${FQDN}"',
     "for _ in 1 2 3 4 5; do",
+    ...(bearer
+      ? [
+        `  TOKEN="$(${GUEST_LOGIN_SCRIPT} token "${bearer.audience}")" || TOKEN=""`,
+        '  if [ -z "${TOKEN}" ]; then echo "guest-onnetwork: no token from the bidder\'s OpenBao yet"; sleep 6; continue; fi',
+      ]
+      : []),
     ...attempts,
     "  sleep 6",
     "done",
@@ -155,8 +169,8 @@ export function onNetworkReporterModule(
   const unit = [
     "[Unit]",
     "Description=Report the guest iroh ticket to the market",
-    "After=network-online.target iroh.service",
-    "Wants=network-online.target iroh.service",
+    `After=network-online.target iroh.service${bearer ? ` ${GUEST_LOGIN_UNIT}` : ""}`,
+    `Wants=network-online.target iroh.service${bearer ? ` ${GUEST_LOGIN_UNIT}` : ""}`,
     "",
     "[Service]",
     "Type=oneshot",
@@ -203,15 +217,16 @@ export function withOnNetworkReporter(
   userData: string,
   fallbackUrl: string,
   acceptPathVm: string = DEFAULT_ACCEPT_PATH_VM,
+  bearer?: OnNetworkBearer,
 ): string {
   if (userData.includes("guest-onnetwork.service")) return userData;
   return buildUserData({
     base: userData,
-    modules: [onNetworkReporterModule(onNetworkTargets(userData, fallbackUrl), acceptPathVm)],
+    modules: [onNetworkReporterModule(onNetworkTargets(userData, fallbackUrl), acceptPathVm, bearer)],
   });
 }
 
-export const GUEST_LOGIN_ROUTE = "/v1/sshsig";
+export const GUEST_LOGIN_ROUTE = "/v1";
 
 export function withGuestLogin(userData: string, opts: GuestLoginOptions): string {
   return buildUserData({ base: userData, modules: [guestLoginModule(opts)] });

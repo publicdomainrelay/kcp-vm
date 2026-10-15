@@ -3,7 +3,7 @@ import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import type { IngressRef, ServeHandle } from "@publicdomainrelay/serve";
 import { createIngress, ingressUrlOf } from "@publicdomainrelay/did-key-ingress-proxy";
-import { generatedKeyHex, vaultGuestKv, vaultOidcJwkStore, vaultRelayKeypair } from "@publicdomainrelay/market-bidder-vault-keys";
+import { generatedKeyHex, vaultGuestKv, vaultRelayKeypair } from "@publicdomainrelay/market-bidder-vault-keys";
 import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
@@ -44,7 +44,7 @@ import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp"
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import type { ResolvedOpenBaoServer } from "@publicdomainrelay/openbao-server-kcp";
-import type { GuestKv, JwkStore } from "@publicdomainrelay/oidc-issuer-abc";
+import type { GuestKv } from "@publicdomainrelay/oidc-issuer-abc";
 import { oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueKeysRecord, loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
@@ -57,7 +57,6 @@ import { MARKET_BIDDER_RESOURCE, type MarketBidder as MarketBidderObject, type M
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import { createComputeProviderKcpFactory } from "@publicdomainrelay/hono-factory-compute-provider-kcp";
-import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { loadOrCreateAttestationKeyHex } from "@publicdomainrelay/utils-attestation-key";
 
@@ -105,7 +104,7 @@ export interface KcpProviderSpec {
   tokenFile?: string;
   caFile?: string;
   guestHostAddress?: string;
-  guestLoginMount?: string;
+  guestLoginMount: string;
 }
 
 export type MarketBidderProviderSpec =
@@ -188,7 +187,7 @@ function isCrawlRoot(u: string): boolean {
 }
 
 const REQUIRED_PROVIDER_FIELDS = {
-  kcp: ["server", "workspace", "handle"],
+  kcp: ["server", "workspace", "handle", "guestLoginMount"],
 } as const;
 
 export function missingProviderFields(p: MarketBidderProviderSpec): string[] {
@@ -371,10 +370,6 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     return kp;
   }
 
-  function oidcJwkStore(role: string): JwkStore | undefined {
-    return keyVault ? vaultOidcJwkStore(keyVault, vaultMount, role, logger) : undefined;
-  }
-
   function guestVault(): { kv: GuestKv; server: string; mount: string } {
     const vault = keyVault;
     if (!vault || !vaultServerRef) {
@@ -554,11 +549,8 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           guestVault: guest,
           guestHostAddress: p.guestHostAddress,
           guestLoginMount: p.guestLoginMount,
-          oidcJwkStore: oidcJwkStore("kcp"),
           getIssuerUrl: () => issuerUrl,
           guestTlsPort,
-          oidcProvisioning: true,
-          rbacProvisioner: createRbacProvisioner(),
           createSignedRepoRecord: signed,
           callService,
           contractStoreReleases: true,

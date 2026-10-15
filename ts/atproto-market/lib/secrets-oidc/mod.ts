@@ -1,6 +1,7 @@
 import * as jose from "jose";
 import { checkRBACPolicy } from "@publicdomainrelay/rbac-atproto";
 import { UnauthorizedException } from "@publicdomainrelay/oidc-issuer-abc";
+import { GUEST_OIDC_SUBJECT_CLAIM } from "@publicdomainrelay/guest-identity-common";
 import type { RbacRecordShape } from "@publicdomainrelay/secrets-common";
 
 export interface SecretsGrant {
@@ -25,12 +26,6 @@ export interface CreateSecretsAuthorizerOpts {
   fetch?: typeof fetch;
 }
 
-/**
- * Validates a guest's exchanged workload identity token against an in-memory
- * grant. The requester is not an OIDC issuer, so verification goes through the
- * provider's published JWKS -- never through an oidc-issuer-hono issuer instance,
- * which would generate a signing key we never use.
- */
 export function createSecretsAuthorizer(
   opts: CreateSecretsAuthorizerOpts = {},
 ): SecretsAuthorizer {
@@ -122,8 +117,9 @@ export function createSecretsAuthorizer(
         }
       }
 
-      const sub = payload.sub;
-      if (!sub) throw new UnauthorizedException("token has no sub");
+      const widSub = (payload as Record<string, unknown>)[GUEST_OIDC_SUBJECT_CLAIM];
+      const sub = typeof widSub === "string" ? widSub : undefined;
+      if (!sub) throw new UnauthorizedException(`token has no ${GUEST_OIDC_SUBJECT_CLAIM} claim`);
 
       checkRBACPolicy(active.rbac as never, sub, path, method);
       return { sub };

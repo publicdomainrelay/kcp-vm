@@ -1,9 +1,0 @@
-{
-  "name": "@publicdomainrelay/guest-login-openbao",
-  "version": "0.0.0",
-  "license": "Unlicense",
-  "exports": "./mod.ts",
-  "imports": {
-    "@publicdomainrelay/guest-login-abc": "jsr:@publicdomainrelay/guest-login-abc@^0"
-  }
-}

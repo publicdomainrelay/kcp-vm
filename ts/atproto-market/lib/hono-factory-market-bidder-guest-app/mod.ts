@@ -6,8 +6,9 @@ import type { MarketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
-import { createOpenBaoGuestLogin } from "@publicdomainrelay/guest-login-openbao";
-import { vaultGuestKv, vaultOidcJwkStore, vaultRelayKeypair } from "@publicdomainrelay/market-bidder-vault-keys";
+import { createOpenBaoGuestIdentity, createOpenBaoTokenVerifier } from "@publicdomainrelay/guest-identity-openbao";
+import { guestOidcIssuer } from "@publicdomainrelay/guest-identity-common";
+import { vaultRelayKeypair } from "@publicdomainrelay/market-bidder-vault-keys";
 import { createComputeProviderKcpGuestFactory } from "@publicdomainrelay/hono-factory-compute-provider-kcp";
 
 export interface MarketBidderGuestVaultSpec {
@@ -31,7 +32,7 @@ export interface MarketBidderGuestAppSpec {
   network: MarketNetwork;
   vault: MarketBidderGuestVaultSpec;
   kcp: MarketBidderGuestKcpSpec;
-  guestLoginMount?: string;
+  guestLoginMount: string;
   serve: { addr?: string; port?: number };
   reports?: { portFile?: string; listenersFile?: string };
 }
@@ -87,23 +88,20 @@ export function createMarketBidderGuestApp(
       keypair: relayKeypair,
       label: `guest-${spec.role}`,
     });
+    const guestIdentity = createOpenBaoGuestIdentity({
+      mount: spec.guestLoginMount,
+      endpoint: async () => {
+        const r = await resolve();
+        return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
+      },
+    });
     const guest = createComputeProviderKcpGuestFactory({
       logger,
       credentials: { server: spec.kcp.server, workspace: spec.kcp.workspace, tokenFile: spec.kcp.tokenFile, caFile: spec.kcp.caFile },
       handle: spec.kcp.handle,
-      guestKv: vaultGuestKv(vault, mount),
-      getIssuerUrl: () => relay.ingressUrl,
-      oidcJwkStore: vaultOidcJwkStore(vault, mount, spec.role, logger),
-      plcDirectoryUrl: spec.network.plcDirectoryUrl,
-      guestLogin: spec.guestLoginMount
-        ? createOpenBaoGuestLogin({
-          mount: spec.guestLoginMount,
-          endpoint: async () => {
-            const r = await resolve();
-            return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey };
-          },
-        })
-        : undefined,
+      guestIdentity,
+      verifier: createOpenBaoTokenVerifier({ identity: guestIdentity, issuer: () => guestOidcIssuer(relay.ingressUrl) }),
+      loginMount: spec.guestLoginMount,
     });
     serve = createServe({
       logger,
@@ -114,6 +112,8 @@ export function createMarketBidderGuestApp(
     });
     serve.app.route("/", guest.createApp());
     await serve.beginServe();
+    await guestIdentity.configureIssuer(relay.ingressUrl);
+    logger.info("guest_oidc_issuer_configured", { issuer: guestOidcIssuer(relay.ingressUrl) });
     const status = { role: spec.role, issuerUrl: relay.ingressUrl, ingressRef: relay.ingressRef, servePort: serve.tcpPort };
     logger.info("guest_endpoints_ready", status);
     return status;

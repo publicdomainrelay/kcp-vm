@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"regexp"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
 )
 
 const (
 	GuestLoginTokenTTL     = "5m"
-	GuestLoginTokenNumUses = 10
+	GuestLoginTokenNumUses = 50
 	GuestAliasPrefix       = "guest-"
 )
 
@@ -62,6 +65,7 @@ func (ct *Controller) ensureGuestLogin(ctx context.Context, o v1alpha1.ComputeVM
 		"alias_name":       GuestAliasPrefix + o.Name,
 		"token_ttl":        GuestLoginTokenTTL,
 		"token_num_uses":   GuestLoginTokenNumUses,
+		"token_policies":   []string{GuestAliasPrefix + o.Name},
 	}
 	if err := client.Write(ctx, path, body); err != nil {
 		var re *openbao.ResponseError
@@ -89,6 +93,27 @@ func (ct *Controller) dropGuestLogin(ctx context.Context, o v1alpha1.ComputeVM) 
 		return
 	}
 	ct.c.log().Info("the guest login role is gone with its ComputeVM", "computevm", o.Name, "role", path)
+}
+
+func (ct *Controller) dropGuestGrants(ctx context.Context, o v1alpha1.ComputeVM) {
+	list, err := ct.grants.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			ct.c.log().Warn("listing the GuestIdentityGrants of a released ComputeVM", "computevm", o.Name, "err", err.Error())
+		}
+		return
+	}
+	for _, it := range list.Items {
+		spec, _ := it.Object["spec"].(map[string]any)
+		if fmt.Sprint(spec["computevm"]) != o.Name {
+			continue
+		}
+		if err := ct.grants.Delete(ctx, it.GetName(), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			ct.c.log().Warn("deleting a GuestIdentityGrant of a released ComputeVM", "computevm", o.Name, "grant", it.GetName(), "err", err.Error())
+			continue
+		}
+		ct.c.log().Info("a GuestIdentityGrant goes with its ComputeVM", "computevm", o.Name, "grant", it.GetName())
+	}
 }
 
 func refusedLogin(err error) bool {

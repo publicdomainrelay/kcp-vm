@@ -29,7 +29,7 @@ if (o.computeProviderKcp) {
     tokenFile: o.computeProviderKcpTokenFile,
     caFile: o.computeProviderKcpCaFile,
     guestHostAddress: o.computeProviderKcpGuestHostAddress,
-    guestLoginMount: o.computeProviderKcpGuestLoginMount || undefined,
+    guestLoginMount: o.computeProviderKcpGuestLoginMount,
   });
 }
 if (o.computeProviderDenoWorker) providers.push({ kind: "denoWorker", permissionMode: o.workerPermissionMode });

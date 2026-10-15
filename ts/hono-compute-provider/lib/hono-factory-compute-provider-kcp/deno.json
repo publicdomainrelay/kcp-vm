@@ -8,10 +8,9 @@
     "@publicdomainrelay/compute-provider-common": "jsr:@publicdomainrelay/compute-provider-common@^0",
     "@publicdomainrelay/compute-provider-kcp": "jsr:@publicdomainrelay/compute-provider-kcp@^0",
     "@publicdomainrelay/compute-provider-kcp-common": "jsr:@publicdomainrelay/compute-provider-kcp-common@^0",
-    "@publicdomainrelay/oidc-issuer-abc": "jsr:@publicdomainrelay/oidc-issuer-abc@^0",
-    "@publicdomainrelay/oidc-issuer-hono": "jsr:@publicdomainrelay/oidc-issuer-hono@^0",
     "@hono/hono": "jsr:@hono/hono@^4",
     "@publicdomainrelay/compute-provider-kcp-abc": "jsr:@publicdomainrelay/compute-provider-kcp-abc@^0",
-    "@publicdomainrelay/guest-login-abc": "jsr:@publicdomainrelay/guest-login-abc@^0"
+    "@publicdomainrelay/guest-identity-abc": "jsr:@publicdomainrelay/guest-identity-abc@^0",
+    "@publicdomainrelay/guest-identity-common": "jsr:@publicdomainrelay/guest-identity-common@^0"
   }
 }

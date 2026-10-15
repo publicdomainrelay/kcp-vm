@@ -2,59 +2,19 @@ package appctl
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
-	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
 )
 
 const (
-	BidderAccount        = "bidder"
-	oidcJwkPath          = "oidc-jwk/"
-	SigningKeyBits       = 4096
-	SigningKeyPublishFor = 25 * time.Hour
+	BidderAccount     = "bidder"
+	oidcRotationPath  = "oidc-rotation/"
+	GuestOIDCKey      = "guest"
+	guestOIDCRotation = "identity/oidc/key/" + GuestOIDCKey + "/rotate"
 )
-
-func signingKeyRole(spec v1alpha1.MarketBidderSpec) string {
-	if spec.Kcp != nil {
-		return "kcp"
-	}
-	return "firecracker"
-}
-
-func newSigningKeyPEM() (string, error) {
-	key, err := rsa.GenerateKey(rand.Reader, SigningKeyBits)
-	if err != nil {
-		return "", err
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return "", err
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
-}
-
-func publishedKeys(held []any, now time.Time) []any {
-	var keep []any
-	for _, p := range held {
-		m, ok := p.(map[string]any)
-		if !ok {
-			continue
-		}
-		until, err := time.Parse(time.RFC3339, fmt.Sprint(m["publishUntil"]))
-		if err == nil && until.After(now) {
-			keep = append(keep, m)
-		}
-	}
-	return keep
-}
 
 func rotationOf(data map[string]any) int64 {
 	switch v := data["rotation"].(type) {
@@ -78,38 +38,30 @@ func (ctl *Controller) rotateSigningKey(ctx context.Context, o v1alpha1.MarketBi
 		return err
 	}
 	defer client.RevokeSelf(context.Background())
-	role := signingKeyRole(o.Spec)
-	path := c.KVMount + "/data/" + oidcJwkPath + role
+	path := c.KVMount + "/data/" + oidcRotationPath + GuestOIDCKey
 	data, err := client.GetKV(ctx, path)
 	var re *openbao.ResponseError
 	if err != nil && !(errors.As(err, &re) && re.Status == http.StatusNotFound) {
 		return err
 	}
 	held := rotationOf(data)
-	current, _ := data["pem"].(string)
-	switch {
-	case held >= want:
+	if held >= want {
 		ctl.rotated[string(o.UID)] = held
 		return nil
-	case current == "":
-		ctl.c.log().Info("no OIDC signing key to rotate yet; the bidder's issuer makes its first key when it starts", "name", o.Name, "role", role)
-		ctl.rotated[string(o.UID)] = want
-		return nil
 	}
-	next, err := newSigningKeyPEM()
-	if err != nil {
+	if err := client.Write(ctx, guestOIDCRotation, nil); err != nil {
+		if errors.As(err, &re) && (re.Status == http.StatusNotFound || re.Status == http.StatusBadRequest) {
+			ctl.c.log().Info("no OIDC signing key to rotate yet; the server makes it from its declaration", "name", o.Name, "key", GuestOIDCKey)
+			ctl.rotated[string(o.UID)] = want
+			return nil
+		}
 		return err
 	}
-	now := time.Now().UTC()
-	previous, _ := data["previous"].([]any)
-	previous = append([]any{map[string]any{"pem": current, "retiredAt": now.Format(time.RFC3339),
-		"publishUntil": now.Add(SigningKeyPublishFor).Format(time.RFC3339)}}, publishedKeys(previous, now)...)
-	out := map[string]any{"issuer": data["issuer"], "pem": next, "previous": previous, "rotation": want}
-	if err := client.PutKV(ctx, path, out); err != nil {
+	if err := client.PutKV(ctx, path, map[string]any{"rotation": want}); err != nil {
 		return err
 	}
 	ctl.rotated[string(o.UID)] = want
-	ctl.c.log().Info("rotated the bidder's OIDC signing key; the issuer URL stays and the old key stays published",
-		"name", o.Name, "role", role, "rotation", want, "published", len(previous)+1, "publishOldUntil", now.Add(SigningKeyPublishFor).Format(time.RFC3339))
+	ctl.c.log().Info("rotated the bidder's OIDC signing key in its OpenBao; the issuer URL stays and the old key stays published for the key's verification ttl",
+		"name", o.Name, "key", GuestOIDCKey, "rotation", want)
 	return nil
 }

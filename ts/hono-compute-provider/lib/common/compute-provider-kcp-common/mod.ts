@@ -235,6 +235,37 @@ export interface BidTerminated {
   at: string;
 }
 
+export interface GuestIdentityGrant {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: GuestIdentityGrantSpec;
+  status?: GuestIdentityGrantStatus;
+}
+
+export interface GuestIdentityGrantSpec {
+  computevm: string;
+  entity: string;
+  api: string;
+  actx: string;
+  scopes?: string[];
+  claims?: GuestIdentityClaim[];
+}
+
+export interface GuestIdentityClaim {
+  name: string;
+  value: string;
+}
+
+export interface GuestIdentityGrantStatus {
+  observedGeneration?: number;
+  applied: boolean;
+  role?: string;
+  audience?: string;
+  appliedAt?: string;
+  lastError?: string;
+}
+
 export interface HostProcess {
   apiVersion?: string;
   kind?: string;
@@ -434,6 +465,7 @@ export interface OpenBaoServerDeclared {
   pkiRoles?: OpenBaoPKIRole[];
   kv?: OpenBaoKVScope[];
   pkiTidy?: OpenBaoPKITidy[];
+  identityOIDC?: OpenBaoIdentityOIDC;
 }
 
 export interface OpenBaoSecretMount {
@@ -530,6 +562,14 @@ export interface OpenBaoPKITidy {
   mount: string;
   interval?: string;
   safetyBuffer?: string;
+}
+
+export interface OpenBaoIdentityOIDC {
+  key: string;
+  algorithm?: string;
+  rotationPeriod?: string;
+  verificationTTL?: string;
+  tokenTTL?: string;
 }
 
 export interface OpenBaoPlugin {
@@ -675,6 +715,17 @@ export const BID_RESOURCE: ApiResource = {
   export: "computevms",
 };
 
+export const GUEST_IDENTITY_GRANT_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "GuestIdentityGrant",
+  listKind: "GuestIdentityGrantList",
+  plural: "guestidentitygrants",
+  singular: "guestidentitygrant",
+  schema: "v1alpha1-1.guestidentitygrants.socialweb.computer",
+  export: "computevms",
+};
+
 export const HOST_PROCESS_RESOURCE: ApiResource = {
   group: "socialweb.computer",
   version: "v1alpha1",
@@ -704,11 +755,11 @@ export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
   listKind: "OpenBaoServerList",
   plural: "openbaoservers",
   singular: "openbaoserver",
-  schema: "v1alpha1-9.openbaoservers.socialweb.computer",
+  schema: "v1alpha1-10.openbaoservers.socialweb.computer",
   export: "hostprocesses",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, BID_RESOURCE, HOST_PROCESS_RESOURCE, POSTGRES_RESOURCE, OPEN_BAO_SERVER_RESOURCE];
+export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, BID_RESOURCE, GUEST_IDENTITY_GRANT_RESOURCE, HOST_PROCESS_RESOURCE, POSTGRES_RESOURCE, OPEN_BAO_SERVER_RESOURCE];
 
 export type ApiTypeName =
   | "Bid"
@@ -739,6 +790,10 @@ export type ApiTypeName =
   | "ComputeVMUserData"
   | "ComputeVMVaultRef"
   | "Condition"
+  | "GuestIdentityClaim"
+  | "GuestIdentityGrant"
+  | "GuestIdentityGrantSpec"
+  | "GuestIdentityGrantStatus"
   | "HostProcess"
   | "HostProcessAsset"
   | "HostProcessEnv"
@@ -762,6 +817,7 @@ export type ApiTypeName =
   | "OpenBaoAtprotoRole"
   | "OpenBaoAuthMount"
   | "OpenBaoCertRole"
+  | "OpenBaoIdentityOIDC"
   | "OpenBaoJWTConfig"
   | "OpenBaoJWTRole"
   | "OpenBaoKVScope"
@@ -1450,6 +1506,103 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "open": true,
     "type": "object"
   },
+  "GuestIdentityClaim": {
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "value": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "value"
+    ],
+    "type": "object"
+  },
+  "GuestIdentityGrant": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "GuestIdentityGrantSpec"
+      },
+      "status": {
+        "ref": "GuestIdentityGrantStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "GuestIdentityGrantSpec": {
+    "properties": {
+      "actx": {
+        "type": "string"
+      },
+      "api": {
+        "type": "string"
+      },
+      "claims": {
+        "items": {
+          "ref": "GuestIdentityClaim"
+        },
+        "type": "array"
+      },
+      "computevm": {
+        "type": "string"
+      },
+      "entity": {
+        "type": "string"
+      },
+      "scopes": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "computevm",
+      "entity",
+      "api",
+      "actx"
+    ],
+    "type": "object"
+  },
+  "GuestIdentityGrantStatus": {
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "appliedAt": {
+        "type": "string"
+      },
+      "audience": {
+        "type": "string"
+      },
+      "lastError": {
+        "type": "string"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "role": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "applied"
+    ],
+    "type": "object"
+  },
   "HostProcess": {
     "properties": {
       "apiVersion": {
@@ -1971,6 +2124,29 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "OpenBaoIdentityOIDC": {
+    "properties": {
+      "algorithm": {
+        "type": "string"
+      },
+      "key": {
+        "type": "string"
+      },
+      "rotationPeriod": {
+        "type": "string"
+      },
+      "tokenTTL": {
+        "type": "string"
+      },
+      "verificationTTL": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "key"
+    ],
+    "type": "object"
+  },
   "OpenBaoJWTConfig": {
     "properties": {
       "boundIssuer": {
@@ -2331,6 +2507,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
           "ref": "OpenBaoCertRole"
         },
         "type": "array"
+      },
+      "identityOIDC": {
+        "ref": "OpenBaoIdentityOIDC"
       },
       "jwtRoles": {
         "items": {
@@ -3305,6 +3484,78 @@ export function parseBidTerminated(value: unknown): BidTerminated {
   return value;
 }
 
+export function validateGuestIdentityGrant(value: unknown): ApiIssue[] {
+  return validate("GuestIdentityGrant", value);
+}
+
+export function isGuestIdentityGrant(value: unknown): value is GuestIdentityGrant {
+  return validate("GuestIdentityGrant", value).length === 0;
+}
+
+export function assertGuestIdentityGrant(value: unknown): asserts value is GuestIdentityGrant {
+  const issues = validate("GuestIdentityGrant", value);
+  if (issues.length > 0) throw new ApiValidationError("GuestIdentityGrant", issues);
+}
+
+export function parseGuestIdentityGrant(value: unknown): GuestIdentityGrant {
+  assertGuestIdentityGrant(value);
+  return value;
+}
+
+export function validateGuestIdentityGrantSpec(value: unknown): ApiIssue[] {
+  return validate("GuestIdentityGrantSpec", value);
+}
+
+export function isGuestIdentityGrantSpec(value: unknown): value is GuestIdentityGrantSpec {
+  return validate("GuestIdentityGrantSpec", value).length === 0;
+}
+
+export function assertGuestIdentityGrantSpec(value: unknown): asserts value is GuestIdentityGrantSpec {
+  const issues = validate("GuestIdentityGrantSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("GuestIdentityGrantSpec", issues);
+}
+
+export function parseGuestIdentityGrantSpec(value: unknown): GuestIdentityGrantSpec {
+  assertGuestIdentityGrantSpec(value);
+  return value;
+}
+
+export function validateGuestIdentityClaim(value: unknown): ApiIssue[] {
+  return validate("GuestIdentityClaim", value);
+}
+
+export function isGuestIdentityClaim(value: unknown): value is GuestIdentityClaim {
+  return validate("GuestIdentityClaim", value).length === 0;
+}
+
+export function assertGuestIdentityClaim(value: unknown): asserts value is GuestIdentityClaim {
+  const issues = validate("GuestIdentityClaim", value);
+  if (issues.length > 0) throw new ApiValidationError("GuestIdentityClaim", issues);
+}
+
+export function parseGuestIdentityClaim(value: unknown): GuestIdentityClaim {
+  assertGuestIdentityClaim(value);
+  return value;
+}
+
+export function validateGuestIdentityGrantStatus(value: unknown): ApiIssue[] {
+  return validate("GuestIdentityGrantStatus", value);
+}
+
+export function isGuestIdentityGrantStatus(value: unknown): value is GuestIdentityGrantStatus {
+  return validate("GuestIdentityGrantStatus", value).length === 0;
+}
+
+export function assertGuestIdentityGrantStatus(value: unknown): asserts value is GuestIdentityGrantStatus {
+  const issues = validate("GuestIdentityGrantStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("GuestIdentityGrantStatus", issues);
+}
+
+export function parseGuestIdentityGrantStatus(value: unknown): GuestIdentityGrantStatus {
+  assertGuestIdentityGrantStatus(value);
+  return value;
+}
+
 export function validateHostProcess(value: unknown): ApiIssue[] {
   return validate("HostProcess", value);
 }
@@ -4004,6 +4255,24 @@ export function assertOpenBaoPKITidy(value: unknown): asserts value is OpenBaoPK
 
 export function parseOpenBaoPKITidy(value: unknown): OpenBaoPKITidy {
   assertOpenBaoPKITidy(value);
+  return value;
+}
+
+export function validateOpenBaoIdentityOIDC(value: unknown): ApiIssue[] {
+  return validate("OpenBaoIdentityOIDC", value);
+}
+
+export function isOpenBaoIdentityOIDC(value: unknown): value is OpenBaoIdentityOIDC {
+  return validate("OpenBaoIdentityOIDC", value).length === 0;
+}
+
+export function assertOpenBaoIdentityOIDC(value: unknown): asserts value is OpenBaoIdentityOIDC {
+  const issues = validate("OpenBaoIdentityOIDC", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoIdentityOIDC", issues);
+}
+
+export function parseOpenBaoIdentityOIDC(value: unknown): OpenBaoIdentityOIDC {
+  assertOpenBaoIdentityOIDC(value);
   return value;
 }
 

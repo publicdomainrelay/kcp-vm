@@ -81,6 +81,7 @@ type Controller struct {
 	hps     dynamic.ResourceInterface
 	servers dynamic.ResourceInterface
 	bids    dynamic.ResourceInterface
+	grants  dynamic.ResourceInterface
 	kick    chan string
 
 	mu       sync.Mutex
@@ -134,7 +135,7 @@ func New(ctx context.Context, c Config) (*Controller, error) {
 		return nil, err
 	}
 	return &Controller{c: c, vms: dc.Resource(GVR), hps: dc.Resource(hostprocess.GVR),
-		servers: dc.Resource(openbaoctl.GVR), bids: dc.Resource(BidGVR), kick: make(chan string, 256),
+		servers: dc.Resource(openbaoctl.GVR), bids: dc.Resource(BidGVR), grants: dc.Resource(openbaoctl.GrantGVR), kick: make(chan string, 256),
 		busy: map[string]bool{}, exits: map[string]hostsvc.UnitStatus{}, orphans: map[string]time.Time{}, foreign: map[string]bool{},
 		logins: map[string]vaultLogin{}, slice: true}, nil
 }
@@ -674,6 +675,7 @@ func (ct *Controller) release(ctx context.Context, cur *unstructured.Unstructure
 		return err
 	}
 	ct.dropGuestLogin(ctx, o)
+	ct.dropGuestGrants(ctx, o)
 	if fresh, err := ct.vms.Get(ctx, o.Name, metav1.GetOptions{}); err == nil {
 		cur = fresh
 	} else if apierrors.IsNotFound(err) {

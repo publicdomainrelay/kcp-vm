@@ -81,6 +81,7 @@ type Controller struct {
 	c        Config
 	servers  dynamic.ResourceInterface
 	children dynamic.ResourceInterface
+	grants   dynamic.ResourceInterface
 }
 
 func (c Config) log() *slog.Logger {
@@ -111,7 +112,7 @@ func New(c Config) (*Controller, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Controller{c: c, servers: dc.Resource(GVR), children: dc.Resource(hostprocess.GVR)}, nil
+	return &Controller{c: c, servers: dc.Resource(GVR), children: dc.Resource(hostprocess.GVR), grants: dc.Resource(GrantGVR)}, nil
 }
 
 func ServerDir(stateDir, name string) string { return filepath.Join(stateDir, DirName, name) }
@@ -291,6 +292,8 @@ type synced struct {
 	running map[string]string
 	tidied  bool
 	tidyErr error
+	roles   map[string]grantRole
+	refused map[string]string
 }
 
 func tidyInterval(s v1alpha1.OpenBaoServerSpec) (time.Duration, error) {
@@ -341,21 +344,21 @@ func recordTidy(st *v1alpha1.OpenBaoServerStatus, s synced, interval time.Durati
 
 func syncWith(ctx context.Context, admin *openbao.Client, in layoutInput) (synced, error) {
 	in.accessors = accessorsOf(ctx, admin)
-	d, pending, err := desired(ctx, in, pkiCA(admin))
+	d, pending, roles, refused, err := desiredWithIdentity(ctx, in, pkiCA(admin))
 	if err != nil {
 		return synced{}, err
 	}
 	rep, err := baosync.Sync(ctx, admin, d)
 	if err == nil && rep.Err == nil && len(pending) > 0 && rep.Changed() {
 		in.accessors = accessorsOf(ctx, admin)
-		if d2, pending2, derr := desired(ctx, in, pkiCA(admin)); derr == nil && len(pending2) < len(pending) {
+		if d2, pending2, roles2, refused2, derr := desiredWithIdentity(ctx, in, pkiCA(admin)); derr == nil && len(pending2) < len(pending) {
 			rep2, err2 := baosync.Sync(ctx, admin, d2)
 			rep.Applied = append(rep.Applied, rep2.Applied...)
 			rep.Conflicts, rep.Err = rep2.Conflicts, errors.Join(rep.Err, rep2.Err)
-			d, pending, err = d2, pending2, err2
+			d, pending, roles, refused, err = d2, pending2, roles2, refused2, err2
 		}
 	}
-	s := synced{report: rep, pending: pending, desired: d}
+	s := synced{report: rep, pending: pending, desired: d, roles: roles, refused: refused}
 	if err == nil && in.tidyDue {
 		s.tidied, s.tidyErr = tidyTokensAndLeases(ctx, admin)
 	}
@@ -517,11 +520,18 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		st.Plugins = nil
 		return fail("spec.plugins: %v", err)
 	}
+	var grants []v1alpha1.GuestIdentityGrant
+	if o.Spec.Declared != nil && o.Spec.Declared.IdentityOIDC != nil {
+		if grants, err = c.listGrants(ctx); err != nil {
+			return fail("listing the GuestIdentityGrants: %v", err)
+		}
+	}
+
 	tidyEvery, err := tidyInterval(o.Spec)
 	if err != nil {
 		return fail("%v", err)
 	}
-	layout := layoutInput{caPEM: tlsm.CAPEM, clientsCAPEM: clientsCA.CAPEM, clients: o.Spec.Clients, declared: o.Spec.Declared, plugins: plugins,
+	layout := layoutInput{caPEM: tlsm.CAPEM, clientsCAPEM: clientsCA.CAPEM, clients: o.Spec.Clients, declared: o.Spec.Declared, plugins: plugins, grants: grants,
 		tidyDue: tidyDue(st.Tidy, tidyEvery, time.Now())}
 	opts, err := serverOptions(o.Spec, clientsCA.BundlePath)
 	if err != nil {
@@ -645,6 +655,18 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 	s, serr := c.syncCore(ctx, client, keysPath, layout)
 	recordSync(&st, gen, s, serr, log)
 	recordTidy(&st, s, tidyEvery, log)
+	if len(grants) > 0 {
+		reason := ""
+		switch {
+		case serr != nil:
+			reason = serr.Error()
+		case s.report.Err != nil:
+			reason = s.report.Err.Error()
+		case len(s.pending) > 0 || len(s.report.Conflicts) > 0:
+			reason = "the server does not hold its declaration yet"
+		}
+		c.recordGrants(ctx, s.roles, s.refused, grants, reason == "", reason)
+	}
 	if len(plugins) > 0 {
 		perr := serr
 		if perr == nil {
@@ -745,6 +767,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	defer t.Stop()
 	kick := make(chan struct{}, 1)
 	go c.watchSpecs(ctx, kick)
+	go c.watchGrants(ctx, kick)
 	for {
 		if err := c.Pass(ctx); err != nil {
 			return err
