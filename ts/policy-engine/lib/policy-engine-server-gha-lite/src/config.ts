@@ -20,6 +20,7 @@ export interface SandboxConfig {
   /** When true, start an in-process HTTP filesystem API server and inject its
    *  URL as POLICY_ENGINE_FS_API_URL into every action worker. */
   fsApi?: boolean;
+  bundledActionsDir?: string;
 }
 
 /** Interpret common truthy strings ("1", "true", "yes", "on") as true. */

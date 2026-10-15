@@ -100,6 +100,26 @@ export function createApp(
     return c.json(response);
   });
 
+  app.post("/request/run", async (c) => {
+    let request: PolicyEngineRequest;
+    try {
+      request = await c.req.json();
+    } catch (err) {
+      return validationError(c, "Failed to parse request JSON", err as Error);
+    }
+    try {
+      validateRequest(request);
+    } catch (err) {
+      return validationError(c, "Invalid request", err as Error);
+    }
+
+    const taskID = crypto.randomUUID();
+    const task = taskManager.createTask(taskID);
+    Info("task created: id=%s", taskID);
+    await executeWorkflowTask(taskManager, task, request, sandbox);
+    return c.json(statusOfTask(task, taskID));
+  });
+
   app.get("/request/status/:id", (c) => {
     const requestID = c.req.param("id");
     const task = taskManager.getTask(requestID);
@@ -107,36 +127,7 @@ export function createApp(
       return c.json({ status: StatusUnknown, detail: { id: requestID } });
     }
 
-    let response: PolicyEngineStatus;
-    switch (task.status) {
-      case "PENDING":
-        response = {
-          status: StatusInProgress,
-          detail: { id: requestID, status_updates: {} },
-        };
-        break;
-      case "SUCCESS":
-      case "FAILURE": {
-        try {
-          response = JSON.parse(task.result) as PolicyEngineStatus;
-          if (response.detail && typeof response.detail === "object") {
-            (response.detail as Record<string, unknown>)["id"] = requestID;
-          }
-        } catch {
-          response = {
-            status: StatusComplete,
-            detail: {
-              id: requestID,
-              exit_status: task.status === "FAILURE" ? "failure" : "success",
-            },
-          };
-        }
-        break;
-      }
-      default:
-        response = { status: StatusUnknown, detail: { id: requestID } };
-    }
-    return c.json(response);
+    return c.json(statusOfTask(task, requestID));
   });
 
   app.get("/request/console_output/:id", (c) => {
@@ -246,6 +237,32 @@ export function createApp(
   return { app, taskManager };
 }
 
+function statusOfTask(task: Task, requestID: string): PolicyEngineStatus {
+  switch (task.status) {
+    case "PENDING":
+      return { status: StatusInProgress, detail: { id: requestID, status_updates: {} } };
+    case "SUCCESS":
+    case "FAILURE":
+      try {
+        const response = JSON.parse(task.result) as PolicyEngineStatus;
+        if (response.detail && typeof response.detail === "object") {
+          (response.detail as Record<string, unknown>)["id"] = requestID;
+        }
+        return response;
+      } catch {
+        return {
+          status: StatusComplete,
+          detail: {
+            id: requestID,
+            exit_status: task.status === "FAILURE" ? "failure" : "success",
+          },
+        };
+      }
+    default:
+      return { status: StatusUnknown, detail: { id: requestID } };
+  }
+}
+
 /** Execute a workflow as an async task, recording the result on the task. */
 async function executeWorkflowTask(
   taskManager: TaskManager,
@@ -266,7 +283,15 @@ async function executeWorkflowTask(
     taskManager.updateTask(task.id, taskStatus, resultJSON, null);
   } catch (err) {
     LogError("task %s failed: %v", task.id, err);
-    taskManager.updateTask(task.id, "FAILURE", "", err as Error);
+    const failure: PolicyEngineStatus = {
+      status: StatusComplete,
+      detail: {
+        id: task.id,
+        exit_status: "failure",
+        annotations: { error: [(err as Error).message ?? String(err)] },
+      },
+    };
+    taskManager.updateTask(task.id, "FAILURE", JSON.stringify(failure), err as Error);
   }
 }
 

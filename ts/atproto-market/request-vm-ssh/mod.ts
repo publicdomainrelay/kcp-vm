@@ -366,6 +366,7 @@ const controller = createRequesterController({
   defaultVmReadyTimeoutSec: o.vmReadyTimeoutSec as number,
   skipRbac: !!o.skipRbac,
   policyEngine: o.policyEngine,
+  policyEngineUrl: o.policyEngineUrl,
   onlyRemotePolicyExec: o.onlyRemotePolicyExec,
   allowUntrustedPolicyExec: o.allowUntrustedPolicyExec,
   acceptCopies: o.acceptCopies,

@@ -99,6 +99,7 @@ const spec: MarketBidderAppSpec = {
     policyArgs: o.policyArgs,
     onlyRemotePolicyExec: o.onlyRemotePolicyExec,
     allowUntrustedPolicyExec: o.allowUntrustedPolicyExec,
+    policyEngineUrl: o.policyEngineUrl,
     ingressKeyDir: o.ingressKeyDir,
     ...(o.marketRootName ? { root: { name: o.marketRootName as string } } : {}),
   },

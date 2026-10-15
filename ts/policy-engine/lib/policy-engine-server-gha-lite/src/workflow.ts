@@ -32,6 +32,8 @@ import { runActionInWorker } from "./action_worker.ts";
 import { resolveSandboxConfig, type SandboxConfig } from "./config.ts";
 import { type FsApiServer, startFsApiServer } from "./fs_api.ts";
 
+const PERMISSION_DENIED = /Requires (read|write|env|net|run|ffi|sys|import)|NotCapable|PermissionDenied/;
+
 /** Parse a workflow from a string (YAML) or an object. */
 export function parseWorkflow(input: unknown): PolicyEngineWorkflow {
   if (typeof input === "string") {
@@ -628,7 +630,11 @@ export class WorkflowExecutor {
   private async evaluateInnerExpression(inner: string): Promise<string> {
     try {
       return await this.evaluateUsingJavaScript(inner);
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (PERMISSION_DENIED.test(message)) {
+        throw new Error(`the policy expression was denied: ${message}`);
+      }
       // Fall back to simple property-path resolution.
       const data: Record<string, unknown> = {
         github: this.buildGitHubContext(),
@@ -811,7 +817,7 @@ return (${transformed});
       }
 
       if (!actionPath) {
-        const bundledDir = Deno.env.get("BUNDLED_ACTIONS_DIR");
+        const bundledDir = this.sandbox.bundledActionsDir ?? Deno.env.get("BUNDLED_ACTIONS_DIR");
         if (bundledDir) {
           const bundledPath = join(bundledDir, orgRepo);
           if (await exists(bundledPath)) {

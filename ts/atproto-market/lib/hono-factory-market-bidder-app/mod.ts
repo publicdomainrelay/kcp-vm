@@ -122,6 +122,7 @@ export interface MarketBidderMarketSpec {
   policyArgs?: unknown;
   onlyRemotePolicyExec?: boolean;
   allowUntrustedPolicyExec?: boolean;
+  policyEngineUrl?: string;
   ingressKeyDir?: string;
   root?: { name: string };
 }
@@ -667,6 +668,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
       policy: spec.market.policy,
       policyArgs: policyArgs as never,
       policyExec: { onlyRemote: spec.market.onlyRemotePolicyExec, allowUntrusted: spec.market.allowUntrustedPolicyExec },
+      policyEngineUrl: spec.market.policyEngineUrl,
       onSessionExpired: (err) =>
         logger.warn("bidder_session_expired", {
           name: id.name,

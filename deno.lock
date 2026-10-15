@@ -2023,6 +2023,7 @@
           "jsr:@publicdomainrelay/policy-deno-typescript@0",
           "jsr:@publicdomainrelay/policy-engine-abc@0",
           "jsr:@publicdomainrelay/policy-engine-cli-options@0",
+          "jsr:@publicdomainrelay/policy-engine-client-http@0",
           "jsr:@publicdomainrelay/policy-engine-evaluator@0",
           "jsr:@publicdomainrelay/policy-engine-executor-gha-lite@0",
           "jsr:@publicdomainrelay/policy-engine-executor-typescript@0",
@@ -2185,6 +2186,7 @@
           "jsr:@publicdomainrelay/policy-deno-typescript-shared@0",
           "jsr:@publicdomainrelay/policy-deno-typescript@0",
           "jsr:@publicdomainrelay/policy-engine-abc@0",
+          "jsr:@publicdomainrelay/policy-engine-client-http@0",
           "jsr:@publicdomainrelay/policy-engine-evaluator@0",
           "jsr:@publicdomainrelay/policy-engine-executor-gha-lite@0",
           "jsr:@publicdomainrelay/policy-engine-executor-typescript@0",
@@ -2587,6 +2589,14 @@
           "jsr:@publicdomainrelay/oidc-issuer-abc@0"
         ]
       },
+      "ts/policy-engine/hono-policy-engine": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/cli-args-env@0",
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/policy-engine-server-gha-lite@0",
+          "jsr:@publicdomainrelay/serve@0"
+        ]
+      },
       "ts/policy-engine/lib/abc/policy-engine": {
         "dependencies": [
           "jsr:@publicdomainrelay/policy-common@0"
@@ -2612,6 +2622,13 @@
       "ts/policy-engine/lib/policy-engine-cli-options": {
         "dependencies": [
           "jsr:@publicdomainrelay/policy-common@0"
+        ]
+      },
+      "ts/policy-engine/lib/policy-engine-client-http": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/policy-engine-abc@0",
+          "jsr:@publicdomainrelay/policy-engine-executor-gha-lite@0",
+          "jsr:@publicdomainrelay/policy-engine-server-gha-lite@0"
         ]
       },
       "ts/policy-engine/lib/policy-engine-evaluator": {

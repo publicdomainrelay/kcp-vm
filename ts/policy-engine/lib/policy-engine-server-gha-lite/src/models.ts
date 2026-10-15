@@ -181,6 +181,8 @@ export interface GitHubCheckSuiteAnnotation {
 
 export type TaskState = "PENDING" | "SUCCESS" | "FAILURE";
 
+const MAX_RETAINED_TASKS = 1024;
+
 /**
  * An async task for workflow execution. Console output is buffered and
  * broadcast to subscribers (used by the SSE stream endpoint).
@@ -230,9 +232,18 @@ export class TaskManager {
   private tasks = new Map<string, Task>();
 
   createTask(id: string): Task {
+    this.prune();
     const task = new Task(id);
     this.tasks.set(id, task);
     return task;
+  }
+
+  private prune(): void {
+    if (this.tasks.size < MAX_RETAINED_TASKS) return;
+    for (const [id, task] of this.tasks) {
+      if (this.tasks.size < MAX_RETAINED_TASKS) return;
+      if (task.status !== "PENDING") this.tasks.delete(id);
+    }
   }
 
   getTask(id: string): Task | undefined {

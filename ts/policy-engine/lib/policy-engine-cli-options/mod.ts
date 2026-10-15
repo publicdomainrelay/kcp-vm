@@ -29,6 +29,12 @@ export const ONLY_REMOTE_POLICY_EXEC_CLI_OPTION = {
   env: "ONLY_REMOTE_POLICY_EXEC",
 };
 
+export const POLICY_ENGINE_URL_CLI_OPTION = {
+  type: "string" as const,
+  description: "Base URL of the policy engine pod that evaluates policies attached to an RFP; unset evaluates them in this process",
+  env: "POLICY_ENGINE_URL",
+};
+
 export const ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION = {
   type: "boolean" as const,
   description: "Permit untrusted policy records (custom bundles/workflows) to run locally",

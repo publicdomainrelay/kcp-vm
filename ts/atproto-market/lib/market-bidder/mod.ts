@@ -40,6 +40,7 @@ import { resolvePolicyName } from "@publicdomainrelay/policy-deno-typescript-sha
 import type { PolicyArgs } from "@publicdomainrelay/policy-deno-typescript-shared";
 import { WORKFLOWS } from "@publicdomainrelay/policies-gha-lite";
 import { GhaLiteExecutor } from "@publicdomainrelay/policy-engine-executor-gha-lite";
+import { createRemoteEngineRegistry } from "@publicdomainrelay/policy-engine-client-http";
 import { TypescriptExecutor } from "@publicdomainrelay/policy-engine-executor-typescript";
 import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay/policy-engine-abc";
 import { parseAtUri, type ATProto } from "@publicdomainrelay/atproto-helpers";
@@ -101,6 +102,7 @@ export interface MarketBidderConfig {
   policyArgs?: PolicyArgs;
   /** How this bidder is willing to execute an RFP's attached policy. */
   policyExec?: PolicyExecOptions;
+  policyEngineUrl?: string;
   /**
    * ATProto event streams client for firehose-based record discovery.
    * When set, the bidder self-discovers RFP/ACCEPT/EVENT records via firehose
@@ -454,8 +456,13 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
           : undefined,
       kinds: () => [POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID],
     };
+    const attachedRegistry = config.policyEngineUrl
+      ? createRemoteEngineRegistry({ baseUrl: config.policyEngineUrl })
+      : undefined;
+    if (config.policyEngineUrl) logger.info("bidder_policy_engine_remote", { url: config.policyEngineUrl });
     const evaluator: PolicyEvaluator = createPolicyEvaluator({
       registry: engineRegistry,
+      ...(attachedRegistry ? { attachedRegistry } : {}),
       resolve: (ref) => recordResolver.resolve(ref),
       resolveOperatorDid,
       getVouchedDids,

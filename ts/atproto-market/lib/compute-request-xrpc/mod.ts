@@ -45,6 +45,7 @@ import type { PolicyArgs, PolicyRecord } from "@publicdomainrelay/policy-common"
 import { WORKFLOWS } from "@publicdomainrelay/policies-gha-lite";
 import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript";
 import { GhaLiteExecutor } from "@publicdomainrelay/policy-engine-executor-gha-lite";
+import { createRemoteEngineRegistry } from "@publicdomainrelay/policy-engine-client-http";
 import { TypescriptExecutor } from "@publicdomainrelay/policy-engine-executor-typescript";
 import {
   POLICY_GHA_LITE_NSID,
@@ -1261,7 +1262,11 @@ runcmd:
     const policyRegistry = createPolicyRegistry();
     const ghaLiteExecutor = new GhaLiteExecutor({ sandbox: { netOnly: true, fsApi: false } });
     const typescriptExecutor = new TypescriptExecutor();
+    const attachedRegistry = opts.policyEngineUrl
+      ? createRemoteEngineRegistry({ baseUrl: opts.policyEngineUrl })
+      : undefined;
     const evaluator = createPolicyEvaluator({
+      ...(attachedRegistry ? { attachedRegistry } : {}),
       registry: {
         get: ($t: string) =>
           $t === POLICY_GHA_LITE_NSID

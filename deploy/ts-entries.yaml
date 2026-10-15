@@ -26,3 +26,6 @@ entries:
     unstable: [kv]
   - name: did-key-associator-hono-backend
     path: ts/did-key-associator/hono-backend/mod.ts
+  - name: hono-policy-engine
+    path: ts/policy-engine/hono-policy-engine/mod.ts
+    unstable: [worker-options]

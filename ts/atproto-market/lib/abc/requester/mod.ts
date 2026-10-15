@@ -112,6 +112,7 @@ export interface ContractFlowOptions {
   policy?: PolicySpec;
   /** DID of a remote policy engine. Set to mint a policies.service record. */
   policyEngine?: string;
+  policyEngineUrl?: string;
   /** Refuse to evaluate any non-service policy record locally. */
   onlyRemotePolicyExec?: boolean;
   /** Permit policies.denoWorker records to run caller-supplied bundles. */

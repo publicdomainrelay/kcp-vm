@@ -44,7 +44,11 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 /** Violation policyId for every denial from this executor. */
 const POLICY_ID = "gha-lite";
 
+export type GhaLiteWorkflowRunner = (request: PolicyEngineRequest) => Promise<PolicyEngineStatus>;
+
 export interface GhaLiteExecutorOptions {
+  /** Run the workflow somewhere else (the policy engine pod) instead of in this process. */
+  workflowRunner?: GhaLiteWorkflowRunner;
   /** Override the sandbox (default: resolved from POLICY_ENGINE_NET_ONLY / POLICY_ENGINE_FS_API). */
   sandbox?: SandboxConfig;
   /** Override the deno binary used for subprocess actions. */
@@ -60,11 +64,14 @@ export class GhaLiteExecutor implements PolicyEngineExecutor {
   private readonly timeoutMs: number;
   private readonly sandbox?: SandboxConfig;
   private readonly denoPath?: string;
+  private readonly workflowRunner?: GhaLiteWorkflowRunner;
 
   constructor(opts: GhaLiteExecutorOptions = {}) {
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.sandbox = opts.sandbox;
     this.denoPath = opts.denoPath;
+    this.workflowRunner = opts.workflowRunner;
+    if (this.workflowRunner) return;
     // Default the bundled-actions dir so a policy workflow's `uses:
     // tangy/policy-*` steps resolve without the caller exporting
     // BUNDLED_ACTIONS_DIR (the atproto-market bidder/requester tests run the
@@ -127,17 +134,18 @@ export class GhaLiteExecutor implements PolicyEngineExecutor {
 
   /** Run a workflow request through the gha-lite engine and map status → verdict. */
   async #run(request: PolicyEngineRequest): Promise<PolicyResult> {
-    if (this.sandbox?.netOnly) {
+    if (this.workflowRunner || this.sandbox?.netOnly) {
       const refused = execStepsOf(request.workflow);
       if (refused) return deny(refused);
     }
-    const executor = new WorkflowExecutor({
-      ...(this.sandbox !== undefined ? { sandbox: this.sandbox } : {}),
-      ...(this.denoPath !== undefined ? { denoPath: this.denoPath } : {}),
-    });
+    const run = this.workflowRunner ?? ((req: PolicyEngineRequest) =>
+      new WorkflowExecutor({
+        ...(this.sandbox !== undefined ? { sandbox: this.sandbox } : {}),
+        ...(this.denoPath !== undefined ? { denoPath: this.denoPath } : {}),
+      }).executeWorkflow(req));
 
     try {
-      const status = await withTimeout(executor.executeWorkflow(request), this.timeoutMs);
+      const status = await withTimeout(run(request), this.timeoutMs);
       return statusToResult(status);
     } catch (err) {
       return deny(errorMessage(err));

@@ -1,4 +1,4 @@
-import { ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION, ONLY_REMOTE_POLICY_EXEC_CLI_OPTION } from "@publicdomainrelay/policy-engine-cli-options";
+import { ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION, ONLY_REMOTE_POLICY_EXEC_CLI_OPTION, POLICY_ENGINE_URL_CLI_OPTION } from "@publicdomainrelay/policy-engine-cli-options";
 
 export default {
   name: "request-vm-ssh",
@@ -251,5 +251,6 @@ export default {
     },
     "only-remote-policy-exec": ONLY_REMOTE_POLICY_EXEC_CLI_OPTION,
     "allow-untrusted-policy-exec": ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION,
+    "policy-engine-url": POLICY_ENGINE_URL_CLI_OPTION,
   },
 };

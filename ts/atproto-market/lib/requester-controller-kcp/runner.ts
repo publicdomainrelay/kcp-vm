@@ -57,6 +57,7 @@ export interface RunnerEnvironment {
   defaultVmReadyTimeoutSec: number;
   skipRbac: boolean;
   policyEngine?: string;
+  policyEngineUrl?: string;
   onlyRemotePolicyExec?: boolean;
   allowUntrustedPolicyExec?: boolean;
   acceptCopies?: number;
@@ -468,6 +469,7 @@ export function startContractRunner(
         capabilities,
         policy,
         policyEngine: env.policyEngine,
+        policyEngineUrl: env.policyEngineUrl,
         onlyRemotePolicyExec: env.onlyRemotePolicyExec,
         allowUntrustedPolicyExec: env.allowUntrustedPolicyExec,
         offeringWatcherDids: env.offeringWatcherDids,

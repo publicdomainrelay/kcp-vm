@@ -33,6 +33,7 @@ export type { PolicyIdentity, ScopeCache, ScopeVerdict } from "@publicdomainrela
 export interface PolicyEvaluatorOptions {
   /** $type → executor dispatch (gha-lite, typescript). */
   registry: EngineRegistry;
+  attachedRegistry?: EngineRegistry;
   /** Resolve a strongRef to a record body (policy records + workerManifests). */
   resolve: (ref: StrongRef) => Promise<Record<string, unknown>>;
   /** Trust resolvers handed to in-process scope lanes / escalated evaluates. */
@@ -93,6 +94,7 @@ export interface BuildPolicyRecordOpts {
 
 export function createPolicyEvaluator(opts: PolicyEvaluatorOptions): PolicyEvaluator {
   const { registry, scopeCache, policies, log } = opts;
+  const attachedRegistry = opts.attachedRegistry ?? registry;
   const resolveOperatorDid = opts.resolveOperatorDid ?? (async () => null);
   const getVouchedDids = opts.getVouchedDids ?? (async () => new Set<string>());
 
@@ -114,7 +116,7 @@ export function createPolicyEvaluator(opts: PolicyEvaluatorOptions): PolicyEvalu
         return deny(`failed to resolve policy ref ${ref.uri}: ${err}`, ref.uri);
       }
       const $type = String(value.$type ?? ref.uri.split("/")[3] ?? "");
-      const executor = registry.get($type);
+      const executor = attachedRegistry.get($type);
       if (!executor) return deny(`unknown policy record type: ${$type}`, ref.uri);
 
       const policyRecord: PolicyRecord = { uri: ref.uri, cid: ref.cid, value };

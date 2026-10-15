@@ -15,6 +15,19 @@ import { Trace } from "./logger.ts";
 
 /** Source of the worker that evaluates expressions in isolation. */
 const WORKER_SOURCE = `
+const denyEnv = (what) => () => {
+  throw new Error("Requires env access (" + what + "), denied by the policy sandbox");
+};
+Object.defineProperty(Deno, "env", {
+  configurable: true,
+  value: {
+    get: denyEnv("get"),
+    has: denyEnv("has"),
+    set: denyEnv("set"),
+    delete: denyEnv("delete"),
+    toObject: denyEnv("toObject"),
+  },
+});
 self.onmessage = (e) => {
   const { id, code } = e.data;
   try {

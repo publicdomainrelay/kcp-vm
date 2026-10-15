@@ -10,6 +10,8 @@
 // Workflow executor.
 export { WorkflowExecutor } from "./src/workflow.ts";
 
+export { createApp } from "./src/server.ts";
+
 // Request / status models.
 export {
   ExitStatusFailure,
