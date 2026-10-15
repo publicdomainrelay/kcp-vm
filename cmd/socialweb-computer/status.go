@@ -32,6 +32,9 @@ type rootStatusView struct {
 	Message string                     `json:"message,omitempty"`
 	Market  *v1alpha1.MarketLoopStatus `json:"market,omitempty"`
 	Store   *v1alpha1.StoreUsage       `json:"store,omitempty"`
+	GC      *v1alpha1.GCStatus         `json:"gc,omitempty"`
+	TTL     *v1alpha1.TTLStatus        `json:"ttl,omitempty"`
+	Quotas  []v1alpha1.QuotaUsage      `json:"quotas,omitempty"`
 }
 
 type contractStatusView struct {
@@ -155,7 +158,7 @@ func readAppStatus(ctx context.Context, ak appKcp) appStatusView {
 				return v
 			}
 			v.Roots = append(v.Roots, rootStatusView{Kind: r.kind, Name: o.Name, Phase: o.Status.Phase, Message: o.Status.Message,
-				Market: o.Status.Market, Store: o.Status.Store})
+				Market: o.Status.Market, Store: o.Status.Store, GC: o.Status.GC, TTL: o.Status.TTL, Quotas: o.Status.Quotas})
 		}
 	}
 	list, err := dc.Resource(appctl.ComputeContractGVR).Namespace("").List(ctx, metav1.ListOptions{})

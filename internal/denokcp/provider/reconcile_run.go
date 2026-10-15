@@ -176,6 +176,7 @@ func newRunForJob(job *v1alpha1.DenoJob, name string) *v1alpha1.DenoRun {
 			Namespace:       job.Namespace,
 			Finalizers:      []string{v1alpha1.FinalizerDenoRun},
 			Labels:          map[string]string{JobRunLabel: job.Name},
+			Annotations:     map[string]string{v1alpha1.AnnotationTTLAfterFinished: v1alpha1.DefaultFinishedTTL},
 			OwnerReferences: []metav1.OwnerReference{ownerRef("DenoJob", job.Name, job.UID)},
 		},
 		Spec: spec,

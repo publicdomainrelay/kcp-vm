@@ -141,6 +141,7 @@ func newJobForTrigger(tr *v1alpha1.RunTrigger, name string) *v1alpha1.DenoJob {
 			Name:            name,
 			Namespace:       tr.Namespace,
 			Labels:          map[string]string{"deno.computer/trigger": tr.Name},
+			Annotations:     map[string]string{v1alpha1.AnnotationTTLAfterFinished: v1alpha1.DefaultFinishedTTL},
 			OwnerReferences: []metav1.OwnerReference{ownerRef("RunTrigger", tr.Name, tr.UID)},
 		},
 		Spec: spec,

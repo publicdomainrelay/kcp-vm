@@ -75,6 +75,7 @@ type Config struct {
 	OnComponents func(owner string, listeners []v1alpha1.ApplicationListener)
 	SignInGuard  SignInGuard
 	StoreUsage   func() *v1alpha1.StoreUsage
+	TTLReport    func() *v1alpha1.TTLStatus
 	Log          *slog.Logger
 }
 
@@ -112,6 +113,13 @@ type Controller struct {
 	placed   map[string]map[bool][]placedRef
 	network  *networks
 	stateDir atomic.Pointer[v1alpha1.StateDirUsage]
+	gc       atomic.Pointer[v1alpha1.GCStatus]
+	gcAt     time.Time
+	ttl      atomic.Pointer[v1alpha1.TTLStatus]
+	quotas   atomic.Pointer[[]v1alpha1.QuotaUsage]
+
+	quotaApplied map[string]string
+	quotaFailed  map[string]string
 }
 
 func clusterConfig(base *rest.Config, ws string) *rest.Config {
@@ -156,7 +164,7 @@ func New(c Config) (*Controller, error) {
 		return nil, err
 	}
 	ctl := &Controller{c: c, restCfg: restCfg, applied: map[string]int64{}, rotated: map[string]int64{}, written: map[string]string{},
-		placed: map[string]map[bool][]placedRef{}}
+		placed: map[string]map[bool][]placedRef{}, quotaApplied: map[string]string{}, quotaFailed: map[string]string{}}
 	ctl.network = newNetworks(ctl)
 	return ctl, nil
 }
@@ -182,6 +190,7 @@ func Run(ctx context.Context, c Config) error {
 	}
 	log.Info("the application controller reconciles this instance's root objects", "workspace", c.workspace())
 	go ctl.sampleStateDir(ctx)
+	go ctl.sampleGC(ctx)
 	for {
 		ctl.Pass(ctx)
 		if !sleep(ctx, c.interval()) {
@@ -241,6 +250,8 @@ func (ctl *Controller) Pass(ctx context.Context) {
 			if err := k.reconcile(ctx, u); err != nil && ctx.Err() == nil {
 				log.Warn("a reconcile pass failed; the next pass retries", "kind", u.GetKind(), "name", u.GetName(), "err", err.Error())
 			}
+			ctl.adoptChildren(ctx, u)
+			ctl.ensureQuotas(ctx, u)
 		}
 	}
 }
@@ -339,6 +350,15 @@ func (ctl *Controller) writeStatus(ctx context.Context, gvr schema.GroupVersionR
 	extra := false
 	if u := ctl.stateDir.Load(); u != nil {
 		m["stateDir"], extra = u, true
+	}
+	if u := ctl.gc.Load(); u != nil {
+		m["gc"], extra = u, true
+	}
+	if u := ctl.ttl.Load(); u != nil {
+		m["ttl"], extra = u, true
+	}
+	if u := ctl.quotas.Load(); u != nil && len(*u) > 0 {
+		m["quotas"], extra = *u, true
 	}
 	if ctl.c.StoreUsage != nil {
 		if u := ctl.c.StoreUsage(); u != nil {

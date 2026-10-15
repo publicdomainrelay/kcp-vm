@@ -529,14 +529,14 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 		}
 		root = &v1alpha1.MarketBidder{ObjectMeta: meta, Spec: v1alpha1.MarketBidderSpec{Profile: app.Profile, Network: &value,
 			Identity: v1alpha1.ApplicationIdentity{Mode: v1alpha1.MarketIdentityModePdsAccount, Handle: handle, PdsUrl: pdsURL},
-			Policy:   app.Policy, Firecracker: fc, Kcp: kcp, Options: app.Options}}
+			Policy:   app.Policy, Firecracker: fc, Kcp: kcp, Options: app.Options, Quota: app.Quota}}
 	case v1alpha1.ApplicationKindMarketRequester:
 		root = &v1alpha1.MarketRequester{ObjectMeta: meta, Spec: v1alpha1.MarketRequesterSpec{Profile: app.Profile, Network: &value,
 			Identity:   v1alpha1.ApplicationIdentity{Mode: v1alpha1.MarketIdentityModeLocalRepo, Association: v1alpha1.AssociationSkip},
-			BidderDids: bidderDids, Options: app.Options}}
+			BidderDids: bidderDids, Options: app.Options, Quota: app.Quota}}
 	case v1alpha1.ApplicationKindSshGateway:
 		root = &v1alpha1.SshGateway{ObjectMeta: meta, Spec: v1alpha1.SshGatewaySpec{Profile: app.Profile, Network: &value,
-			BidderDids: bidderDids, Options: app.Options, OwnerSessionsFile: app.OwnerSessionsFile}}
+			BidderDids: bidderDids, Options: app.Options, Quota: app.Quota, OwnerSessionsFile: app.OwnerSessionsFile}}
 	}
 	if root != nil {
 		if err := applyRoot(ctx, rec, app.Kind, root); err != nil {

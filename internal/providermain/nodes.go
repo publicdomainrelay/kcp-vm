@@ -1225,7 +1225,7 @@ func claimClusterFor(registry clusterprovider.Clusters, cluster string) nodemark
 					"requester the node is rented as, and it is not derivable from the cluster name: "+
 					"a claim written without it names no session the door holds", cluster, ref.Home)
 		}
-		return nodemarket.Cluster{Workspace: ref.Home, OwnerDid: cl.Spec.Account}, nil
+		return nodemarket.Cluster{Workspace: ref.Home, OwnerDid: cl.Spec.Account, Name: cl.Name, UID: cl.UID}, nil
 	}
 }
 

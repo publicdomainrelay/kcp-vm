@@ -12,6 +12,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
@@ -31,6 +32,10 @@ type Cluster struct {
 	Workspace string
 
 	OwnerDid string
+
+	Name string
+
+	UID types.UID
 }
 
 type ClusterSource func(ctx context.Context) (Cluster, error)
@@ -222,7 +227,7 @@ func (h *Host) claimLocked(target Cluster, passwordFile string) v1alpha1.NodeCla
 			APIVersion: v1alpha1.GroupVersion.String(),
 			Kind:       "NodeClaim",
 		},
-		ObjectMeta: metav1.ObjectMeta{Name: h.opts.NodeName},
+		ObjectMeta: metav1.ObjectMeta{Name: h.opts.NodeName, OwnerReferences: clusterOwner(target)},
 		Spec: v1alpha1.NodeClaimSpec{
 			Cluster:          h.opts.Cluster,
 			NodeName:         h.opts.NodeName,
@@ -235,6 +240,13 @@ func (h *Host) claimLocked(target Cluster, passwordFile string) v1alpha1.NodeCla
 			DenyBidderDids:   h.denied(),
 		},
 	}
+}
+
+func clusterOwner(target Cluster) []metav1.OwnerReference {
+	if target.UID == "" || target.Name == "" {
+		return nil
+	}
+	return []metav1.OwnerReference{{APIVersion: v1alpha1.GroupVersion.String(), Kind: "Cluster", Name: target.Name, UID: target.UID}}
 }
 
 func (h *Host) denied() []string {

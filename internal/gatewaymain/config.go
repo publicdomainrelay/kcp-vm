@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ const (
 	envPublicMintURL   = "SOCIALWEB_GATEWAY_PUBLIC_MINT_URL"
 
 	envNodeClaimAgent = "SOCIALWEB_GATEWAY_NODECLAIM_AGENT"
+	envNodeClaimQuota = "SOCIALWEB_GATEWAY_NODECLAIM_QUOTA"
 
 	envHostProcessWorkspace = "SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE"
 )
@@ -89,6 +91,8 @@ type Config struct {
 	PublicMintURL string
 
 	NodeClaimAgent *kcpclient.ServiceAccountRef
+
+	NodeClaimQuota int64
 
 	HostProcessWorkspace string
 
@@ -165,6 +169,11 @@ func load(get func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("%s: %w", envNodeClaimAgent, err)
 	}
 	cfg.HostProcessWorkspace = strings.TrimSpace(get(envHostProcessWorkspace))
+	if v := strings.TrimSpace(get(envNodeClaimQuota)); v != "" {
+		if cfg.NodeClaimQuota, err = strconv.ParseInt(v, 10, 64); err != nil {
+			return Config{}, fmt.Errorf("%s: %w", envNodeClaimQuota, err)
+		}
+	}
 	if cfg.MintTTL, err = optionalDuration(get, envMintTTL); err != nil {
 		return Config{}, err
 	}

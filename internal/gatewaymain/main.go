@@ -121,6 +121,7 @@ func buildDeps(cfg Config) (Deps, error) {
 		RestConfig:     kcpRestConfig,
 		DeviceKeys:     certs,
 		NodeClaimAgent: cfg.NodeClaimAgent,
+		NodeClaimQuota: cfg.NodeClaimQuota,
 
 		HostProcessWorkspace: cfg.HostProcessWorkspace,
 	})

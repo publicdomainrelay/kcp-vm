@@ -93,6 +93,7 @@ type Controller struct {
 	slice    bool
 	imagesAt time.Time
 	bidsAt   time.Time
+	linksAt  time.Time
 }
 
 func (c Config) log() *slog.Logger {
@@ -863,7 +864,8 @@ func (ct *Controller) Pass(ctx context.Context) error {
 	}
 	ct.collect(ctx, have)
 	ct.collectImages(ctx, list.Items)
-	ct.collectBids(ctx, list.Items)
+	ct.linkBids(ctx, list.Items)
+	ct.finishBids(ctx, list.Items)
 	return nil
 }
 

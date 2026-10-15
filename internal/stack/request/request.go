@@ -36,6 +36,7 @@ const (
 	ModeStandalone   = "standalone"
 	RootName         = "app"
 	FieldManager     = "socialweb-computer-run-request"
+	ContractTTL      = "8d"
 	SecretsPath      = "contracts/" + appctl.RequesterContract + "/secrets"
 	Poll             = time.Second
 	irohScheme       = "iroh://"
@@ -300,7 +301,8 @@ func until(ctx context.Context, timeout time.Duration, what string, try func() (
 }
 
 func (k *Kcp) CreateContract(ctx context.Context, spec v1alpha1.ComputeContractSpec, timeout time.Duration) error {
-	body, err := applyBody(&v1alpha1.ComputeContract{ObjectMeta: metav1.ObjectMeta{Name: appctl.RequesterContract}, Spec: spec}, "ComputeContract")
+	body, err := applyBody(&v1alpha1.ComputeContract{ObjectMeta: metav1.ObjectMeta{Name: appctl.RequesterContract,
+		Annotations: map[string]string{v1alpha1.AnnotationTTLAfterFinished: ContractTTL}}, Spec: spec}, "ComputeContract")
 	if err != nil {
 		return err
 	}

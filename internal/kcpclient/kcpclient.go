@@ -66,6 +66,8 @@ type Options struct {
 
 	HostProcessWorkspace string
 
+	NodeClaimQuota int64
+
 	RestConfig *rest.Config
 
 	Transport http.RoundTripper
@@ -81,6 +83,8 @@ type Client struct {
 	agent      *agent
 
 	hostProcessWorkspace string
+
+	nodeClaimQuota int64
 }
 
 var ErrNoDeviceKey = errors.New(
@@ -135,6 +139,7 @@ func New(opts Options) (*Client, error) {
 		deviceKeys: opts.DeviceKeys,
 
 		hostProcessWorkspace: opts.HostProcessWorkspace,
+		nodeClaimQuota:       opts.NodeClaimQuota,
 	}
 	if c.hostProcessWorkspace == "" {
 		c.hostProcessWorkspace = RootWorkspace
@@ -229,7 +234,41 @@ func (c *Client) ensure(ctx context.Context, permit revocation.Permit, name stri
 	if _, err := c.createCluster(ctx, home, name, did); err != nil {
 		return fmt.Errorf("kcpclient: cluster %s: %w", home, err)
 	}
+	if err := c.ensureNodeClaimQuota(ctx, home); err != nil {
+		return err
+	}
 	return c.grantAgentHome(ctx, home)
+}
+
+const (
+	DefaultNodeClaimQuota = 64
+	NodeClaimQuotaName    = "socialweb-bounded"
+	nodeClaimQuotaKey     = "count/nodeclaims.socialweb.computer"
+)
+
+func (c *Client) ensureNodeClaimQuota(ctx context.Context, home string) error {
+	limit := c.nodeClaimQuota
+	if limit < 0 {
+		return nil
+	}
+	if limit == 0 {
+		limit = DefaultNodeClaimQuota
+	}
+	r, err := c.coreResource(home)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "ResourceQuota",
+		"metadata": map[string]any{"name": NodeClaimQuotaName, "namespace": "default"},
+		"spec":     map[string]any{"hard": map[string]string{nodeClaimQuotaKey: fmt.Sprint(limit)}}})
+	if err != nil {
+		return err
+	}
+	err = r.Post().Namespace("default").Resource("resourcequotas").Body(body).Do(ctx).Error()
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("kcpclient: the NodeClaim quota of %s: %w", home, err)
+	}
+	return nil
 }
 
 var ErrNoMountURL = errors.New(
@@ -873,6 +912,15 @@ func WriteNodeClaimTo(ctx context.Context, r rest.Interface, claim v1alpha1.Node
 	case err != nil:
 		return fmt.Errorf("kcpclient: read nodeclaim %s: %w", claim.Name, err)
 	}
+	if len(existing.OwnerReferences) == 0 && len(claim.OwnerReferences) > 0 {
+		owner, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": string(existing.UID), "ownerReferences": claim.OwnerReferences}})
+		if err != nil {
+			return fmt.Errorf("kcpclient: nodeclaim %s: marshal: %w", claim.Name, err)
+		}
+		if err := r.Patch(types.MergePatchType).Resource("nodeclaims").Name(claim.Name).Body(owner).Do(ctx).Error(); err != nil && !apierrors.IsConflict(err) {
+			return fmt.Errorf("kcpclient: hang nodeclaim %s from its Cluster: %w", claim.Name, err)
+		}
+	}
 	if sameNodeClaimSpec(existing.Spec, claim.Spec) {
 		return nil
 	}
@@ -1012,7 +1060,7 @@ func createNodeClaim(ctx context.Context, r rest.Interface, claim v1alpha1.NodeC
 			APIVersion: v1alpha1.GroupVersion.String(),
 			Kind:       "NodeClaim",
 		},
-		ObjectMeta: metav1.ObjectMeta{Name: claim.Name, Annotations: claim.Annotations},
+		ObjectMeta: metav1.ObjectMeta{Name: claim.Name, Annotations: claim.Annotations, OwnerReferences: claim.OwnerReferences},
 		Spec:       claim.Spec,
 	}
 	body, err := json.Marshal(created)
@@ -1020,6 +1068,9 @@ func createNodeClaim(ctx context.Context, r rest.Interface, claim v1alpha1.NodeC
 		return fmt.Errorf("kcpclient: nodeclaim %s: marshal: %w", claim.Name, err)
 	}
 	if err := r.Post().Resource("nodeclaims").Body(body).Do(ctx).Error(); err != nil {
+		if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
+			return fmt.Errorf("kcpclient: AtCapacity: the home workspace's NodeClaim quota is used up, so nodeclaim %s is not created and the next pass asks again: %w", claim.Name, err)
+		}
 		return fmt.Errorf("kcpclient: create nodeclaim %s: %w", claim.Name, err)
 	}
 	return nil

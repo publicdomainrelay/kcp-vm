@@ -107,3 +107,9 @@ const (
 
 	ConditionRestarted = "Restarted"
 )
+
+const (
+	AnnotationTTLAfterFinished = "socialweb.computer/ttl-after-finished"
+
+	DefaultFinishedTTL = "1h"
+)

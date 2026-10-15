@@ -23,9 +23,12 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/storemaint"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/ttlctl"
 )
 
 const CheckInterval = 5 * time.Second
+
+var TTLSkipWorkspaces = []string{"socialweb-provider", "deno-provider"}
 
 type Config struct {
 	Layout       devinstance.Layout
@@ -140,6 +143,12 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		ac := AppConfig(bcfg, rec, m, log)
 		ac.Listeners, ac.WebApp, ac.OnComponents = cfg.Listeners, cfg.WebApp, cfg.OnComponents
 		ac.SignInGuard = cfg.SignInGuard
+		if tc, err := ttlctl.New(ttlctl.Config{Kubeconfig: rec.AdminKubeconfig, Root: ac.Workspace, Skip: TTLSkipWorkspaces, Log: log}); err != nil {
+			log.Warn("the TTL controller does not start", "err", err.Error())
+		} else {
+			ac.TTLReport = tc.Report
+			go ttlctl.Supervise(ctx, tc)
+		}
 		if sc, err := StoreMaintConfig(bcfg, rec, log); err != nil {
 			log.Warn("the store maintenance does not start", "err", err.Error())
 		} else {

@@ -183,6 +183,7 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir, guestStateDir string
 	if err != nil {
 		return manifests.MarketBidder{}, err
 	}
+	extra = append(extra, BidderQuotaArgs(spec.Quota)...)
 	extra = append(extra, opts...)
 	if v.ExtraArgs, err = fragment(extra); err != nil {
 		return manifests.MarketBidder{}, err
