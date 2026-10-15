@@ -262,6 +262,11 @@ sets:
             for: Ready
         files:
           - path: market-network/10-rbac.yaml
+      - name: policy-engine@market-network
+        workspace: root:app
+        files:
+          - path: apps/market-bidder/policy-engine.values.yaml
+            template: denopods/service.yaml
       - name: bidder@market-network
         workspace: root:app
         files:
@@ -272,6 +277,11 @@ sets:
         files:
           - path: apps/market-bidder/guest-kcp.values.yaml
             template: denopods/service.yaml
+      - name: policy-engine@prod-qr
+        workspace: root:app
+        files:
+          - path: apps/market-bidder/policy-engine.values.yaml
+            template: denopods/service.yaml
       - name: bidder@prod-qr
         workspace: root:app
         files:
@@ -281,6 +291,11 @@ sets:
         workspace: root:app
         files:
           - path: apps/market-bidder/guest-kcp.values.yaml
+            template: denopods/service.yaml
+      - name: policy-engine@dev-local
+        workspace: root:app
+        files:
+          - path: apps/market-bidder/policy-engine.values.yaml
             template: denopods/service.yaml
       - name: bidder@dev-local
         workspace: root:app
@@ -402,10 +417,20 @@ sets:
             for: Ready
         files:
           - path: market-network/10-rbac.yaml
+      - name: policy-engine@market-network
+        workspace: root:app
+        files:
+          - path: apps/market-requester/policy-engine.values.yaml
+            template: denopods/service.yaml
       - name: requester@market-network
         workspace: root:app
         files:
           - path: apps/market-requester/market-network.values.yaml
+            template: denopods/service.yaml
+      - name: policy-engine@default
+        workspace: root:app
+        files:
+          - path: apps/market-requester/policy-engine.values.yaml
             template: denopods/service.yaml
       - name: requester@default
         workspace: root:app

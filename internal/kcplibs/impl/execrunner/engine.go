@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/abc/runner"
@@ -64,7 +65,7 @@ func NewEngine(opts EngineOptions) (*Engine, error) {
 
 func (e *Engine) Start(_ context.Context, req runner.EngineRequest) (string, error) {
 	bind := fmt.Sprintf("127.0.0.1:%d", req.Port)
-	args := []string{"run", "--allow-all", "--unstable-worker-options", e.opts.ServerFile, "api", "--bind", bind}
+	args := engineArgs(e.opts.ServerFile, bind, req.Env["BUNDLED_ACTIONS_DIR"])
 	env := env(req.Env, e.opts.ExtraEnv)
 	return e.sup.start(processSpec{
 		binary:    e.opts.DenoBin,
@@ -74,6 +75,17 @@ func (e *Engine) Start(_ context.Context, req runner.EngineRequest) (string, err
 		envMap:    req.Env,
 		envForDir: e.dirEnv,
 	})
+}
+
+var engineEnvNames = []string{"BUNDLED_ACTIONS_DIR", "POLICY_ENGINE_LOG_LEVEL", "POLICY_ENGINE_NET_ONLY", "POLICY_ENGINE_FS_API"}
+
+func engineArgs(serverFile, bind, bundledActionsDir string) []string {
+	args := []string{"run", "--unstable-worker-options", "--allow-net"}
+	if bundledActionsDir != "" {
+		args = append(args, "--allow-read="+bundledActionsDir)
+	}
+	args = append(args, "--allow-env="+strings.Join(engineEnvNames, ","), "--ignore-env")
+	return append(args, serverFile, "api", "--bind", bind, "--net-only")
 }
 
 func (e *Engine) dirEnv(dir string, caller []string) []string {
