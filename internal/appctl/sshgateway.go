@@ -119,7 +119,7 @@ func SshGatewayValues(spec v1alpha1.SshGatewaySpec, stateDir string, l devinstan
 }
 
 func SshGatewayVaultExtra(spec v1alpha1.SshGatewaySpec) (string, error) {
-	plugin, err := AtprotoPlugin(spec.Options, spec.Network)
+	plugin, err := AtprotoPlugin(spec.Options, spec.Network, SshGatewayAtprotoScope())
 	if err != nil {
 		return "", err
 	}

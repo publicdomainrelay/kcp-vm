@@ -16,4 +16,4 @@ projected:
   read: ["{{.StateDir}}"{{.ExtraRead}}{{.TestRead}}]
 probe:
   host: socialweb-computer-k8s.default.app.svc.kcp.local
-  path: /oauth-client-metadata.json
+  path: /healthz

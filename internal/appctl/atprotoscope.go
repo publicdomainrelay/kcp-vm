@@ -3,6 +3,7 @@ package appctl
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
@@ -22,6 +23,41 @@ const (
 	atprotoClientName         = "socialweb-computer"
 	publicOriginOption        = "public-origin"
 )
+
+var requesterScope = []string{
+	"atproto",
+	"repo:com.publicdomainrelay.temp.compute.vm?action=create",
+	"repo:com.publicdomainrelay.temp.market.rfp?action=create",
+	"repo:com.publicdomainrelay.temp.market.accept?action=create",
+	"repo:com.publicdomainrelay.temp.market.event?action=create",
+	"repo:com.publicdomainrelay.temp.compute.events.vm.delete?action=create",
+	"repo:com.publicdomainrelay.temp.compute.events.vm.onNetwork?action=create",
+	"repo:com.fedproxy.rbac?action=create",
+	"repo:computer.socialweb.temp.policy.ghalite?action=create",
+	"repo:computer.socialweb.temp.policy.typescript?action=create",
+	"repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create&action=delete",
+	"rpc:com.publicdomainrelay.temp.market.submitRfp?aud=*",
+	"rpc:com.publicdomainrelay.temp.market.submitAccept?aud=*",
+	"rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
+	"rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
+}
+
+var clusterScope = []string{
+	"rpc:com.publicdomainrelay.temp.cluster.createCluster?aud=*",
+	"rpc:com.publicdomainrelay.temp.cluster.listClusters?aud=*",
+	"rpc:com.publicdomainrelay.temp.cluster.getKubeconfig?aud=*",
+	"rpc:com.publicdomainrelay.temp.cluster.controlPlaneUp?aud=*",
+	"rpc:com.publicdomainrelay.temp.cluster.controlPlaneDown?aud=*",
+	"rpc:com.publicdomainrelay.temp.cluster.deleteCluster?aud=*",
+}
+
+func GatewayAtprotoScope() string {
+	return strings.Join(append(slices.Clone(requesterScope), clusterScope...), " ")
+}
+
+func SshGatewayAtprotoScope() string {
+	return strings.Join(requesterScope, " ")
+}
 
 func optionValue(opts []v1alpha1.ApplicationOption, name string) string {
 	for _, o := range opts {
@@ -77,7 +113,7 @@ func atprotoTrust(n *v1alpha1.MarketNetworkValue) (plc string, hosts []string, c
 	return plc, hosts, caPEM, nil
 }
 
-func AtprotoPlugin(opts []v1alpha1.ApplicationOption, n *v1alpha1.MarketNetworkValue) (v1alpha1.OpenBaoPlugin, error) {
+func AtprotoPlugin(opts []v1alpha1.ApplicationOption, n *v1alpha1.MarketNetworkValue, scope string) (v1alpha1.OpenBaoPlugin, error) {
 	plc, hosts, caPEM, err := atprotoTrust(n)
 	if err != nil {
 		return v1alpha1.OpenBaoPlugin{}, err
@@ -86,7 +122,7 @@ func AtprotoPlugin(opts []v1alpha1.ApplicationOption, n *v1alpha1.MarketNetworkV
 		Policies: []string{AtprotoSelfPolicy}, TokenTTL: AtprotoUserTokenTTL, TokenMaxTTL: AtprotoUserTokenMaxTTL}}}
 	if origin := optionValue(opts, publicOriginOption); origin != "" {
 		a.Config = v1alpha1.OpenBaoAtprotoConfig{ClientID: origin + AtprotoClientMetadataPath, RedirectURIs: []string{origin + AtprotoCallbackPath},
-			ClientName: atprotoClientName, PLCDirectoryURL: plc, TrustedHosts: hosts, TrustedCAPEM: caPEM}
+			ClientName: atprotoClientName, Scope: scope, PLCDirectoryURL: plc, TrustedHosts: hosts, TrustedCAPEM: caPEM}
 	}
 	return v1alpha1.OpenBaoPlugin{Name: AtprotoPluginName, Type: "auth", Asset: v1alpha1.HostProcessAsset{Name: openbaoctl.AtprotoPluginAsset},
 		MountPath: AtprotoMountPath, Atproto: a}, nil

@@ -16,4 +16,4 @@ permissions:
   read: ["{{.StateDir}}"{{.ExtraRead}}]
 probe:
   host: ssh-gateway.default.app.svc.kcp.local
-  path: /oauth-client-metadata.json
+  path: /healthz

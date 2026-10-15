@@ -120,7 +120,6 @@ func RootVaultDeclared() *v1alpha1.OpenBaoServerDeclared {
 
 func RequesterVaultRules() []v1alpha1.OpenBaoPolicyRule {
 	return []v1alpha1.OpenBaoPolicyRule{
-		{Path: WebAppVaultMount + "/data/oauth-sessions/*", Capabilities: []string{"create", "read", "update"}},
 		{Path: WebAppVaultMount + "/data/contracts/*", Capabilities: []string{"read"}},
 	}
 }
@@ -129,7 +128,7 @@ func RootVaultSpec(g v1alpha1.GatewaySpec) (v1alpha1.OpenBaoServerSpec, error) {
 	declared := RootVaultDeclared()
 	declared.Policies = append(declared.Policies, v1alpha1.OpenBaoPolicy{Name: GatewayRequesterPolicy, Rules: RequesterVaultRules()})
 	declared.Policies = append(declared.Policies, AtprotoPolicies()...)
-	plugin, err := AtprotoPlugin(g.Options, g.Network)
+	plugin, err := AtprotoPlugin(g.Options, g.Network, GatewayAtprotoScope())
 	if err != nil {
 		return v1alpha1.OpenBaoServerSpec{}, err
 	}
@@ -397,11 +396,6 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir, requesterStateDir st
 		return manifests.Gateway{}, err
 	}
 	extra = append(extra, opts...)
-	for _, opt := range o.Spec.Options {
-		if opt.Name == "oauth-client-id" && opt.Value != "" {
-			requesterExtra = append(requesterExtra, "--oauth-session-client-id", opt.Value)
-		}
-	}
 	if w.DownloadsDir != "" {
 		if !filepath.IsAbs(w.DownloadsDir) {
 			return manifests.Gateway{}, fmt.Errorf("appctl: the %s downloads dir %q is not absolute", WebAppComponent, w.DownloadsDir)
@@ -443,10 +437,11 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir, requesterStateDir st
 			if !filepath.IsAbs(file) {
 				return manifests.Gateway{}, fmt.Errorf("appctl: spec.marketNetwork names %q, not an absolute path", file)
 			}
-			args, read = append(args, flag, file), append(read, file)
 			if flag == "--test-owner-sessions-file" {
 				requesterExtra, requesterRead = append(requesterExtra, flag, file), append(requesterRead, file)
+				continue
 			}
+			args, read = append(args, flag, file), append(read, file)
 		}
 		if len(m.NodeGuestHostAliases) > 0 {
 			requesterExtra = append(requesterExtra, "--guest-host-aliases", strings.Join(m.NodeGuestHostAliases, ","))

@@ -9,6 +9,7 @@ spec:
   clients:
     - name: ssh-gateway
       kvMount: ssh-gateway
+      policies: [atproto-session-proxy]
 {{.VaultExtra}}---
 apiVersion: v1
 kind: ServiceAccount

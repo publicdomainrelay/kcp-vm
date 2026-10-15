@@ -101,7 +101,9 @@ apps:
       - {name: cluster-ca-dir, to: profile}
       - {name: label, to: options}
       - {name: public-origin, to: options}
-      - {name: oauth-client-id, to: options}
+      - {name: session-cookie-max-age-sec, to: options}
+      - {name: atproto-role, to: profile}
+      - {name: openbao-atproto-mount, to: profile}
       - {name: plc-directory-url, to: network.plcDirectoryUrl}
       - {name: network-hosts, to: network.hosts}
       - {name: ingress-proxy-host, to: network.ingressProxyHost}
@@ -152,7 +154,7 @@ apps:
       - {name: market-identity-kcp-workspace, to: profile}
       - {name: market-identity-kcp-token-file, to: state}
       - {name: market-identity-kcp-ca-cert-file, to: profile}
-      - {name: account-session-vault-mount, to: profile}
+      - {name: account-custody-mount, to: profile}
       - {name: test-owner-sessions-file, to: profile}
       - {name: max-concurrent, to: options}
       - {name: per-account-max, to: options}
@@ -229,7 +231,9 @@ apps:
       - {name: max-connections, to: options}
       - {name: auth-timeout-sec, to: options}
       - {name: session-max-sec, to: options}
-      - {name: oauth-client-id, to: options}
+      - {name: session-cookie-max-age-sec, to: options}
+      - {name: atproto-role, to: profile}
+      - {name: openbao-atproto-mount, to: profile}
       - {name: public-origin, to: options}
       - {name: ingress-proxy-host, to: network.ingressProxyHost}
       - {name: relay-url, to: network.relayUrls}
@@ -250,7 +254,6 @@ apps:
       - {name: test-owner-sessions-file, to: spec.ownerSessionsFile}
       - {name: app-did, to: options}
       - {name: app-handle, to: options}
-      - {name: app-pds-key-path, to: state}
       - {name: app-pds-kv-path, to: state}
       - {name: app-pds-crawlers, to: options}
       - {name: cocore-api-base-url, to: options}
