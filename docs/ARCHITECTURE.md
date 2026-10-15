@@ -3646,6 +3646,42 @@ because it bounds a mechanism the rest of this document leans on.
   cluster's own OpenBao PKI, issued with a gateway-only vault client that may issue and revoke nothing
   else; a certificate with the organizational unit `socialweb.computer:no-expiry` may outlive 24 h and is
   ended only by revocation, cluster delete or CA expiry.
+- **Every process has a memory limit and a breach restarts that process alone (plan 0013
+  M3-DENOPOD-LIMITS; the installed-core reading is open until the prod deploy).** A DenoPod has
+  `spec.resources.memory` (a quantity, at least 64 Mi; schema revision v1alpha1-7). The provider hands
+  `execrunner` the byte count; the runner starts the pod's deno with `--v8-flags=--max-old-space-size`
+  at 80% of it (and `DENO_V8_FLAGS` for the service wrapper's child) and, where the host enforces limits
+  (`systemd-user`: `denoruntime.Config.EnforceMemory`), in its own cgroup `pod-<run id>` under the core
+  unit's cgroup, with `memory.max` = the limit, `memory.swap.max` = 0 and `memory.oom.group` = 1. The
+  core unit needs `Delegate=yes` and `OOMPolicy=continue`: the installed core templates and the dev
+  core spec carry both; without `OOMPolicy=continue` systemd stops the whole core when the kernel kills
+  one pod. At first use the core moves itself into a `supervisor` leaf of its unit cgroup and enables
+  the memory controller for the unit's subtree (no-internal-process rule). A pod that cannot get its
+  cgroup under an enforcing host does not start. The `dev` backend (devsup, `proc`) enforces no limit by
+  design (the same as for units), so a pod there runs with the V8 heap flag alone. The breach is
+  classified at exit and written into `status.restartReasons` (a count per reason): `OOMKilled` (the
+  cgroup's `memory.events` oom_kill, kept in the run's `done.json`) or `HeapLimitExceeded` (V8's fatal
+  out-of-memory line in the run's stderr). Every service values file, `50-verifier.yaml` and
+  `36-relay-dispatcher-tls.yaml` set `memory`; the service template requires it. Unit limits (every
+  HostProcess unit gets a `MemoryMax` and `MemorySwapMax=0`): postgres 1 GiB, kine 512 MiB, a kcp slot
+  3 GiB, the front 256 MiB, OpenBao 512 MiB, iroh-dial 128 MiB, a stand-in 1 GiB, VM units already
+  carry the VM's memory plus overhead, and a HostProcess object that sets none gets 2 GiB
+  (`hostprocess.DefaultMemoryMax`). The core itself carries none: its cgroup holds every pod, so a core
+  limit would be a sum cap that no breach could be traced to. The scope verdict cache of
+  policy-engine is an LRU of 10000 verdicts (was 1024) on top of its TTLs, and the event-stream dedup
+  maps of `atproto-event-streams-client` are capped at 10000 entries. Readings (hat-8, account
+  test-0001, 2026-10-15): a `dev up --profile quick` instance with a DenoPod `hog` (128 Mi, allocates
+  JS arrays) and a DenoPod `calm` (128 Mi): `hog` restarted 6 times in 40 s with
+  `restartReasons: {HeapLimitExceeded: 6}` (V8 stopped at 102 MB), `calm` kept its run id and
+  `restarts: 0`, the core stayed up. A real systemd-user unit started through `hostsvc` with
+  `Delegate`, `OOMPolicy=continue` and `MemoryMax` 1 GiB, running `execrunner.Pod` with
+  `EnforceMemory`: both pods got `memory.max=134217728 memory.swap.max=0 oom.group=1` in their own
+  cgroups; the pod that allocated off-heap buffers was killed alone (`reason OOMKilled, exit -1`, its
+  cgroup removed), the other pod kept its pid and the core kept its pid. The same unit with the
+  default `OOMPolicy=stop` was stopped by systemd (`oom-kill`) when the pod breached: that is why the
+  templates set `continue`. `bootstrap.ProcSpecs` for the quick and prodlike tables lists a nonzero
+  `MemoryMax` on every unit except the core. Open: a breach inside an installed bidder or gateway core
+  (the templates are rendered by `install`, which no agent runs here) is read at the prod deploy.
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,

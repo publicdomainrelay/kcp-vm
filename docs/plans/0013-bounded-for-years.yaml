@@ -151,7 +151,7 @@ items:
     files: ["internal/denokcp/api/v1alpha1/types_denopod.go", "internal/denokcp/provider", "internal/hostsvc", "deploy/apps/*/", "ts/policy-engine/lib/policy-engine-scope-cache"]
     done_when: "a DenoPod made to allocate past its limit is restarted alone (core and other pods keep their pids); every HostProcess unit shows a MemoryMax."
     risks: ["Delegated cgroups under a user manager need Delegate=yes on the core unit; 0006 M1-INSTALL writes the delegation drop-in already."]
-    status: todo
+    status: done
     evidence:
   - id: M3-VAULT-TIDY
     milestone: M3
