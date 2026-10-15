@@ -250,6 +250,26 @@ A prod deployment does not preserve anything.
   mirror that `--dev --publish /var/tmp/<work>` wrote, with an instance name and bidder handle unique to
   your work. Keep the network up for the whole item; clean up only your own units and VMs.
 
+## The fast loop for one item
+
+- Compile and type-check: `go build ./cmd/socialweb-computer` (about 4 s in a new worktree, the Go caches
+  are shared) and `deno check <entry>` or `deno task check` (about 4 s).
+- Binary and mirror: `scripts/build-socialweb-computer.sh --dev --publish /var/tmp/<work>` (about 21 s the
+  first time in a worktree, about 6.5 s after). Later TypeScript changes: `--sync-only`, then `dev restart`.
+- One network for the whole item: `dev up` once (80 to 95 s, mostly waiting, about one core), then every
+  proof is a `run request --network <instance>` (80 to 90 s each, 35 s of it the requester's own kcp).
+  `dev down` costs 20 s. Do not `dev up` per proof.
+- A held guest burns one host core for as long as it lives (an idle firecracker vCPU does not halt), so
+  release a `--hold` invocation as soon as you have read it.
+- Take a live slot before `dev up` and release it after `dev down`:
+  `deno run -A ~/.tmp/swc-lead/live-slot.ts acquire|beat|release <name>`. The default is 5 slots
+  (`SWC_LIVE_SLOTS`), and `acquire` also waits while MemAvailable is under 12000 MB
+  (`SWC_LIVE_MIN_AVAIL_MB`) or cpu pressure avg10 is over 90 (`SWC_LIVE_MAX_CPU_PSI`).
+- More live capacity: `scripts/dev-droplet.sh` makes a DigitalOcean droplet that has /dev/kvm (tag
+  `dev-work`, at most 2, deleted with `down`): `create`, `setup`, `push <publish-dir>`, then
+  `swc -- <args>` or `it <TestRegex> <publish-dir>` run as test-0001 there. A droplet needs no live slot.
+  Measurements: `docs/ARCHITECTURE.md` section 15, "Live capacity and iteration time".
+
 ## The loop
 
 - There is no container. Read the state of an instance with `socialweb-computer units list` and its

@@ -8278,6 +8278,34 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
      a bidder restart that replays the stream from its stored cursor; with the ledger off nothing
      dedups the replay, so each restart of that variant re-bid old RFPs for up to 112 s before the
      block began (the block waited for the log to go quiet).
+- **Live capacity and iteration time (2026-10-15).** The "3 live slots" were `SWC_LIVE_SLOTS` in the lead's
+  `~/.tmp/swc-lead/live-slot.ts`, not hardware. Readings on hat-8 (Ryzen 7 7700X, 16 threads, 46 GB, load
+  average 20 to 29 from other work) and on a DigitalOcean `c-16-intel` droplet (16 vCPU Xeon 8358, 32 GB,
+  /dev/kvm present, `kvm_intel nested=Y`; a `c-16` Xeon 8168 droplet has it too), one `1 bidder` market
+  network each, the same binary and guest image: `dev up` 80 s on hat-8 and 85 s on the droplet (the droplet
+  was idle: the bring-up is wall-clock bound, about 1 core on average, kcp start 10 s, root object applied
+  at 17 s, services ready at 60 s, the bidder Ready at 80 s); `run request` 80 s on hat-8 and 86 s on the
+  droplet (requester kcp and RFP 35 s, guest boot to on-network 26 to 31 s, release 10 s); `dev down` 20 s;
+  `TestHarnessEmptyNetworkUpAndDown` 121 s and `TestOneAcceptMakesOneComputeVM` 203 s on the droplet,
+  through the compiled test binary (`scripts/dev-droplet.sh it`). A new worktree: `go build
+  ./cmd/socialweb-computer` 3.9 s, `deno task check` 3.4 s, `build-socialweb-computer.sh --dev --publish`
+  21.4 s (closure 18 s, the one per-worktree cold step) and 6.5 s after. Footprint of one network with one
+  bidder: 28 processes, 2.9 GB summed RSS (about 2.2 GB used), 0.2 core idle, 50 to 85 core-seconds to bring
+  up; with `--with-gateway` 41 processes and 4.5 GB RSS. A `run request` adds a kcp for the invocation
+  (1.3 GB, 45 core-seconds). A guest: firecracker RSS 400 MB, cgroup memory.current 1.7 GB of which 1.2 GB
+  is the rootfs page cache, memory.max 2.35 GB, and one core at 100 % while the guest is idle (hat-8: 738 s
+  of CPU in 733 s; droplet: 1001 ticks in 10 s; KVM `halt_exits` 70000 per second with `halt_wakeup` 1, the
+  guest top reads 90 % idle). Concurrency on the 16 vCPU droplet: four networks brought up at once took 81
+  to 90 s each (one alone: 85 s); five networks with five concurrent `run request` flows peaked at 21 GB
+  RSS, 17 GB MemAvailable left, CPU 73 % mean and 95 % peak, and each flow took 99 to 118 s (one alone: 86
+  s). Seven networks fit in 32 GB; CPU, not RAM, is the limit, at about five full flows per 16 threads
+  before the flows stretch. A modified `image.json` (boot args) is refused by the bidder ("the image is
+  refused"), so the idle-vCPU defect needs a rebuilt, re-pinned guest image: not done. Decision: the
+  default of `SWC_LIVE_SLOTS` is 5, and `acquire` also waits while MemAvailable is under 12000 MB
+  (`SWC_LIVE_MIN_AVAIL_MB`) or cpu pressure avg10 is over 90 (`SWC_LIVE_MAX_CPU_PSI`); a droplet is a
+  separate pool with no slot. The VM account test-0001 has 16 VM slots (a 1048576-id range in /etc/subuid, 16 x
+  65536), shared by every concurrent network, so five slots fit while each uses at most three guests; test-0002
+  has 4 slots. More than 16 concurrent guests on this host need another account with its own range.
 
 ## 16. Vocabulary
 
