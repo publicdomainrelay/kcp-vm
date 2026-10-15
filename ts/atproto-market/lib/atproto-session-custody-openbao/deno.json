@@ -1,0 +1,9 @@
+{
+  "name": "@publicdomainrelay/atproto-session-custody-openbao",
+  "version": "0.0.0",
+  "license": "Unlicense",
+  "exports": "./mod.ts",
+  "imports": {
+    "@publicdomainrelay/atproto-session-custody-abc": "jsr:@publicdomainrelay/atproto-session-custody-abc@^0"
+  }
+}

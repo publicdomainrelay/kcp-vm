@@ -7391,6 +7391,50 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   handles resolve in no DNS), a gateway root vault (plan 0014 M2-GATEWAY-SCOPE declares the plugin
   there).
 
+- **The atproto session stays in OpenBao and OpenBao signs the DPoP proofs (plan 0014
+  M1-SESSION-CUSTODY, 2026-10-15).** The session paths belong to the same `atproto` auth plugin, so
+  nothing crosses mounts and one asset is pinned. Paths that need a token (the gate is an ACL policy):
+  `session/<did>` read (did, handle, pds, issuer, scope, expires_at, status, status_reason, created_at,
+  updated_at; no secret) and delete (revokes the refresh token at the server's revocation endpoint when
+  it publishes one, then removes the session, and says in the answer when the revocation did not happen);
+  `session/<did>/proof` update ({htm, htu, nonce?} -> access_token, token_type, dpop_proof, expires_at).
+  The proof is an ES256 DPoP JWT from the session's key, bound to the method, the URL without query, a
+  time, a unique jti, the access token hash and, when known, the PDS nonce; htu must be under the PDS
+  origin of the session, any other origin is refused. When the access token has less than
+  `refresh_leeway` (default 60 s) left, the call refreshes it under one lock per DID and writes the new
+  refresh token to storage before it returns, so callers that arrive together share one refresh. An
+  answer from the authorization server that refuses the refresh marks the session `expired` with the
+  reason and returns the error at once (HTTP 502; later proofs get 409); a transport failure leaves the
+  session alone. The last DPoP nonce per origin is kept in memory and a newer one from the caller wins.
+  TypeScript, in `ts/atproto-market/lib`: `abc/atproto-session-custody` (`SessionCustody`: start,
+  complete, session, proof, signOut; the nonce book; `isUseDpopNonce`; the `CustodyAgent` interface) and
+  `atproto-session-custody-openbao` (`createOpenBaoSessionCustody` over an endpoint resolver, the output
+  of `createOpenBaoServerResolver` fits, with the cert login; `createCustodyFetchHandler`, which asks for
+  a proof per request and retries once on `use_dpop_nonce` with the nonce of the `DPoP-Nonce` header;
+  `createCustodySessionManager` for `@atproto/api`'s `Agent`; `createCustodyAgent`, the agent shape the
+  requester library takes). A caller holds a bao token and proofs, never the refresh token or the DPoP
+  key. Readings (market network atp1, `dev up --profile market-network --bidders 1`, the plugin declared
+  on the bidder's OpenBaoServer for the run, UTC 18:06-18:16): `status.plugins` runs sha256
+  011a1ae6...33f363a, the pin. Raw `session/<did>` read: ten keys, none a token or key; `config` and
+  `client-metadata` carry no private key. With `refresh_leeway` 899 s, two callers at once got the same
+  access token and 2 different proofs, the session `active`, expiry moved 18:22:58 to 18:23:19; twenty
+  callers at once after the token went stale got 1 access token and 20 proofs, `active` (a second
+  refresh would have used a consumed refresh token or minted a second access token). A proof for
+  `https://evil.example/...`: 400 naming the PDS origin. With proofs only: `getServiceAuth` 200,
+  `createRecord` 200, an `@atproto/api` `Agent` `createRecord` ok, and the requester library's own
+  `applyOAuthAgentToRequesterPDS` + `createRepoRecord` wrote a record into the market.rfp collection of
+  the account through `createCustodyAgent` (read back). Proof call latency from a TypeScript client with
+  one warm mutual-TLS connection, 300 sequential calls: p50 2.87 ms, p95 8.44 ms, p99 11.70 ms, max 19.85
+  ms (budget 20 ms at p95). `use_dpop_nonce`: against a local server that demands a nonce, 2 server calls
+  and the second proof carried the nonce. A refusal: after the PDS DenoPod restarted (its token store
+  is in memory), the next proof returned 502 "refresh failed ... 400 invalid_grant", the session read
+  `expired` with that reason, the proof after it 409; sign out answered revoked false ("publishes no
+  revocation endpoint") and the session read 404. Not read in this run: a gateway requester DenoPod that
+  posts an RFP with these proofs (the gateway's root vault declares the plugin only under plan 0014
+  M2-GATEWAY-SCOPE, and the requester takes the custody agent under M2-WEB-APP-SIGNIN); the market
+  network's PDS runs hono-pds's test OAuth server, which has no revocation endpoint, so a real
+  revocation was not read.
+
 - **Tenant cluster ports are kernel-picked and held by the front; no lease range, no probe (task
   port0-cp, 2026-10-12).** Defect: each gateway leased tenant ports from its own lease file over
   20000-29999 and only probed that a port was free when it handed it out, so two gateways on one host

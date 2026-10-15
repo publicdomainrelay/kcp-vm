@@ -1943,6 +1943,11 @@
           "npm:@atproto/oauth-client@~0.7.5"
         ]
       },
+      "ts/atproto-market/lib/atproto-session-custody-openbao": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/atproto-session-custody-abc@0"
+        ]
+      },
       "ts/atproto-market/lib/common/cloud-init-common": {
         "dependencies": [
           "npm:yaml@^2.7.0"
