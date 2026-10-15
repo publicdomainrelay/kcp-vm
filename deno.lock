@@ -1863,6 +1863,43 @@
       "npm:yaml@^2.7.0"
     ],
     "members": {
+      "socialweb-computer-k8s/lib/socialweb-computer-account-agents": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/atproto-helpers@0",
+          "jsr:@publicdomainrelay/socialweb-computer-abc@0"
+        ]
+      },
+      "socialweb-computer-k8s/lib/socialweb-computer-account-requesters": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/requester-abc@0",
+          "jsr:@publicdomainrelay/requester-xrpc@0",
+          "jsr:@publicdomainrelay/serve@0",
+          "jsr:@publicdomainrelay/socialweb-computer-account-agents@0"
+        ]
+      },
+      "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-contract": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/cloud-init-plugin-k3s-join@0",
+          "jsr:@publicdomainrelay/compute-request-abc@0",
+          "jsr:@publicdomainrelay/guest-capability-abc@0",
+          "jsr:@publicdomainrelay/requester-controller-abc@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-common@0"
+        ]
+      },
+      "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/cloud-init-plugin-k3s-join@0",
+          "jsr:@publicdomainrelay/compute-request-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-common@0",
+          "jsr:@publicdomainrelay/market-identity-abc@0",
+          "jsr:@publicdomainrelay/secrets-common@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-abc@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-common@0"
+        ]
+      },
       "socialweb-computer-k8s/lib/socialweb-computer-k8s-nodeclaim-kcp": {
         "dependencies": [
           "jsr:@publicdomainrelay/kcp-client-abc@0",
@@ -1922,6 +1959,17 @@
           "jsr:@publicdomainrelay/serve@0"
         ]
       },
+      "ts/atproto-market/lib/abc/requester-controller": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/cloud-init-common@0",
+          "jsr:@publicdomainrelay/compute-request-abc@0",
+          "jsr:@publicdomainrelay/guest-capability-abc@0",
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/requester-abc@0",
+          "jsr:@publicdomainrelay/secrets-common@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
+        ]
+      },
       "ts/atproto-market/lib/atproto-attestation-port": {
         "dependencies": [
           "npm:@ipld/dag-cbor@^9.2.0",
@@ -1956,13 +2004,6 @@
       "ts/atproto-market/lib/common/market-lexicons": {
         "dependencies": [
           "npm:@atproto/lex@~0.1.3"
-        ]
-      },
-      "ts/atproto-market/lib/compute-contract-kcp": {
-        "dependencies": [
-          "jsr:@publicdomainrelay/kcp-client-abc@0",
-          "jsr:@publicdomainrelay/kcp-client-rest@0",
-          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
         ]
       },
       "ts/atproto-market/lib/compute-request-xrpc": {
@@ -2227,6 +2268,26 @@
           "jsr:@publicdomainrelay/logger@0"
         ]
       },
+      "ts/atproto-market/lib/requester-controller-kcp": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/cloud-init-common@0",
+          "jsr:@publicdomainrelay/compute-request-abc@0",
+          "jsr:@publicdomainrelay/compute-request-xrpc@0",
+          "jsr:@publicdomainrelay/guest-capability-abc@0",
+          "jsr:@publicdomainrelay/guest-capability-secrets@0",
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-common@0",
+          "jsr:@publicdomainrelay/kcp-client-rest@0",
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/market-abc@0",
+          "jsr:@publicdomainrelay/market-identity-abc@0",
+          "jsr:@publicdomainrelay/policy-engine-cli-options@0",
+          "jsr:@publicdomainrelay/requester-controller-abc@0",
+          "jsr:@publicdomainrelay/secrets-common@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0",
+          "npm:@atproto/crypto@0.5"
+        ]
+      },
       "ts/atproto-market/lib/requester-xrpc": {
         "dependencies": [
           "jsr:@publicdomainrelay/atproto-repo-abc@0",
@@ -2278,14 +2339,9 @@
           "jsr:@publicdomainrelay/atproto-helpers@0",
           "jsr:@publicdomainrelay/cli-args-env@0",
           "jsr:@publicdomainrelay/cloud-init-common@0",
-          "jsr:@publicdomainrelay/compute-contract-kcp@0",
-          "jsr:@publicdomainrelay/compute-request-abc@0",
-          "jsr:@publicdomainrelay/compute-request-xrpc@0",
-          "jsr:@publicdomainrelay/guest-capability-abc@0",
-          "jsr:@publicdomainrelay/guest-capability-secrets@0",
           "jsr:@publicdomainrelay/identity-prompt-kcp@0",
-          "jsr:@publicdomainrelay/kcp-client-abc@0",
           "jsr:@publicdomainrelay/kcp-client-rest@0",
+          "jsr:@publicdomainrelay/key-vault@0",
           "jsr:@publicdomainrelay/logger@0",
           "jsr:@publicdomainrelay/market-abc@0",
           "jsr:@publicdomainrelay/market-atproto@0",
@@ -2298,11 +2354,20 @@
           "jsr:@publicdomainrelay/oauth-scope@0",
           "jsr:@publicdomainrelay/openbao-server-kcp@0",
           "jsr:@publicdomainrelay/policy-engine-cli-options@0",
+          "jsr:@publicdomainrelay/policy-engine-scope-cache@0",
           "jsr:@publicdomainrelay/requester-abc@0",
+          "jsr:@publicdomainrelay/requester-controller-abc@0",
+          "jsr:@publicdomainrelay/requester-controller-kcp@0",
           "jsr:@publicdomainrelay/requester-xrpc@0",
-          "jsr:@publicdomainrelay/secrets-common@0",
+          "jsr:@publicdomainrelay/scope-refresh-timers@0",
           "jsr:@publicdomainrelay/serve@0",
-          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
+          "jsr:@publicdomainrelay/socialweb-computer-account-agents@0",
+          "jsr:@publicdomainrelay/socialweb-computer-account-requesters@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-node-contract@0",
+          "jsr:@publicdomainrelay/socialweb-computer-oauth-session-vault@0",
+          "jsr:@publicdomainrelay/socialweb-computer-session-password@0",
+          "npm:@atproto/crypto@0.5"
         ]
       },
       "ts/atproto-relay/hono-atproto-relay": {

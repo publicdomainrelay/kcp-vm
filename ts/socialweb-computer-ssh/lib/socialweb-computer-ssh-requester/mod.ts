@@ -1,16 +1,14 @@
-import { createOAuthAgentFromSession } from "@publicdomainrelay/atproto-helpers";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import {
-  applyOAuthAgentToRequesterPDS,
-  createRequesterPDS,
   DEFAULT_TRANSPORT_MODULE,
   ensureDumbpipe,
   runComputeContract,
 } from "@publicdomainrelay/requester-xrpc";
-import type { RequesterPDS, SshSessionProvider } from "@publicdomainrelay/requester-abc";
+import type { SshSessionProvider } from "@publicdomainrelay/requester-abc";
 import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
 import type { CommandIo, ComputeCommandRunner } from "@publicdomainrelay/socialweb-computer-abc";
-import { createServe } from "@publicdomainrelay/serve";
+import { createAccountAgents } from "@publicdomainrelay/socialweb-computer-account-agents";
+import { createAccountRequesters } from "@publicdomainrelay/socialweb-computer-account-requesters";
 import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import type { AuthorizedAccount } from "@publicdomainrelay/socialweb-computer-common";
 import { policyFromEnv, renderExecCommand, vmNameFromEnv } from "@publicdomainrelay/socialweb-computer-common";
@@ -148,154 +146,6 @@ export function explainNoSession(
   return lines.join("\n") + "\n";
 }
 
-export interface AccountRequestersOptions {
-  sessionStore: SessionStore;
-  requesterKeyHex: () => Promise<string>;
-  plcDirectoryUrl?: string;
-  ingressProxyHost?: string;
-  oauthClientId?: string;
-  agentWithoutOAuthFor?: (did: string) => Promise<unknown> | null;
-  log?: (event: string, data?: Record<string, unknown>) => void;
-}
-
-type AccountAgent = Awaited<ReturnType<typeof createOAuthAgentFromSession>>;
-type AccountRequesterPDS = Awaited<ReturnType<typeof createRequesterPDS>>;
-
-export interface AccountRequesters {
-  agentFor(did: string): Promise<AccountAgent>;
-  requesterFor(did: string): Promise<AccountRequesterPDS>;
-  shutdown(): Promise<void>;
-}
-
-export function createAccountRequesters(opts: AccountRequestersOptions): AccountRequesters {
-  const log = opts.log ?? (() => {});
-  const plcUrl = opts.plcDirectoryUrl ?? "https://plc.directory";
-  const logger = {
-    debug: () => {},
-    info: (message: string, meta?: Record<string, unknown>) => log(message, meta ?? {}),
-    warn: (message: string, meta?: Record<string, unknown>) => log(message, meta ?? {}),
-    error: (message: string, meta?: Record<string, unknown>) => log(message, meta ?? {}),
-  };
-  type Agent = Awaited<ReturnType<typeof createOAuthAgentFromSession>>;
-  /**
-   * One agent per account, tagged with the refresh token it was built from.
-   *
-   * The tag is what makes a re-deposit take effect. The page holds the same
-   * session and refreshes it too, and every rotation invalidates any agent built
-   * from the previous token -- presenting that token is a replay, which the PDS
-   * answers by killing the whole session. So the cache is keyed by the token, not
-   * just by the account.
-   */
-  const agents = new Map<string, { refreshJwt: string; agent: Promise<Agent> }>();
-  type RequesterPDS = Awaited<ReturnType<typeof createRequesterPDS>>;
-  const requesters = new Map<string, Promise<RequesterPDS>>();
-
-  /**
-   * One requester per account, built once and reused.
-   *
-   * It gets its own serve handle rather than sharing the web server's. Mounting
-   * onto the web app fails on the second connection -- Hono freezes its router
-   * once a request has been dispatched, and the requester mounts long after the
-   * server began serving, so `serve.app.route()` throws "Can not add a route
-   * since the matcher is already built". One serve per requester is also what
-   * the CLI does, one process per run.
-   */
-  function requesterFor(did: string): Promise<RequesterPDS> {
-    let entry = requesters.get(did);
-    if (!entry) {
-      entry = (async () => {
-        const agent = await agentFor(did);
-        const requesterServe = createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 } });
-        const pds = await createRequesterPDS({
-          logger,
-          serve: requesterServe,
-          privateKeyHex: await opts.requesterKeyHex(),
-          plcDirectoryUrl: plcUrl,
-          ingressProxyHost: opts.ingressProxyHost,
-          label: "socialweb-computer-ssh",
-        });
-        // The requester's own repo has to be reachable: the fulfillment policy
-        // reads records back through its ingress while deciding.
-        await pds.beginServe();
-        applyOAuthAgentToRequesterPDS(pds, agent as never, { log });
-        return pds;
-      })();
-      requesters.set(did, entry);
-      entry.catch(() => requesters.delete(did));
-    }
-    return entry;
-  }
-
-  /**
-   * One agent per account, built once and reused.
-   *
-   * A per-run agent would be a second refresher for a single-use refresh token,
-   * and on a production authorization server replaying one deletes the whole
-   * session. One long-lived agent per account is also what makes concurrent
-   * connections safe: they share one refresh lock instead of racing.
-   */
-  const agentsWithoutOAuth = new Map<string, Promise<Agent>>();
-
-  function agentFor(did: string): Promise<Agent> {
-    const cachedWithoutOAuth = agentsWithoutOAuth.get(did);
-    if (cachedWithoutOAuth) return cachedWithoutOAuth;
-    const withoutOAuth = opts.agentWithoutOAuthFor?.(did);
-    if (withoutOAuth) {
-      const agent = withoutOAuth as Promise<Agent>;
-      agentsWithoutOAuth.set(did, agent);
-      agent.catch(() => agentsWithoutOAuth.delete(did));
-      log("account_agent_without_oauth", { did });
-      return agent;
-    }
-    return (async () => {
-      const stored = await opts.sessionStore.get(did);
-      if (!stored) throw new Error(`no oauth session stored for ${did}`);
-
-      const cached = agents.get(did);
-      if (cached && cached.refreshJwt === stored.refreshJwt) return await cached.agent;
-
-      if (cached) {
-        // Retire the superseded agent: its keepalive would otherwise go on
-        // refreshing with a token the store has moved past, which is the replay
-        // this cache key exists to prevent.
-        agents.delete(did);
-        void cached.agent
-          .then((a) => (a as unknown as { dispose?: () => void }).dispose?.())
-          .catch(() => {});
-      }
-
-      // A refresh token is bound to the client_id that obtained it, so the
-      // session's own client_id wins over the operator's configured one. The
-      // session carries it because that is the only place it is knowable: on
-      // loopback the page signs in with a `http://localhost?...` virtual
-      // metadata document, which the server cannot reconstruct.
-      const clientId = stored.clientId ?? opts.oauthClientId;
-      const agent = createOAuthAgentFromSession(stored, {
-        clientId,
-        // The helper rebuilds the session from the token response, which does
-        // not echo the client_id, so re-attach it or a restart would lose it.
-        saveSession: (updated) => opts.sessionStore.set(did, { ...updated, clientId }),
-      });
-      agents.set(did, { refreshJwt: stored.refreshJwt, agent });
-      agent.catch(() => {
-        if (agents.get(did)?.agent === agent) agents.delete(did);
-      });
-      return await agent;
-    })();
-  }
-
-  return {
-    agentFor,
-    requesterFor,
-    async shutdown(): Promise<void> {
-      for (const settled of await Promise.allSettled([...agents.values()].map((e) => e.agent))) {
-        if (settled.status === "fulfilled") (settled.value as unknown as { dispose?: () => void }).dispose?.();
-      }
-      agents.clear();
-    },
-  };
-}
-
 export function createInProcessRequester(opts: InProcessRequesterOptions): InProcessRequester {
   const log = opts.log ?? (() => {});
   const plcUrl = opts.plcDirectoryUrl ?? "https://plc.directory";
@@ -305,7 +155,20 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
     warn: (message: string, meta?: Record<string, unknown>) => log(message, meta ?? {}),
     error: (message: string, meta?: Record<string, unknown>) => log(message, meta ?? {}),
   };
-  const accounts = createAccountRequesters(opts);
+  const agents = createAccountAgents({
+    sessionStore: opts.sessionStore,
+    oauthClientId: opts.oauthClientId,
+    agentWithoutOAuthFor: opts.agentWithoutOAuthFor,
+    log,
+  });
+  const accounts = createAccountRequesters({
+    agents,
+    requesterKeyHex: opts.requesterKeyHex,
+    plcDirectoryUrl: opts.plcDirectoryUrl,
+    ingressProxyHost: opts.ingressProxyHost,
+    label: "socialweb-computer-ssh",
+    log,
+  });
   const requesterFor = accounts.requesterFor;
 
   let dumbpipe: Promise<string> | null = null;
@@ -422,7 +285,7 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
     },
 
     shutdown(): Promise<void> {
-      return accounts.shutdown();
+      return agents.shutdown();
     },
   };
 }

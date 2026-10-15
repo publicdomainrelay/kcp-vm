@@ -9,12 +9,11 @@ import { K8S_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { createAtprotoSessionVerifier } from "@publicdomainrelay/socialweb-computer-oauth-atproto";
 import { createFileSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-fs";
 import { createVaultSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-vault";
-import { loadOrCreateKeyHex } from "@publicdomainrelay/key-file-fs";
-import { loadOrCreateVaultKeyHex } from "@publicdomainrelay/key-vault";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
+import type { IdentityVault } from "@publicdomainrelay/market-identity-abc";
 import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
-import { createAccountRequesters } from "@publicdomainrelay/socialweb-computer-requester-inproc";
+import { createAccountAgents } from "@publicdomainrelay/socialweb-computer-account-agents";
 import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
 import { createWebFactory } from "@publicdomainrelay/hono-factory-socialweb-computer-oauth";
 import { createRequestProofVerifier } from "@publicdomainrelay/socialweb-computer-k8s-request-proof";
@@ -34,18 +33,15 @@ import {
 import type { KcpClient } from "@publicdomainrelay/kcp-client-abc";
 import { parseKubeconfig } from "@publicdomainrelay/kcp-client-common";
 import { createKcpRestClient } from "@publicdomainrelay/kcp-client-rest";
+import { kcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
+import { COMPUTE_CONTRACT_RESOURCE, type ComputeContract, parseComputeContract } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import {
-  createMarketNodeFulfiller,
+  createNodeClaimMapper,
   publishedOpenBaoCAFile,
-  type MarketNodeFulfiller,
+  type NodeClaimMapper,
   MESHD_DOWNLOAD_PREFIX,
   meshdPinOf,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
-import { createOpenBaoClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-claim-keys-openbao";
-import { type ClaimKeyStore, createMemoryClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
-import { createVaultClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-claim-keys-vault";
-import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
-import { createScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -68,15 +64,12 @@ const publicOrigin = (options.publicOrigin as string | undefined)?.replace(/\/+$
 const testOwnerSessions = options.testOwnerSessionsFile
   ? parsePasswordSessions(JSON.parse(await Deno.readTextFile(options.testOwnerSessionsFile as string)))
   : null;
-const testNodeGuestHostAliases = ((options.testNodeGuestHostAliases as string | undefined) ?? "").split(",").map((a) => a.trim())
-  .filter(Boolean);
 const testNodeUserDataBase = options.testNodeUserDataBaseFile
   ? await Deno.readTextFile(options.testNodeUserDataBaseFile as string)
   : undefined;
-if (testOwnerSessions || testNodeGuestHostAliases.length > 0 || testNodeUserDataBase !== undefined) {
+if (testOwnerSessions || testNodeUserDataBase !== undefined) {
   logger.warn("test_seams_enabled", {
     ownerSessions: testOwnerSessions ? [...testOwnerSessions.keys()] : [],
-    nodeGuestHostAliases: testNodeGuestHostAliases,
     nodeUserDataBase: testNodeUserDataBase !== undefined,
   });
 }
@@ -94,15 +87,14 @@ const kcp: KcpClient | null = options.kcpKubeconfig
   : null;
 
 async function accountState(): Promise<
-  { sessionStore: SessionStore; requesterKeyHex: () => Promise<string>; vaultClaimKeys?: ClaimKeyStore }
+  { sessionStore: SessionStore; vault?: IdentityVault; vaultMount?: string }
 > {
   if (!options.openbaoServer) {
-    logger.warn("account_state_in_files", { stateDir, next: "set openbao-server to keep sessions and the requester key in the vault" });
+    logger.warn("account_state_in_files", { stateDir, next: "set openbao-server to keep sessions in the vault and to fulfil nodes" });
     return {
       sessionStore: createFileSessionStore(`${stateDir}/oauth-sessions.json`, {
         onCorrupt: ({ path, quarantine }) => logger.error("session_store_corrupt", { path, quarantine }),
       }),
-      requesterKeyHex: () => loadOrCreateKeyHex(`${stateDir}/requester-key.hex`),
     };
   }
   if (!kcp) throw new Error("openbao-server needs kcp-kubeconfig to read the OpenBaoServer object");
@@ -139,18 +131,15 @@ async function accountState(): Promise<
         await identities?.signedOut(did, ref).catch((err) => logger.warn("market_identity_write_failed", { did, error: String(err) }));
       },
     }),
-    requesterKeyHex: () => loadOrCreateVaultKeyHex(vault, { mount: resolved.kvMount, path: "requester/key" }),
-    vaultClaimKeys: createVaultClaimKeyStore({ vault, mount: resolved.kvMount }),
+    vault,
+    vaultMount: resolved.kvMount,
   };
 }
 
-const { sessionStore, requesterKeyHex, vaultClaimKeys } = await accountState();
+const { sessionStore, vault, vaultMount } = await accountState();
 
-const accounts = createAccountRequesters({
+const accounts = createAccountAgents({
   sessionStore,
-  requesterKeyHex,
-  plcDirectoryUrl: options.plcDirectoryUrl as string,
-  ingressProxyHost: options.ingressProxyHost as string,
   oauthClientId: options.oauthClientId as string | undefined,
   agentWithoutOAuthFor: (did) => {
     const session = testOwnerSessions?.get(did);
@@ -260,29 +249,8 @@ installMarketNetworkFetch({
   }),
 });
 
-const scopeCache = createScopeCache();
-const scopeRefresher = createScopeRefresher({ scopeCache });
-
-const openBaoClient = options.openbaoCaFile
-  ? Deno.createHttpClient({ caCerts: [await Deno.readTextFile(options.openbaoCaFile as string)] })
-  : null;
-const claimKeys = options.openbaoAddr
-  ? createOpenBaoClaimKeyStore({
-    address: options.openbaoAddr as string,
-    mount: options.openbaoKvMount as string,
-    token: async () => (await Deno.readTextFile(options.openbaoTokenFile as string)).trim(),
-    ...(openBaoClient ? { fetch: (input, init) => fetch(input, { ...init, client: openBaoClient } as unknown as RequestInit) } : {}),
-  })
-  : vaultClaimKeys ?? createMemoryClaimKeyStore();
 const kcpWorkspace = options.kcpWorkspace as string | undefined;
-if (!claimKeys.durable && kcp && kcpWorkspace) {
-  logger.warn("claim_keys_in_memory", {
-    next: "a restarted door cannot re-serve an in-flight claim's secrets URL, so its Bidding and " +
-      "Provisioning claims are marked Failed and released on deletion; set openbao-addr to resume them",
-  });
-}
-
-const nodeGuestCaPem = options.nodeGuestCaFile ? (await Deno.readTextFile(options.nodeGuestCaFile as string)).trim() : "";
+const contractWorkspace = options.contractKcpWorkspace as string | undefined;
 
 await serve.beginServe();
 const nodeDownloadOrigin = testNodeDownloadHost
@@ -290,30 +258,32 @@ const nodeDownloadOrigin = testNodeDownloadHost
   : publicOrigin;
 const meshd = meshdPinOf(pinned.list(), nodeDownloadOrigin);
 
-let fulfiller: MarketNodeFulfiller | null = null;
-if (kcp && kcpWorkspace) {
-  fulfiller = createMarketNodeFulfiller({
+let fulfiller: NodeClaimMapper | null = null;
+if (kcp && kcpWorkspace && contractWorkspace && vault && vaultMount) {
+  fulfiller = createNodeClaimMapper({
     store: createKcpNodeClaimStore({ kcp, homesWorkspace: kcpWorkspace }),
     links: createKcpClusterLinkReader({ kcp }),
-    requesterFor: (did) => accounts.requesterFor(did),
-    owners: () => Promise.resolve(testOwnerSessions ? [...testOwnerSessions.keys()] : []),
+    contracts: kcpResourceClient<ComputeContract>(
+      kcp,
+      { resource: COMPUTE_CONTRACT_RESOURCE, workspace: contractWorkspace },
+      parseComputeContract,
+    ),
+    vault,
+    vaultMount,
     ...(options.clusterCaDir ? { openBaoCAFileOf: publishedOpenBaoCAFile(options.clusterCaDir as string) } : {}),
-    plcUrl: options.plcDirectoryUrl as string,
-    ingressProxyHost: options.ingressProxyHost as string,
-    relayUrls,
     vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
     extraBidderDids: ((options.nodeExtraBidderDids as string | undefined) ?? "").split(",").map((d) => d.trim()).filter(Boolean),
-    guestHostAliases: testNodeGuestHostAliases,
     userDataBase: testNodeUserDataBase,
-    ...(nodeGuestCaPem ? { guestCaPem: nodeGuestCaPem } : {}),
-    ...(options.nodeGuestCurlHome ? { guestCurlHome: options.nodeGuestCurlHome as string } : {}),
     ...(options.nodePolicy ? { policy: { name: options.nodePolicy as string, args: JSON.parse(options.nodePolicyArgs as string) } } : {}),
     pollIntervalMs: options.nodePollIntervalMs as number,
     ...(meshd ? { meshd } : {}),
-    scopeCache,
-    scopeRefresher,
-    claimKeys,
     log,
+  });
+} else if (kcp && kcpWorkspace) {
+  logger.warn("node_claims_not_mapped", {
+    contractWorkspace: contractWorkspace ?? null,
+    vault: vault !== undefined,
+    next: "set contract-kcp-workspace and openbao-server so each NodeClaim becomes a ComputeContract the requester controller carries out",
   });
 }
 

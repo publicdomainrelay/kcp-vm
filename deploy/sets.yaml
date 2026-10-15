@@ -311,19 +311,26 @@ sets:
             for: Ready
         files:
           - path: apps/gateway/web-app-rbac.yaml
+          - path: apps/gateway/requester-rbac.yaml
       - name: identity-schemas
         workspace: root:socialweb-provider
         files:
           - path: marketidentity-apiresourceschema.yaml
           - path: marketidentity-apiexport.yaml
+          - path: computecontract-apiresourceschema.yaml
+          - path: computecontract-apiexport.yaml
         after:
           - kind: APIExport
             name: marketidentities
+            for: IdentityValid
+          - kind: APIExport
+            name: computecontracts
             for: IdentityValid
       - name: identity-binding
         workspace: root:app
         files:
           - path: apps/gateway/marketidentities-binding.yaml
+          - path: apps/gateway/computecontracts-binding.yaml
         after:
           - kind: APIBinding
             for: Ready
@@ -336,6 +343,16 @@ sets:
         workspace: root:app
         files:
           - path: apps/gateway/market-network.values.yaml
+            template: denopods/service.yaml
+      - name: requester@prod
+        workspace: root:app
+        files:
+          - path: apps/gateway/requester.prod.values.yaml
+            template: denopods/service.yaml
+      - name: requester@market-network
+        workspace: root:app
+        files:
+          - path: apps/gateway/requester.market-network.values.yaml
             template: denopods/service.yaml
 
   - name: market-requester

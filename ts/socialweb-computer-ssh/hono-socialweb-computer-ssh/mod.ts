@@ -12,7 +12,7 @@ import { loadOrCreateVaultKeyHex } from "@publicdomainrelay/key-vault";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
-import { createInProcessRequester, guestBaseUserData, unixSocketIrohDialer } from "@publicdomainrelay/socialweb-computer-requester-inproc";
+import { createInProcessRequester, guestBaseUserData, unixSocketIrohDialer } from "@publicdomainrelay/socialweb-computer-ssh-requester";
 import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
 import { marketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";

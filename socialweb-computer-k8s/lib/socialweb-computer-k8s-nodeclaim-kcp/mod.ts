@@ -66,6 +66,7 @@ export function toNodeClaim(raw: unknown, fallbackWorkspace?: string): NodeClaim
   return {
     workspace,
     name,
+    uid: claim.metadata?.uid,
     resourceVersion: claim.metadata?.resourceVersion,
     deletionTimestamp: claim.metadata?.deletionTimestamp,
     finalizers: claim.metadata?.finalizers ?? [],

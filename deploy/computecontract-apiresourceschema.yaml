@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-2.computecontracts.socialweb.computer
+  name: v1alpha1-3.computecontracts.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -62,6 +62,37 @@ spec:
                   - path
               release:
                 type: boolean
+              ownerDid:
+                type: string
+              adopt:
+                type: boolean
+              nodeJoin:
+                type: object
+                properties:
+                  cluster:
+                    type: string
+                  meshd:
+                    type: object
+                    properties:
+                      downloadBase:
+                        type: string
+                      pins:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            arch:
+                              type: string
+                            sha256:
+                              type: string
+                          required:
+                            - arch
+                            - sha256
+                    required:
+                      - downloadBase
+                      - pins
+                required:
+                  - cluster
           status:
             type: object
             properties:
@@ -347,6 +378,21 @@ spec:
                         type: string
                       released:
                         type: string
+              grant:
+                type: object
+                properties:
+                  issuer:
+                    type: string
+                  subject:
+                    type: string
+                  audience:
+                    type: string
+                  role:
+                    type: string
+                required:
+                  - issuer
+                  - subject
+                  - audience
               conditions:
                 type: array
                 items:

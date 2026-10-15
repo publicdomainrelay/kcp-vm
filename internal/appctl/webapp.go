@@ -23,6 +23,7 @@ const (
 	WebAppAccount        = "socialweb-computer-k8s"
 	WebAppAccountNS      = "default"
 	WebAppGrant          = "socialweb-computer-k8s-web-app"
+	RequesterGrant       = "socialweb-computer-k8s-requester"
 	foreignAccountPrefix = "system:kcp:serviceaccount:"
 )
 
@@ -92,42 +93,49 @@ func (ctl *Controller) logicalCluster(ctx context.Context, parent, name string) 
 	return cluster, nil
 }
 
-func (ctl *Controller) grant(ctx context.Context, ws, owner, user string, rules []rbacv1.PolicyRule) error {
+func RequesterRootRules() []rbacv1.PolicyRule {
+	return []rbacv1.PolicyRule{
+		{NonResourceURLs: []string{"/"}, Verbs: []string{"access"}},
+		{APIGroups: []string{v1alpha1.GroupName}, Resources: []string{"openbaoservers"}, ResourceNames: []string{vaultlayout.RootServerName}, Verbs: []string{"get"}},
+	}
+}
+
+func (ctl *Controller) grant(ctx context.Context, ws, owner, grantName, user string, rules []rbacv1.PolicyRule) error {
 	cs, err := kubernetes.NewForConfig(clusterConfig(ctl.restCfg, ws))
 	if err != nil {
 		return err
 	}
 	labels := map[string]string{OwnerLabel: owner}
-	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: WebAppGrant, Labels: labels}, Rules: rules}
-	have, err := cs.RbacV1().ClusterRoles().Get(ctx, WebAppGrant, metav1.GetOptions{})
+	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: grantName, Labels: labels}, Rules: rules}
+	have, err := cs.RbacV1().ClusterRoles().Get(ctx, grantName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
 		if _, err := cs.RbacV1().ClusterRoles().Create(ctx, role, metav1.CreateOptions{FieldManager: FieldManager}); err != nil {
-			return fmt.Errorf("appctl: the %s ClusterRole in %s: %w", WebAppGrant, ws, err)
+			return fmt.Errorf("appctl: the %s ClusterRole in %s: %w", grantName, ws, err)
 		}
 	case err != nil:
 		return err
 	case !equality.Semantic.DeepEqual(have.Rules, rules):
 		have.Rules, have.Labels = rules, labels
 		if _, err := cs.RbacV1().ClusterRoles().Update(ctx, have, metav1.UpdateOptions{FieldManager: FieldManager}); err != nil {
-			return fmt.Errorf("appctl: the %s ClusterRole in %s: %w", WebAppGrant, ws, err)
+			return fmt.Errorf("appctl: the %s ClusterRole in %s: %w", grantName, ws, err)
 		}
 	}
 	subjects := []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: user}}
-	ref := rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: WebAppGrant}
-	binding := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: WebAppGrant, Labels: labels}, RoleRef: ref, Subjects: subjects}
-	hb, err := cs.RbacV1().ClusterRoleBindings().Get(ctx, WebAppGrant, metav1.GetOptions{})
+	ref := rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: grantName}
+	binding := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: grantName, Labels: labels}, RoleRef: ref, Subjects: subjects}
+	hb, err := cs.RbacV1().ClusterRoleBindings().Get(ctx, grantName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
 		if _, err := cs.RbacV1().ClusterRoleBindings().Create(ctx, binding, metav1.CreateOptions{FieldManager: FieldManager}); err != nil {
-			return fmt.Errorf("appctl: the %s ClusterRoleBinding in %s: %w", WebAppGrant, ws, err)
+			return fmt.Errorf("appctl: the %s ClusterRoleBinding in %s: %w", grantName, ws, err)
 		}
 	case err != nil:
 		return err
 	case !equality.Semantic.DeepEqual(hb.Subjects, subjects):
 		hb.Subjects, hb.Labels = subjects, labels
 		if _, err := cs.RbacV1().ClusterRoleBindings().Update(ctx, hb, metav1.UpdateOptions{FieldManager: FieldManager}); err != nil {
-			return fmt.Errorf("appctl: the %s ClusterRoleBinding in %s: %w", WebAppGrant, ws, err)
+			return fmt.Errorf("appctl: the %s ClusterRoleBinding in %s: %w", grantName, ws, err)
 		}
 	}
 	return nil
@@ -138,11 +146,13 @@ func (ctl *Controller) revokeWebApp(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := cs.RbacV1().ClusterRoleBindings().Delete(ctx, WebAppGrant, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		return err
-	}
-	if err := cs.RbacV1().ClusterRoles().Delete(ctx, WebAppGrant, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		return err
+	for _, name := range []string{WebAppGrant, RequesterGrant} {
+		if err := cs.RbacV1().ClusterRoleBindings().Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		if err := cs.RbacV1().ClusterRoles().Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
 	}
 	return nil
 }
@@ -157,7 +167,10 @@ func (ctl *Controller) webAppIdentity(ctx context.Context, o v1alpha1.Gateway, o
 		return "", err
 	}
 	user := ForeignAccount(app, WebAppAccountNS, WebAppAccount)
-	if err := ctl.grant(ctx, ctl.c.workspace(), owner, user, WebAppRootRules(o.Name)); err != nil {
+	if err := ctl.grant(ctx, ctl.c.workspace(), owner, WebAppGrant, user, WebAppRootRules(o.Name)); err != nil {
+		return "", err
+	}
+	if err := ctl.grant(ctx, ctl.c.workspace(), owner, RequesterGrant, ForeignAccount(app, WebAppAccountNS, RequesterAccount), RequesterRootRules()); err != nil {
 		return "", err
 	}
 	ctl.c.log().Info("the web app's own kcp identity", "user", user, "workspace", ctl.c.workspace()+":"+ComponentWorkspace, "server", f.server)

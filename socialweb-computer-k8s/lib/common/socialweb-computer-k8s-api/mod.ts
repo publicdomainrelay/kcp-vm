@@ -552,6 +552,24 @@ export interface ComputeContractSpec {
   vmReadyTimeoutSec?: number;
   secretsRef?: VaultRef;
   release?: boolean;
+  ownerDid?: string;
+  adopt?: boolean;
+  nodeJoin?: ComputeContractNodeJoin;
+}
+
+export interface ComputeContractNodeJoin {
+  cluster: string;
+  meshd?: ComputeContractMeshd;
+}
+
+export interface ComputeContractMeshd {
+  downloadBase: string;
+  pins: ComputeContractMeshdPin[];
+}
+
+export interface ComputeContractMeshdPin {
+  arch: string;
+  sha256: string;
 }
 
 export interface ComputeContractStatus {
@@ -561,6 +579,7 @@ export interface ComputeContractStatus {
   secretsUrl?: string;
   secretsFetchedAt?: string;
   contract?: NodeClaimContract;
+  grant?: NodeClaimGrant;
   conditions?: Condition[];
   execution?: ExecutionStatus;
 }
@@ -730,7 +749,7 @@ export const COMPUTE_CONTRACT_RESOURCE: ApiResource = {
   listKind: "ComputeContractList",
   plural: "computecontracts",
   singular: "computecontract",
-  schema: "v1alpha1-2.computecontracts.socialweb.computer",
+  schema: "v1alpha1-3.computecontracts.socialweb.computer",
   export: "computecontracts",
 };
 
@@ -780,6 +799,9 @@ export type ApiTypeName =
   | "ClusterSpec"
   | "ClusterStatus"
   | "ComputeContract"
+  | "ComputeContractMeshd"
+  | "ComputeContractMeshdPin"
+  | "ComputeContractNodeJoin"
   | "ComputeContractPhase"
   | "ComputeContractSpec"
   | "ComputeContractStatus"
@@ -1331,6 +1353,53 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [],
     "type": "object"
   },
+  "ComputeContractMeshd": {
+    "properties": {
+      "downloadBase": {
+        "type": "string"
+      },
+      "pins": {
+        "items": {
+          "ref": "ComputeContractMeshdPin"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "downloadBase",
+      "pins"
+    ],
+    "type": "object"
+  },
+  "ComputeContractMeshdPin": {
+    "properties": {
+      "arch": {
+        "type": "string"
+      },
+      "sha256": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "arch",
+      "sha256"
+    ],
+    "type": "object"
+  },
+  "ComputeContractNodeJoin": {
+    "properties": {
+      "cluster": {
+        "type": "string"
+      },
+      "meshd": {
+        "ref": "ComputeContractMeshd"
+      }
+    },
+    "required": [
+      "cluster"
+    ],
+    "type": "object"
+  },
   "ComputeContractPhase": {
     "enum": [
       "Pending",
@@ -1344,6 +1413,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "ComputeContractSpec": {
     "properties": {
+      "adopt": {
+        "type": "boolean"
+      },
       "bidderDids": {
         "items": {
           "type": "string"
@@ -1355,6 +1427,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
           "type": "string"
         },
         "type": "array"
+      },
+      "nodeJoin": {
+        "ref": "ComputeContractNodeJoin"
+      },
+      "ownerDid": {
+        "type": "string"
       },
       "policy": {
         "type": "string"
@@ -1400,6 +1478,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "execution": {
         "ref": "ExecutionStatus"
+      },
+      "grant": {
+        "ref": "NodeClaimGrant"
       },
       "message": {
         "type": "string"
@@ -4060,6 +4141,60 @@ export function assertComputeContractSpec(value: unknown): asserts value is Comp
 
 export function parseComputeContractSpec(value: unknown): ComputeContractSpec {
   assertComputeContractSpec(value);
+  return value;
+}
+
+export function validateComputeContractNodeJoin(value: unknown): ApiIssue[] {
+  return validate("ComputeContractNodeJoin", value);
+}
+
+export function isComputeContractNodeJoin(value: unknown): value is ComputeContractNodeJoin {
+  return validate("ComputeContractNodeJoin", value).length === 0;
+}
+
+export function assertComputeContractNodeJoin(value: unknown): asserts value is ComputeContractNodeJoin {
+  const issues = validate("ComputeContractNodeJoin", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeContractNodeJoin", issues);
+}
+
+export function parseComputeContractNodeJoin(value: unknown): ComputeContractNodeJoin {
+  assertComputeContractNodeJoin(value);
+  return value;
+}
+
+export function validateComputeContractMeshd(value: unknown): ApiIssue[] {
+  return validate("ComputeContractMeshd", value);
+}
+
+export function isComputeContractMeshd(value: unknown): value is ComputeContractMeshd {
+  return validate("ComputeContractMeshd", value).length === 0;
+}
+
+export function assertComputeContractMeshd(value: unknown): asserts value is ComputeContractMeshd {
+  const issues = validate("ComputeContractMeshd", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeContractMeshd", issues);
+}
+
+export function parseComputeContractMeshd(value: unknown): ComputeContractMeshd {
+  assertComputeContractMeshd(value);
+  return value;
+}
+
+export function validateComputeContractMeshdPin(value: unknown): ApiIssue[] {
+  return validate("ComputeContractMeshdPin", value);
+}
+
+export function isComputeContractMeshdPin(value: unknown): value is ComputeContractMeshdPin {
+  return validate("ComputeContractMeshdPin", value).length === 0;
+}
+
+export function assertComputeContractMeshdPin(value: unknown): asserts value is ComputeContractMeshdPin {
+  const issues = validate("ComputeContractMeshdPin", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeContractMeshdPin", issues);
+}
+
+export function parseComputeContractMeshdPin(value: unknown): ComputeContractMeshdPin {
+  assertComputeContractMeshdPin(value);
   return value;
 }
 

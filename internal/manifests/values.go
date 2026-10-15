@@ -122,6 +122,15 @@ type Gateway struct {
 	TestRead          string
 	IdentityWorkspace string `json:",omitempty"`
 	Vault             GatewayVault
+	Requester         GatewayRequester
+}
+
+type GatewayRequester struct {
+	StateDir       string `json:",omitempty"`
+	Vault          GatewayVault
+	ExtraArgs      string
+	ExtraRead      string
+	ExtraProjected string
 }
 
 type GatewayVault struct {

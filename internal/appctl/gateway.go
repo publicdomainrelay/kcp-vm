@@ -21,21 +21,23 @@ import (
 )
 
 const (
-	GatewayRootName       = "gateway"
-	RootVaultAsset        = "bao"
-	rootVaultAppRole      = "approle"
-	rootVaultPKIMount     = "pki"
-	rootVaultKVMount      = "secret"
-	rootVaultPKIMaxTTL    = 8760 * time.Hour
-	ProfileGatewayProd    = "prod"
-	ProfileGatewayNetwork = "market-network"
-	GatewaySet            = "gateway"
-	GatewayApp            = "gateway"
-	WebAppComponent       = "socialweb-computer-k8s"
-	WebAppWebDir          = "socialweb-computer-k8s/web"
-	WebAppVaultClient     = "socialweb-computer-k8s"
-	WebAppVaultMount      = "socialweb-computer-k8s"
-	NodeGuestCurlHome     = "/root"
+	GatewayRootName        = "gateway"
+	RootVaultAsset         = "bao"
+	rootVaultAppRole       = "approle"
+	rootVaultPKIMount      = "pki"
+	rootVaultKVMount       = "secret"
+	rootVaultPKIMaxTTL     = 8760 * time.Hour
+	ProfileGatewayProd     = "prod"
+	ProfileGatewayNetwork  = "market-network"
+	GatewaySet             = "gateway"
+	GatewayApp             = "gateway"
+	WebAppComponent        = "socialweb-computer-k8s"
+	WebAppWebDir           = "socialweb-computer-k8s/web"
+	WebAppVaultClient      = "socialweb-computer-k8s"
+	WebAppVaultMount       = "socialweb-computer-k8s"
+	RequesterVaultMount    = "requester"
+	GatewayRequesterPolicy = "gateway-requester"
+	NodeGuestCurlHome      = "/root"
 )
 
 type WebApp struct {
@@ -111,11 +113,21 @@ func RootVaultDeclared() *v1alpha1.OpenBaoServerDeclared {
 	return d
 }
 
+func RequesterVaultRules() []v1alpha1.OpenBaoPolicyRule {
+	return []v1alpha1.OpenBaoPolicyRule{
+		{Path: WebAppVaultMount + "/data/oauth-sessions/*", Capabilities: []string{"create", "read", "update"}},
+		{Path: WebAppVaultMount + "/data/contracts/*", Capabilities: []string{"read"}},
+	}
+}
+
 func RootVaultSpec() v1alpha1.OpenBaoServerSpec {
+	declared := RootVaultDeclared()
+	declared.Policies = append(declared.Policies, v1alpha1.OpenBaoPolicy{Name: GatewayRequesterPolicy, Rules: RequesterVaultRules()})
 	return v1alpha1.OpenBaoServerSpec{Asset: &v1alpha1.HostProcessAsset{Name: RootVaultAsset},
 		Clients: []v1alpha1.OpenBaoServerClient{{Name: vaultlayout.RootClient, Policies: []string{vaultlayout.PolicyRootWriter}},
-			{Name: WebAppVaultClient, KVMount: WebAppVaultMount}},
-		Declared: RootVaultDeclared()}
+			{Name: WebAppVaultClient, KVMount: WebAppVaultMount},
+			{Name: RequesterVaultClient, KVMount: RequesterVaultMount, Policies: []string{GatewayRequesterPolicy}}},
+		Declared: declared}
 }
 
 func sameSpec(a, b any) bool {
@@ -235,14 +247,17 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 	}
 	st.Listeners = append(st.Listeners, core...)
 	webAppReady := true
-	webAppVault, haveVault := WebAppVaultOf(vault)
+	webAppVault, haveWebAppVault := WebAppVaultOf(vault)
+	requesterVault, haveRequesterVault := RequesterVaultOf(vault)
+	haveVault := haveWebAppVault && haveRequesterVault
 	if ctl.c.WebApp != nil && !haveVault {
 		webAppReady = false
 	}
 	if ctl.c.WebApp != nil && haveVault {
 		ws := ctl.c.workspace() + ":" + ComponentWorkspace
 		if ctl.applied[string(o.UID)] != o.Generation || ctl.lostComponent(ctx, owner) != "" {
-			values, err := GatewayValues(o, ctl.c.workspace(), ComponentStateDir(ctl.c.Layout.StateDir, WebAppComponent), *ctl.c.WebApp, webAppVault)
+			values, err := GatewayValues(o, ctl.c.workspace(), ComponentStateDir(ctl.c.Layout.StateDir, WebAppComponent),
+				ComponentStateDir(ctl.c.Layout.StateDir, RequesterComponent), *ctl.c.WebApp, webAppVault, requesterVault)
 			if err != nil {
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
 				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
@@ -306,27 +321,36 @@ func listJSON(items []string) (string, error) {
 	return string(b), err
 }
 
-func WebAppVaultOf(o *v1alpha1.OpenBaoServer) (manifests.GatewayVault, bool) {
+func clientVaultOf(o *v1alpha1.OpenBaoServer, client string) (manifests.GatewayVault, bool) {
 	if o == nil || !RootVaultSynced(o) || o.Status.Refs == nil || o.Status.Refs.CA == "" {
 		return manifests.GatewayVault{}, false
 	}
 	for _, c := range o.Status.Clients {
-		if c.Name == WebAppVaultClient && c.ClientCert != "" {
+		if c.Name == client && c.ClientCert != "" {
 			return manifests.GatewayVault{Server: o.Name, Client: c.Name}, true
 		}
 	}
 	return manifests.GatewayVault{}, false
 }
 
-func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vault manifests.GatewayVault) (manifests.Gateway, error) {
+func WebAppVaultOf(o *v1alpha1.OpenBaoServer) (manifests.GatewayVault, bool) {
+	return clientVaultOf(o, WebAppVaultClient)
+}
+
+func RequesterVaultOf(o *v1alpha1.OpenBaoServer) (manifests.GatewayVault, bool) {
+	return clientVaultOf(o, RequesterVaultClient)
+}
+
+func GatewayValues(o v1alpha1.Gateway, workspace, stateDir, requesterStateDir string, w WebApp, vault, requesterVault manifests.GatewayVault) (manifests.Gateway, error) {
 	if !filepath.IsAbs(w.FrontKubeconfig) {
 		return manifests.Gateway{}, fmt.Errorf("appctl: the %s web app needs an absolute kcp front kubeconfig", WebAppComponent)
 	}
 	v := manifests.Gateway{StateDir: stateDir, WebDir: manifests.UnderTSRoot(WebAppWebDir),
 		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone, Vault: vault,
-		IdentityWorkspace: workspace + ":" + ComponentWorkspace}
-	var trust, read []string
-	var extra []string
+		IdentityWorkspace: workspace + ":" + ComponentWorkspace,
+		Requester:         manifests.GatewayRequester{StateDir: requesterStateDir, Vault: requesterVault}}
+	var trust, read, requesterRead []string
+	var extra, requesterExtra []string
 	if n := o.Spec.Network; n != nil {
 		if n.CaBundleRef != "" {
 			v.TLS, trust = manifests.TLSTrust, []string{n.CaBundleRef}
@@ -336,20 +360,20 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 					return manifests.Gateway{}, err
 				}
 				v.ExtraProjected = "  - {name: network-ca, file: {path: " + string(q) + "}}\n"
-				extra = append(extra, "--node-guest-curl-home", NodeGuestCurlHome)
+				v.Requester.ExtraProjected = v.ExtraProjected
+				requesterExtra = append(requesterExtra, "--guest-curl-home", NodeGuestCurlHome)
 			}
 		}
-		if n.PlcDirectoryUrl != "" {
-			extra = append(extra, "--plc-directory-url", n.PlcDirectoryUrl)
-		}
-		if n.IngressProxyHost != "" {
-			extra = append(extra, "--ingress-proxy-host", n.IngressProxyHost)
-		}
-		if len(n.RelayUrls) > 0 {
-			extra = append(extra, "--relay-url", strings.Join(n.RelayUrls, ","))
-		}
-		if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
-			extra = append(extra, "--network-hosts", hosts)
+		for _, kv := range [][2]string{
+			{"--plc-directory-url", n.PlcDirectoryUrl},
+			{"--ingress-proxy-host", n.IngressProxyHost},
+			{"--relay-url", strings.Join(n.RelayUrls, ",")},
+			{"--network-hosts", NetworkHostsArg(n.Hosts)},
+		} {
+			if kv[1] != "" {
+				extra = append(extra, kv[0], kv[1])
+				requesterExtra = append(requesterExtra, kv[0], kv[1])
+			}
 		}
 	}
 	if len(o.Spec.BidderDids) > 0 {
@@ -360,6 +384,11 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 		return manifests.Gateway{}, err
 	}
 	extra = append(extra, opts...)
+	for _, opt := range o.Spec.Options {
+		if opt.Name == "oauth-client-id" && opt.Value != "" {
+			requesterExtra = append(requesterExtra, "--oauth-session-client-id", opt.Value)
+		}
+	}
 	if w.DownloadsDir != "" {
 		if !filepath.IsAbs(w.DownloadsDir) {
 			return manifests.Gateway{}, fmt.Errorf("appctl: the %s downloads dir %q is not absolute", WebAppComponent, w.DownloadsDir)
@@ -402,9 +431,12 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 				return manifests.Gateway{}, fmt.Errorf("appctl: spec.marketNetwork names %q, not an absolute path", file)
 			}
 			args, read = append(args, flag, file), append(read, file)
+			if flag == "--test-owner-sessions-file" {
+				requesterExtra, requesterRead = append(requesterExtra, flag, file), append(requesterRead, file)
+			}
 		}
 		if len(m.NodeGuestHostAliases) > 0 {
-			args = append(args, "--test-node-guest-host-aliases", strings.Join(m.NodeGuestHostAliases, ","))
+			requesterExtra = append(requesterExtra, "--guest-host-aliases", strings.Join(m.NodeGuestHostAliases, ","))
 		}
 		if v.TestArgs, err = fragment(args); err != nil {
 			return manifests.Gateway{}, err
@@ -412,6 +444,12 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 		if v.TestRead, err = fragment(read); err != nil {
 			return manifests.Gateway{}, err
 		}
+	}
+	if v.Requester.ExtraArgs, err = fragment(requesterExtra); err != nil {
+		return manifests.Gateway{}, err
+	}
+	if v.Requester.ExtraRead, err = fragment(requesterRead); err != nil {
+		return manifests.Gateway{}, err
 	}
 	return v, nil
 }

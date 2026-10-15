@@ -16,7 +16,7 @@
     },
     "state-dir": {
       "type": "string",
-      "description": "Directory holding OAuth sessions and the requester key",
+      "description": "Directory holding OAuth sessions when no OpenBaoServer is named",
       "env": "STATE_DIR",
       "default": ".socialweb-computer-k8s"
     },
@@ -195,12 +195,12 @@
     },
     "openbao-server": {
       "type": "string",
-      "description": "Name of the OpenBaoServer object (in openbao-server-workspace, read through kcp-kubeconfig) whose client openbao-client holds this web app's OAuth sessions and requester key; unset, they are files in state-dir",
+      "description": "Name of the OpenBaoServer object (in openbao-server-workspace, read through kcp-kubeconfig) whose client openbao-client holds this web app's OAuth sessions and the join-secret bundle of each NodeClaim contract; unset, the sessions are files in state-dir and no node is fulfilled",
       "env": "OPENBAO_SERVER"
     },
     "openbao-client": {
       "type": "string",
-      "description": "Client of the OpenBaoServer this web app logs in as with its client certificate; its kvMount holds the sessions and the requester key",
+      "description": "Client of the OpenBaoServer this web app logs in as with its client certificate; its kvMount holds the sessions and the bundles",
       "env": "OPENBAO_CLIENT",
       "default": "socialweb-computer-k8s"
     },
@@ -225,36 +225,10 @@
       "description": "Directory of each tenant cluster's public OpenBao CA (<cluster data dir name>.crt) that the cluster provider publishes; unset, the CA is read beside the cluster's token file",
       "env": "CLUSTER_CA_DIR"
     },
-    "openbao-addr": {
+    "contract-kcp-workspace": {
       "type": "string",
-      "description": "The application's OpenBao; when set, each in-flight NodeClaim's secrets-server key is kept there so a restarted door resumes Bidding and Provisioning claims instead of failing them",
-      "env": "SOCIALWEB_DOOR_OPENBAO_ADDR"
-    },
-    "openbao-token-file": {
-      "type": "string",
-      "description": "File holding the door's OpenBao token, read on every call so a rotated token is picked up",
-      "env": "SOCIALWEB_DOOR_OPENBAO_TOKEN_FILE"
-    },
-    "openbao-ca-file": {
-      "type": "string",
-      "description": "CA certificate the door trusts for its OpenBao",
-      "env": "SOCIALWEB_DOOR_OPENBAO_CA_FILE"
-    },
-    "openbao-kv-mount": {
-      "type": "string",
-      "description": "KV v2 mount the door's claim keys live under",
-      "env": "SOCIALWEB_DOOR_OPENBAO_KV_MOUNT",
-      "default": "secret"
-    },
-    "node-guest-ca-file": {
-      "type": "string",
-      "description": "PEM CA every node guest trusts (cloud-init ca_certs), for a market network whose TLS front has its own CA",
-      "env": "KCP_PROJECTED_NETWORK_CA"
-    },
-    "node-guest-curl-home": {
-      "type": "string",
-      "description": "CURL_HOME every node guest's systemd manager exports at boot, so its curl reads the bidder's curlrc",
-      "env": "SOCIALWEB_DOOR_NODE_GUEST_CURL_HOME"
+      "description": "kcp workspace the ComputeContract of each NodeClaim is written into; the requester controller of the same Gateway application carries it out",
+      "env": "CONTRACT_KCP_WORKSPACE"
     },
     "test-owner-sessions-file": {
       "type": "string",
@@ -265,11 +239,6 @@
       "type": "string",
       "description": "TEST ONLY: the address at which a node guest reaches this host's loopback; node guests download pinned downloads from http://<this>:<the bound http port> instead of public-origin, for a market network on one host",
       "env": "TEST_NODE_DOWNLOAD_HOST"
-    },
-    "test-node-guest-host-aliases": {
-      "type": "string",
-      "description": "TEST ONLY: comma-separated '<ip> <name>' /etc/hosts lines every node guest is given, for a market whose dispatcher has no public name",
-      "env": "TEST_NODE_GUEST_HOST_ALIASES"
     },
     "test-node-user-data-base-file": {
       "type": "string",

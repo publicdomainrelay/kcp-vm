@@ -1,0 +1,10 @@
+{
+  "name": "@publicdomainrelay/socialweb-computer-account-agents",
+  "version": "0.0.0",
+  "license": "Unlicense",
+  "exports": "./mod.ts",
+  "imports": {
+    "@publicdomainrelay/atproto-helpers": "jsr:@publicdomainrelay/atproto-helpers@^0",
+    "@publicdomainrelay/socialweb-computer-abc": "jsr:@publicdomainrelay/socialweb-computer-abc@^0"
+  }
+}

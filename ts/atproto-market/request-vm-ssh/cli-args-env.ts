@@ -3,7 +3,7 @@ import { ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION, ONLY_REMOTE_POLICY_EXEC_CLI_OPT
 export default {
   name: "request-vm-ssh",
   description:
-    "The requester DenoPod of a MarketRequester application. It runs only inside the application's own kcp, started by `socialweb-computer run request`; its contract is the ComputeContract object it names, its keys and secrets live in the application's own OpenBao.",
+    "The requester controller DenoPod of an application. It runs only inside the application's own kcp and carries out every ComputeContract object of its workspace: for a MarketRequester application (`socialweb-computer run request`) with the application's own identity, for a Gateway application with the delegated sessions of the accounts that own the contracts. Its keys and secrets live in the application's own OpenBao.",
   options: {
     "status-file": {
       type: "string" as const,
@@ -113,18 +113,41 @@ export default {
       description: "CA certificate of that kcp",
       env: "KCP_PROJECTED_KCP_CA",
     },
-    "compute-contract-name": {
-      type: "string" as const,
-      description: "The ComputeContract object this requester carries out",
-      default: "contract",
-    },
     "compute-contract-kcp-server": {
       type: "string" as const,
-      description: "kcp server holding the ComputeContract object (the application's own kcp)",
+      description: "kcp server holding the ComputeContract objects (the application's own kcp)",
     },
     "compute-contract-kcp-workspace": {
       type: "string" as const,
-      description: "kcp workspace holding the ComputeContract object",
+      description: "kcp workspace holding the ComputeContract objects; the controller carries out every one of them",
+    },
+    "account-session-vault-mount": {
+      type: "string" as const,
+      description: "kv mount that holds the accounts' OAuth sessions (oauth-sessions/<did>); set, the controller carries contracts for the accounts named by spec.ownerDid, with no identity of its own; unset, it carries contracts with the application's own MarketIdentity",
+    },
+    "test-owner-sessions-file": {
+      type: "string" as const,
+      description: "JSON object keyed by DID of password sessions (service, identifier, password) that stand in for an account's OAuth session in a market network",
+    },
+    "max-concurrent": {
+      type: "number" as const,
+      description: "How many contracts the controller carries out at once; the others wait Pending",
+      default: 64,
+    },
+    "per-account-max": {
+      type: "number" as const,
+      description: "How many contracts of one account the controller carries out at once",
+      default: 16,
+    },
+    "unclaimed-grace-ms": {
+      type: "number" as const,
+      description: "How long a VM receipt of a known account that no contract names waits before the controller releases it",
+      default: 600000,
+    },
+    "orphan-scan-interval-ms": {
+      type: "number" as const,
+      description: "How often the controller looks for VM receipts that no contract names",
+      default: 300000,
     },
     "market-root-name": {
       type: "string" as const,

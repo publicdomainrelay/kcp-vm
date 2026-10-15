@@ -39,6 +39,30 @@ type ComputeContractSpec struct {
 	SecretsRef *VaultRef `json:"secretsRef,omitempty"`
 
 	Release bool `json:"release,omitempty"`
+
+	OwnerDid string `json:"ownerDid,omitempty"`
+
+	Adopt bool `json:"adopt,omitempty"`
+
+	NodeJoin *ComputeContractNodeJoin `json:"nodeJoin,omitempty"`
+}
+
+type ComputeContractNodeJoin struct {
+	Cluster string `json:"cluster"`
+
+	Meshd *ComputeContractMeshd `json:"meshd,omitempty"`
+}
+
+type ComputeContractMeshd struct {
+	DownloadBase string `json:"downloadBase"`
+
+	Pins []ComputeContractMeshdPin `json:"pins"`
+}
+
+type ComputeContractMeshdPin struct {
+	Arch string `json:"arch"`
+
+	Sha256 string `json:"sha256"`
 }
 
 type ComputeContractPhase string
@@ -69,6 +93,8 @@ type ComputeContractStatus struct {
 	SecretsFetchedAt string `json:"secretsFetchedAt,omitempty"`
 
 	Contract *NodeClaimContract `json:"contract,omitempty"`
+
+	Grant *NodeClaimGrant `json:"grant,omitempty"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
