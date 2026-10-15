@@ -3749,6 +3749,18 @@ because it bounds a mechanism the rest of this document leans on.
   PolicyWorkflowRuns 500 per application workspace. The root's `spec.quota` overrides each (`-1` removes the
   limit). M4-SOAK-READING retunes them from the plateau it reads; until then a quota hit is a finding, not
   a fault.
+
+- **The bidder's kcp wait on the hot path is over 20 ms p95 when the host is oversubscribed (opened by
+  plan 0009 M4-LATENCY-READINGS, 2026-10-15).** The reading is in section 15. On a host at load 3 to 20
+  the wait (the gate `get` plus the Bid `createIfAbsent`) was 4.5 ms p50 and 5.7 ms p95 over 100 RFPs.
+  In two blocks run at load 35 on 16 cores it was 5.6 and 4.9 ms p50 and 24.1 and 26.9 ms p95, and
+  `rfp seen -> bid published` was in queue collapse in the same blocks, so the stall is the process's
+  scheduling and not kcp (the same client against the same kcp measured 0.7 ms p95 for a `get` and
+  1.9 ms for a create at load 4 to 5). Not closed: the budget is held where it was measured and not
+  where the host is starved. The rule when it recurs on a host below load 16, or in the prod bidder's
+  `status.market` readings, is the one the plan wrote down: the Bid create moves after the publish and
+  dedup falls back to the market.bid record key (an rkey derived from the RFP uri). It needs a reading
+  of the prod bidder (hat-8, the lead).
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,
@@ -8174,6 +8186,98 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   two market RFP VMs joined and both pods ran (first NodeClaim +19.3 s, both pods Ready +67.8 s). The same
   network without a policy or extra bidders peaked at 197 MB. Not read: the prod gateway, which the lead
   deploys.
+
+- **What kcp costs the market loop's hot path, read live (plan 0009 M4-LATENCY-READINGS, 2026-10-15).**
+  The market loop runs in kcp; the bidder waits on kcp twice before it publishes a bid: one `get` in
+  the RFP gate (`bidLoop.rfpGate`, is there a Bid for this RFP) and one `createIfAbsent` (`ledger.claim`,
+  the Bid). The `published` patch is not awaited. Conditions of every number: a dev build of the tree at
+  bc6ed7d5 (`scripts/build-socialweb-computer.sh --dev --publish`, TypeScript run live from the
+  mirror), hat-8 (16 cores, 47 GiB), market network `dev up --profile market-network --bidders 1
+  --with-gateway` as test-0001, fresh network per series, guest image at
+  `/var/lib/socialweb-computer/guest-image`. The host is shared: other agents' builds and networks ran
+  throughout (load average 1/5/15 min is given per series), and the live slot was held. Warm: every
+  series ran after the network had served other RFPs; the first 8 RFPs after a bidder restart are
+  dropped. p50/p95 in ms; max in brackets where it differs.
+  1. kcp operation latency (`kcpbench.ts` against the instance's admin kubeconfig, the real
+     `createKcpBidLedger` and `kcpResourceClient`, 300 sequential iterations after 10 warm-up, three
+     runs each, load 4 to 5). Bidder kcp, kine on sqlite, the Bid ledger: `get` miss 0.54-0.57 /
+     0.73-0.89, `createIfAbsent` 1.21-1.29 / 1.76-1.96, `patchStatus` 2.13-2.27 / 2.96-3.62, `get` hit
+     0.70-0.72 / 0.92-1.10 (p99 of the create 2.5-8.4). The same bidder kcp with a ConfigMap, create
+     0.95-1.00 / 1.33-1.48, merge patch 1.05-1.10 / 1.55-2.04. A kcp on kine over postgres
+     (`dev up --profile prodlike`, the gateway's store; the Bid kind is not applied there, so a
+     ConfigMap): `get` miss 0.59-0.63 / 0.74-1.07, create 1.60-1.77 / 1.96-2.90, merge patch
+     1.67-1.82 / 2.00-2.87, `get` hit 0.57-0.60 / 0.69-1.05. In this network the gateway child's own kcp
+     is on sqlite (`table.Dev(..., StoreSqlite)`); the postgres figures are the prodlike instance's, a
+     reading of the engine and not of the prod gateway, which was not read.
+  2. kcp in the RFP path, in the bidder process (log lines `bid_gate_find` and `bid_claim`, each with
+     `ms`, written around the two awaits; temporary, in the mirror of the working tree only, not
+     committed, with `rfpUri` added to `bidder created bid config` and `bidder created VM bid` and a
+     `policy_eval` line around the attached-policy loop). RFPs came from 108 ComputeContracts per
+     block created at 4 s spacing in the gateway's requester (policy `bid-payload` attached, so every
+     RFP carries a policy record; the requester's `denyBidderDids` keeps the bid from being accepted,
+     so no guest is born; the first 8 dropped, 100 RFPs per block).
+     Block V1 (kcp on, policy evaluated in the PolicyEngine DenoPod; load 8.9 / 20.0 / 21.4): gate
+     `get` 1.7 / 2.1 (2.4), claim 2.7 / 3.9 (12.2), kcp wait on the path 4.5 / 5.7 (14.1);
+     `rfp watch discovered -> bidder created VM bid` 769 / 981 (1758); `dispatch: resolving rfp ->
+     bid` 767 / 979. Block V3 (kcp on, policy evaluated in the bidder's own net-only Worker; load 3.4 /
+     7.4 / 14.7): gate 1.7 / 2.2 (2.6), claim 2.7 / 4.0 (27.5), kcp wait 4.5 / 5.8 (29.1); seen to bid
+     1197 / 1372 (2390). 200 RFPs in all, one block each. The requester's own `rfp_created ->
+     firehose_bid_discovered` was 794 / 1032 in V1 and 1257 / 1448 in V3, and the bidder saw the RFP
+     10 / 21 ms (V1) and 25 / 60 ms (V3) after the requester created it. Of the 769 ms p50 in V1,
+     607 ms is `bidder received VM RFP -> bidder created bid config` (the policy evaluation, 502 / 549,
+     the claim and the PDS write of the bid config) and 152 ms the two PDS writes of the payload and
+     the signed bid; the kcp wait is 0.6 percent of the span.
+  3. Before and after. The pre-plan commit was not rebuilt: its requester ran one contract per
+     DenoPod, so 200 RFPs through it would be 200 cold kcp starts, and the comparison asked is what kcp
+     adds. The bidder with its Bid ledger switched off (`bids: undefined` in the mirror of
+     `market-bidder/mod.ts`, then `dev restart` of the bidder DenoPod; no gate lookup, no Bid) is the
+     "before" of the hot path. Block V2 (ledger off, engine; the load rose from 7 to 35 during the
+     block): seen to bid 762 / 3503 (4276). The p95 is the host's: the same block's policy evaluation,
+     which has no kcp in it, went to 991 p95 and 2569 max. Subtracting the in-situ kcp wait from
+     each RFP of V1 is the counterfactual without any host difference: 764 p50 and about 975 p95. kcp adds 4.5 ms p50 and 5.7 ms p95 to `rfp seen -> bid published` over
+     the 200 RFPs of V1 and V3 (the larger max of V3 is one claim of 27.5 ms), against the 20 ms
+     budget: within it.
+  4. The budget does not hold on a starved host. Two further V1 blocks ran at load 35 (1/5/15 min
+     35.8 / 18.2 / 16.9 and 35.4 / 22.6 / 18.8): the kcp wait was 5.6 / 24.1 (33.5) and 4.9 / 26.9
+     (42.7), and `rfp seen -> bid published` queued past 5 minutes because the bidder could not keep
+     up with one RFP per 4 s (policy evaluation 1.7 s and 3.4 s p50). Earlier series at 1 RFP per
+     second and at 1 per 2.5 s, at load 30 to 57, queued to 27 s and 82 s the same way. Opened as a section 14 item;
+     the fallback is not built because the two quiet blocks are within budget and the loaded ones
+     show the process starved, not kcp slow (item 1 measured the same client at 0.7 ms p95 for a
+     `get`). No block with the ledger off was usable as a second reading at load 35.
+  5. A verdict miss, in process versus through the engine, on the RFP's attached policy (`policy_eval`,
+     n 100 each): through the PolicyEngine DenoPod 502 / 549 (1455), in the bidder's net-only Worker
+     542 / 579 (1719). The engine is not slower; both are dominated by resolving the policy record from
+     the PDS and running the workflow, and the local hop does not show against that. The scope lane
+     (`dispatch: running scope filter -> scope filter done`) was 0 / 1 ms on a cache hit and 97 ms
+     on one RFP (the block's maximum, taken to be the one verdict miss after the restart; the bidder's
+     own scope policy runs in the bidder, so a miss is in process). Not isolated: the engine's own task time
+     separate from the PDS read, and the engine under concurrent load.
+  6. The loop around it (3 concurrent ComputeContracts in the gateway's requester, no attached
+     policy, guest image booted by the bidder's systemd-user VM backend; offsets from the start of
+     the contract, ms, range of the 6 guests that booted; load 14.6 to 29.3): vm record 63-345, RFP
+     record created 171-736, RFP delivered to the bidder 966-3563 (the requester's own PDS writes
+     queue behind each other), bid seen 940-3613, winner 1254-3831, accept record 1406-4028, accept
+     answered with the receipt 2074-5087 (accept to receipt 650-1490), receipt verified 2156-5175,
+     guest on-network event 12322-20452 (receipt to on-network 7700-18100), host keys reported
+     23780-33929, iroh ticket 28090-36734, contract Held 28208-36826 (receipt to Held 23600-34500).
+     Of 9 contracts in 3 rounds, the 3 of one round ended at about 23 s: `the bidder ended the
+     contract: ComputeVM ... was not Running` (the guest did not come up while the load was 29 and
+     fell to 12). One `run request --network` (a kcp of its own, 24.2 s cold): Pending to the RFP
+     submitted 1 s, receipt 1 s later, host keys 19 s after that, Held 23 s after Pending, the command
+     ran, `vm.delete` accepted 200, the invocation's kcp stopped 12 s after the release.
+  7. Guest identity, in that guest (`guest-login.sh` run through `--exec`; the guest booted at
+     22:50:36, `guest-login.service` bound the ssh host key at 22:50:48 and logged in a second later):
+     a login (challenge, signature, login) 73-88 ms over 10 calls; a token for the audience
+     `api://guest-kcp?actx=<computevm>` through guest-kcp 71-168 ms, median 96, over 25 of 30 calls;
+     5 of the 30 took 4.10 to 4.16 s, the 4 s the script sleeps after a reply that is not 200 (the
+     reply was not captured; guest-kcp has a token bucket per role, which is the suspect). A call to
+     a closed local port from the same shell is 5 ms.
+  8. Not read: the prod bidder and gateway (lead only); the pre-plan commit; the engine hop apart
+     from the policy; postgres with the Bid kind; more than one bidder. The ledger-off block ran after
+     a bidder restart that replays the stream from its stored cursor; with the ledger off nothing
+     dedups the replay, so each restart of that variant re-bid old RFPs for up to 112 s before the
+     block began (the block waited for the log to go quiet).
 
 ## 16. Vocabulary
 

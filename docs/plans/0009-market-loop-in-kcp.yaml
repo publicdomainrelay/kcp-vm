@@ -311,7 +311,7 @@ items:
     files: ["docs/ARCHITECTURE.md"]
     done_when: "the readings are recorded and within budget, or the fallback is in and re-measured."
     risks: []
-    status: todo
+    status: done
     evidence:
 not_doing:
   - "Observed* mirror objects for every market record: a write per record, and the PDS already holds the record."
