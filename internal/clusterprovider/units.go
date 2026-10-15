@@ -390,10 +390,36 @@ func (h *UnitsHost) DeleteStore(ctx context.Context, key string) error {
 	h.mu.Lock()
 	delete(h.stores, key)
 	h.mu.Unlock()
-	err := h.pgs.Delete(ctx, StoreName(key), metav1.DeleteOptions{})
+	name := StoreName(key)
+	cur, err := h.pgs.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := unstructured.SetNestedField(cur.Object, true, "spec", "deleteData"); err != nil {
+		return err
+	}
+	if _, err := h.pgs.Update(ctx, cur, metav1.UpdateOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	err = h.pgs.Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
+	return nil
+}
+
+func (h *UnitsHost) PurgeData(key string) error {
+	dir, err := ClusterDataDir(h.c.StateDir, key)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("clusterprovider: purging the data directory %s of deleted cluster %s: %w", dir, key, err)
+	}
+	h.c.Log.Info("cluster provider: identity bundle purged", "cluster", key, "dataDir", dir)
 	return nil
 }
 

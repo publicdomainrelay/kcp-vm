@@ -108,9 +108,13 @@ func (p *Provider) removeStore(ctx context.Context, key string) {
 	if err := p.units.DeleteStore(ctx, key); err != nil {
 		p.log.Warn("cluster provider: deleting the Postgres object of a deleted cluster did not complete",
 			"key", key, "error", err.Error())
-		return
+	} else {
+		p.log.Info("cluster provider: deleted the Postgres object of a deleted cluster; its data is removed with it", "key", key)
 	}
-	p.log.Info("cluster provider: deleted the Postgres object of a deleted cluster; its data directory is kept", "key", key)
+	if err := p.units.PurgeData(key); err != nil {
+		p.log.Warn("cluster provider: purging the data directory of a deleted cluster did not complete",
+			"key", key, "error", err.Error())
+	}
 }
 
 func (p *Provider) reapNodeHosts(ctx context.Context) error {

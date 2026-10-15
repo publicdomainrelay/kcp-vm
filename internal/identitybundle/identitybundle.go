@@ -98,6 +98,45 @@ func Sum(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
+const ClusterUIDFile = "cluster-uid"
+
+var ErrEarlierCreation = errors.New("identitybundle: identity bundle belongs to an earlier creation of this cluster")
+
+func ReadClusterUID(dir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, ClusterUIDFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("identitybundle: reading %s: %w", ClusterUIDFile, err)
+	}
+	return string(raw), nil
+}
+
+func WriteClusterUID(dir, uid string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("identitybundle: mkdir for %s: %w", ClusterUIDFile, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ClusterUIDFile), []byte(uid), 0o600); err != nil {
+		return fmt.Errorf("identitybundle: write %s: %w", ClusterUIDFile, err)
+	}
+	return nil
+}
+
+func BindClusterUID(dir, uid string) (adopted bool, err error) {
+	have, err := ReadClusterUID(dir)
+	if err != nil {
+		return false, err
+	}
+	switch have {
+	case uid:
+		return false, nil
+	case "":
+		return true, WriteClusterUID(dir, uid)
+	}
+	return false, fmt.Errorf("%w: it is bound to cluster uid %s and this creation is %s", ErrEarlierCreation, have, uid)
+}
+
 func equal(a, b []byte) bool {
 	if len(a) != len(b) {
 		return false

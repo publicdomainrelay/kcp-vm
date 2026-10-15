@@ -63,6 +63,20 @@ func GuardFor(d GuardDeps) materialiser.IdentityGuard {
 			return fmt.Errorf("%w (cluster %s)", ErrNoBundle, cluster)
 		}
 
+		if uid := string(o.Cluster.UID); uid != "" {
+			bdir, err := BundleDir(d.StateDir, cluster)
+			if err != nil {
+				return err
+			}
+			adopted, err := identitybundle.BindClusterUID(bdir, uid)
+			if err != nil {
+				return fmt.Errorf("clusterprovider: %s: refusing to seed or verify it: %w", cluster, err)
+			}
+			if adopted {
+				log.Info("guard: identity bundle adopted for uid", "cluster", cluster, "uid", uid)
+			}
+		}
+
 		plan, err := instance.PlanFor(d.Token(cluster), d.HasRow != nil && d.HasRow(cluster))
 		if err != nil {
 			return fmt.Errorf("clusterprovider: the token plan for %s: %w", cluster, err)
