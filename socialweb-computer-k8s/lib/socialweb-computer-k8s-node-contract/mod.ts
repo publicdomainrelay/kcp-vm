@@ -39,6 +39,7 @@ export function grantingCapability(
     id: inner.id,
     userDataModule: inner.userDataModule,
     prepare: inner.prepare ? (ctx) => inner.prepare!(ctx) : undefined,
+    rbacRecord: inner.rbacRecord ? (vars) => inner.rbacRecord!(vars) : undefined,
     async onContract(vars) {
       await beforeGrant(vars);
       await inner.onContract?.(vars);
