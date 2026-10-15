@@ -165,7 +165,7 @@ items:
       - go build fails with "has no lexicon" or a lexicon parse error from loadCatalog (xrpcserver.go:104-107).
     done_when: "both copies are equal, carry minimum/maximum and the two errors, and the binary builds."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M1-PKI-ROLE
     milestone: M1
