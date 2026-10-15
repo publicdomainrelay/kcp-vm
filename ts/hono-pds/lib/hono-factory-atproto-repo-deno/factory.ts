@@ -723,6 +723,51 @@ export function createRepoFactory(opts: RepoFactoryOptions): RepoFactory {
       return c.json({ redirect_uri: `${redirectUri}?${redirectParams.toString()}`, code });
     });
 
+    app.get("/oauth/authorize", (c) => {
+      const requestUri = c.req.query("request_uri") ?? "";
+      const clientId = c.req.query("client_id") ?? "";
+      if (!requestUri || !clientId) return c.text("request_uri and client_id are required", 400);
+      const handoff = JSON.stringify({ requestUri, clientId }).replace(/</g, "\\u003c");
+      return c.html(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in</title></head>
+<body>
+<main>
+<h1>Sign in</h1>
+<form id="signin">
+<p><input type="text" id="identifier" name="identifier" placeholder="handle or email" autocomplete="username" required></p>
+<p><input type="password" id="password" name="password" placeholder="password" autocomplete="current-password" required></p>
+<p><button type="submit" id="submit">Sign in</button></p>
+<p id="error" role="alert"></p>
+</form>
+</main>
+<script>
+const handoff = ${handoff};
+document.getElementById("signin").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const body = new URLSearchParams({
+    identifier: document.getElementById("identifier").value,
+    password: document.getElementById("password").value,
+    request_uri: handoff.requestUri,
+    client_id: handoff.clientId,
+  });
+  const res = await fetch("/oauth/authorize", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.redirect_uri) {
+    document.getElementById("error").textContent = data.error_description || data.error || ("HTTP " + res.status);
+    return;
+  }
+  window.location.href = data.redirect_uri;
+});
+</script>
+</body>
+</html>`);
+    });
+
     // POST /oauth/token — refresh_token + authorization_code grants
     app.post("/oauth/token", async (c) => {
       let body: URLSearchParams;

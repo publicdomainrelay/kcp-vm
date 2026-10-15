@@ -2,7 +2,10 @@
 import puppeteer from "npm:puppeteer-core@23";
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
 
-const args = parseArgs(Deno.args, { string: ["creds", "account", "url", "out", "done", "chrome"] });
+const args = parseArgs(Deno.args, {
+  string: ["creds", "account", "url", "out", "done", "chrome", "sign-in-as", "cookie-file", "chrome-arg"],
+  collect: ["chrome-arg"],
+});
 const fail = (msg: string): never => {
   console.error(`oauth-signin: ${msg}`);
   Deno.exit(2);
@@ -23,7 +26,7 @@ const origin = new URL(args.url!).origin;
 const browser = await puppeteer.launch({
   executablePath: args.chrome ?? "/usr/bin/google-chrome",
   headless: true,
-  args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  args: ["--no-sandbox", "--disable-dev-shm-usage", ...((args["chrome-arg"] as string[] | undefined) ?? [])],
 });
 const page = await browser.newPage();
 page.setDefaultTimeout(60_000);
@@ -55,7 +58,7 @@ try {
   );
   if (handleInput && new URL(page.url()).origin === origin) {
     await handleInput.click();
-    await handleInput.type(handle);
+    await handleInput.type((args["sign-in-as"] as string | undefined) ?? handle);
     await page.keyboard.press("Enter");
     await page.waitForNavigation({ waitUntil: "networkidle2" }).catch(() => {});
     await step("to-authorization-server");
@@ -90,6 +93,12 @@ try {
   if (new URL(page.url()).origin !== origin) throw new Error(`still on ${new URL(page.url()).origin} after consent`);
   if (args.done) await page.waitForFunction((t: string) => document.body.innerText.includes(t), { timeout: 60_000 }, args.done);
   await pause(3000);
+  const cookies = (await page.cookies()).map((c) => ({ name: c.name, httpOnly: c.httpOnly, secure: c.secure, sameSite: c.sameSite, path: c.path }));
+  console.log(JSON.stringify({ cookies }));
+  if (args["cookie-file"]) {
+    const jar = await page.cookies();
+    await Deno.writeTextFile(args["cookie-file"] as string, JSON.stringify(jar), { mode: 0o600 });
+  }
   await step("done");
   console.log(JSON.stringify({ ok: true, screenshots: out }));
 } catch (err) {
