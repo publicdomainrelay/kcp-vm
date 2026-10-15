@@ -56,9 +56,11 @@ export interface RequestProofClaims {
   jti: string;
 }
 
+export const HOUR_SEC = 3_600;
+
 export const DAY_SEC = 86_400;
 
-export const DEFAULT_KUBECONFIG_TTL_CHOICES_SEC: readonly number[] = [DAY_SEC, 7 * DAY_SEC, 30 * DAY_SEC];
+export const DEFAULT_KUBECONFIG_TTL_CHOICES_SEC: readonly number[] = [HOUR_SEC, 8 * HOUR_SEC, DAY_SEC];
 
 export function ttlChoicesUpTo(maxSec: number, choices: readonly number[] = DEFAULT_KUBECONFIG_TTL_CHOICES_SEC): number[] {
   const allowed = choices.filter((c) => c <= maxSec);

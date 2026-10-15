@@ -24,7 +24,7 @@ export function nodeClaimKey(claim: Pick<NodeClaim, "workspace" | "name">): stri
 export interface ClusterGateway {
   list(did: string): Promise<ClusterSummary[]>;
   create(did: string, name: string): Promise<ClusterPhaseResult>;
-  kubeconfig(did: string, name: string, ttlSeconds?: number): Promise<KubeconfigGrant>;
+  kubeconfig(did: string, name: string, ttlSeconds?: number, noExpiry?: boolean): Promise<KubeconfigGrant>;
   up(did: string, name: string): Promise<ClusterPhaseResult>;
   down(did: string, name: string): Promise<ClusterPhaseResult>;
   remove(did: string, name: string): Promise<ClusterPhaseResult>;

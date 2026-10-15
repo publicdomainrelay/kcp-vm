@@ -69,9 +69,10 @@ export function createXrpcClusterGateway(opts: XrpcClusterGatewayOptions): Clust
     create(did, name) {
       return call<ClusterPhaseResult>(did, CLUSTER_NSID.createCluster, { name });
     },
-    kubeconfig(did, name, ttlSeconds) {
+    kubeconfig(did, name, ttlSeconds, noExpiry) {
       const body: Record<string, unknown> = { name };
       if (typeof ttlSeconds === "number") body.ttlSeconds = ttlSeconds;
+      if (noExpiry === true) body.noExpiry = true;
       return call<KubeconfigGrant>(did, CLUSTER_NSID.getKubeconfig, body);
     },
     up(did, name) {

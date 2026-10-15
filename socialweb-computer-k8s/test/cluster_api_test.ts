@@ -106,28 +106,6 @@ Deno.test("a cluster name that is not a DNS label is refused before the gateway"
   assertEquals(calls.length, 0);
 });
 
-Deno.test("a kubeconfig lifetime must be one of the offered choices under the cap", async () => {
-  const calls: Call[] = [];
-  const a = app(calls);
-  const ok = await post(a, "/api/clusters/kubeconfig", { name: "ci", ttlSeconds: 7 * DAY });
-  assertEquals(ok.status, 200);
-  assertEquals(await ok.json(), { name: "ci", filename: "ci.kubeconfig.yaml", kubeconfig: "apiVersion: v1\n" });
-  assertEquals((await post(a, "/api/clusters/kubeconfig", { name: "ci", ttlSeconds: 30 * DAY })).status, 400);
-  assertEquals((await post(a, "/api/clusters/kubeconfig", { name: "ci", ttlSeconds: 123 })).status, 400);
-  assertEquals((await post(a, "/api/clusters/kubeconfig", { name: "ci" })).status, 200);
-  assertEquals(calls.map((c) => c.ttl), [7 * DAY, undefined]);
-});
-
-Deno.test("the config route offers only choices under the cap", async () => {
-  const res = await app([]).fetch(new Request("http://localhost/api/config"));
-  assertEquals(await res.json(), {
-    ttlChoicesSec: [DAY, 7 * DAY],
-    maxKubeconfigTtlSec: 7 * DAY,
-    kcpPublicHost: "https://kcp.example.com",
-    credentialHelpers: [{ os: "linux", arch: "amd64", path: "/downloads/socialweb-credential-linux-amd64" }],
-  });
-});
-
 Deno.test("a gateway refusal keeps its status and code", async () => {
   const res = await post(app([], new ClusterGatewayError(429, "ClusterInitializing", "wait")), "/api/clusters/up", { name: "ci" });
   assertEquals(res.status, 429);

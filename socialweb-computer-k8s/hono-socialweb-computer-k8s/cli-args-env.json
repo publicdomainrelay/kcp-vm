@@ -94,9 +94,9 @@
     },
     "kubeconfig-max-ttl-sec": {
       "type": "number",
-      "description": "Longest kubeconfig lifetime a user may pick",
+      "description": "Longest kubeconfig certificate lifetime a user may pick (at most 86400)",
       "env": "KUBECONFIG_MAX_TTL_SEC",
-      "default": 2592000
+      "default": 86400
     },
     "downloads-subdir": {
       "type": "string",

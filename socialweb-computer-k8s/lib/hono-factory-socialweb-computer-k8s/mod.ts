@@ -128,6 +128,13 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
         const req = await named(c);
         if (req instanceof Response) return req;
         const requested = req.input.ttlSeconds;
+        if (req.input.noExpiry !== undefined && typeof req.input.noExpiry !== "boolean") {
+          return c.json({ error: "InvalidRequest", message: "noExpiry must be a boolean" }, 400);
+        }
+        const noExpiry = req.input.noExpiry === true;
+        if (noExpiry && requested !== undefined) {
+          return c.json({ error: "InvalidRequest", message: "noExpiry and ttlSeconds are mutually exclusive" }, 400);
+        }
         let ttl: number | undefined;
         if (requested !== undefined) {
           if (typeof requested !== "number" || !ttlChoices.includes(requested)) {
@@ -136,8 +143,9 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
           ttl = requested;
         }
         try {
-          const grant = await opts.gateway.kubeconfig(req.did, req.name, ttl);
-          log("cluster_api_ok", { did: req.did, action: "kubeconfig", name: req.name, ttlSeconds: ttl ?? null });
+          const grant = await opts.gateway.kubeconfig(req.did, req.name, ttl, noExpiry);
+          log("cluster_api_ok", { did: req.did, action: "kubeconfig", name: req.name, ttlSeconds: ttl ?? null, noExpiry });
+          c.header("Cache-Control", "no-store");
           return c.json({ name: req.name, filename: kubeconfigFilename(req.name), kubeconfig: grant.kubeconfig });
         } catch (err) {
           return failure(c, req.did, "kubeconfig", err);

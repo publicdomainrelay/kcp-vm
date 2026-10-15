@@ -81,8 +81,11 @@ export function deleteCluster(session, name) {
   return call(session, '/api/clusters/delete', { name });
 }
 
-export function fetchKubeconfig(session, name, ttlSeconds) {
-  return call(session, '/api/clusters/kubeconfig', ttlSeconds ? { name, ttlSeconds } : { name });
+export function fetchKubeconfig(session, name, ttlSeconds, noExpiry) {
+  const body = { name };
+  if (noExpiry) body.noExpiry = true;
+  else if (ttlSeconds) body.ttlSeconds = ttlSeconds;
+  return call(session, '/api/clusters/kubeconfig', body);
 }
 
 export function saveText(filename, text) {

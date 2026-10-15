@@ -12,6 +12,7 @@ import {
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 const SETTLING = new Set(['Initializing', 'Draining']);
 const POLL_MS = 5000;
+const NEVER = 'never';
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => (
@@ -20,10 +21,11 @@ function esc(value) {
 }
 
 function ttlLabel(sec) {
+  const hours = sec / 3600;
+  if (Number.isInteger(hours) && hours < 24) return hours === 1 ? '1 hour' : `${hours} hours`;
   const days = sec / 86400;
   if (Number.isInteger(days)) return days === 1 ? '1 day' : `${days} days`;
-  const hours = sec / 3600;
-  return Number.isInteger(hours) ? `${hours} hours` : `${sec} s`;
+  return `${sec} s`;
 }
 
 function phaseChip(cluster) {
@@ -36,7 +38,7 @@ export class SwcClusterList extends HTMLElement {
     this._session = session;
     this._onExpired = onExpired || (() => {});
     this._clusters = [];
-    this._config = { ttlChoicesSec: [86400], credentialHelpers: [], kcpPublicHost: null };
+    this._config = { ttlChoicesSec: [28800], credentialHelpers: [], kcpPublicHost: null };
     this._busy = new Set();
     this._error = '';
     this._render();
@@ -95,7 +97,7 @@ export class SwcClusterList extends HTMLElement {
   _render() {
     const ttlOptions = (this._config.ttlChoicesSec || [])
       .map((sec) => `<option value="${sec}">${esc(ttlLabel(sec))}</option>`)
-      .join('');
+      .join('') + `<option value="${NEVER}">Never expires (until revoked)</option>`;
     const rows = this._clusters.map((c) => {
       const busy = this._busy.has(c.name);
       const running = c.running && c.phase !== 'Draining';
@@ -170,9 +172,14 @@ export class SwcClusterList extends HTMLElement {
 
   _onAction(name, act, row) {
     if (act === 'kubeconfig') {
-      const ttl = Number(row.querySelector('select.ttl').value) || undefined;
+      const choice = row.querySelector('select.ttl').value;
+      const noExpiry = choice === NEVER;
+      const ttl = noExpiry ? undefined : Number(choice) || undefined;
+      if (noExpiry && !window.confirm(
+        `This kubeconfig for ${name} never expires. It works until it is revoked, the cluster is deleted, or the cluster CA expires. Anyone who holds the file has your access. Issue it?`,
+      )) return;
       return this._act(name, async () => {
-        const grant = await fetchKubeconfig(this._session, name, ttl);
+        const grant = await fetchKubeconfig(this._session, name, ttl, noExpiry);
         saveText(grant.filename, grant.kubeconfig);
       });
     }
