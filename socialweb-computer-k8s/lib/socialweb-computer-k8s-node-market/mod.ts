@@ -137,8 +137,21 @@ function stateOfContract(contract: ComputeContract): ContractState | null {
   }
 }
 
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, v]) => v !== undefined)
+        .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+        .map(([k, v]) => [k, canonical(v)]),
+    );
+  }
+  return value;
+}
+
 function sameStatus(a: NodeClaimStatus, b: NodeClaimStatus): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 }
 
 export function createNodeClaimMapper(opts: NodeClaimMapperOptions): NodeClaimMapper {

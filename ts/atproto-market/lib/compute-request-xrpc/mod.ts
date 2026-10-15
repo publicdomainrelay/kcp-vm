@@ -94,6 +94,7 @@ import type {
   FlowDecision,
   NetworkEvent,
   RecordRef,
+  WinnerReason,
 } from "@publicdomainrelay/compute-request-abc";
 import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import {
@@ -1544,6 +1545,7 @@ runcmd:
     let earlyWinner: CollectedBid | undefined;
     let bidCount = resume?.bids ?? 0;
     let winner: CollectedBid;
+    let winnerReason: WinnerReason = "resumed";
     if (resumedAccept) {
       const found = resumedAccept;
       const bidRecord = await resolveRecord(found.bid).catch((err): Record<string, unknown> => {
@@ -1572,9 +1574,10 @@ runcmd:
       const decideBid = (bid: CollectedBid): Promise<BidDecision> => {
         let decision = bidDecisions.get(bid.uri);
         if (!decision) {
+          const arrivedAt = nowIso();
           decision = (async () => {
             const startedAt = Date.now();
-            const d = await runHandler("onBid", handlers.onBid, { bid });
+            const d = await runHandler("onBid", handlers.onBid, { bid, arrivedAt });
             const result: BidDecision = d === "deny" ? "deny" : "accept";
             log("bid_decide", {
               uri: bid.uri,
@@ -1647,6 +1650,7 @@ runcmd:
       }
 
       winner = earlyWinner ?? selectWinner(candidates)!;
+      winnerReason = earlyWinner ? "firstFree" : "bestWithinWindow";
     }
     log("winner", { uri: winner.uri, did: winner.did, viaFirstFree: !!earlyWinner });
     const submitAcceptTarget = winner.record.submitAccept as string | undefined;
@@ -1738,6 +1742,20 @@ runcmd:
           error: `winner rejected by policy: ${evalResult.violations.map((v) => v.msg).join("; ")}`,
           bids: bidCount,
         });
+      }
+    }
+
+    if (policyRef && winnerReason === "bestWithinWindow") winnerReason = "policy";
+    if (!resumedAccept) {
+      try {
+        await handlers.onWinner?.({
+          bid: { uri: winner.uri, cid: winner.cid },
+          did: winner.did,
+          reason: winnerReason,
+          considered: bidCount,
+        }, structuredClone(state));
+      } catch (err) {
+        log("compute_handler_failed", { handler: "onWinner", error: String(err) });
       }
     }
 

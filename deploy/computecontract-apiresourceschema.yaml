@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-3.computecontracts.socialweb.computer
+  name: v1alpha1-4.computecontracts.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -393,6 +393,56 @@ spec:
                   - issuer
                   - subject
                   - audience
+              bids:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    did:
+                      type: string
+                    uri:
+                      type: string
+                    offer:
+                      type: string
+                    cost:
+                      type: integer
+                      format: int64
+                    verdict:
+                      type: string
+                      enum:
+                        - considered
+                        - denied
+                        - chosen
+                        - notChosen
+                        - policyRejected
+                    arrivedAt:
+                      type: string
+                  required:
+                    - did
+                    - uri
+                    - verdict
+                    - arrivedAt
+              chosen:
+                type: object
+                properties:
+                  uri:
+                    type: string
+                  did:
+                    type: string
+                  reason:
+                    type: string
+                    enum:
+                      - firstFree
+                      - bestWithinWindow
+                      - policy
+                      - resumed
+                  considered:
+                    type: integer
+                required:
+                  - uri
+                  - did
+                  - reason
+                  - considered
               conditions:
                 type: array
                 items:

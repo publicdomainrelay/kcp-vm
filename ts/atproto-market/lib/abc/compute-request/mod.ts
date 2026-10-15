@@ -375,6 +375,16 @@ export interface RfpSubmittedEvent {
 
 export interface BidEvent {
   bid: BidView;
+  arrivedAt: string;
+}
+
+export type WinnerReason = "firstFree" | "bestWithinWindow" | "policy" | "resumed";
+
+export interface WinnerEvent {
+  bid: RecordRef;
+  did: string;
+  reason: WinnerReason;
+  considered: number;
 }
 
 export interface AcceptingEvent {
@@ -414,6 +424,7 @@ export type HostKeysEvent = ContractHostKeys;
 export interface ComputeRequestHandlers {
   onRfpSubmitted?: (event: RfpSubmittedEvent, state: ContractState) => Awaitable<FlowDecision>;
   onBid?: (event: BidEvent, state: ContractState) => Awaitable<BidDecision>;
+  onWinner?: (event: WinnerEvent, state: ContractState) => Awaitable<void>;
   onAccepting?: (event: AcceptingEvent, state: ContractState) => Awaitable<FlowDecision>;
   onAccepted?: (event: AcceptedEvent, state: ContractState) => Awaitable<FlowDecision>;
   onReceipt?: (event: ReceiptEvent, state: ContractState) => Awaitable<FlowDecision>;

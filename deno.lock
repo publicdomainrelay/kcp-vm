@@ -2282,6 +2282,7 @@
           "jsr:@publicdomainrelay/market-abc@0",
           "jsr:@publicdomainrelay/market-identity-abc@0",
           "jsr:@publicdomainrelay/policy-engine-cli-options@0",
+          "jsr:@publicdomainrelay/requester-abc@0",
           "jsr:@publicdomainrelay/requester-controller-abc@0",
           "jsr:@publicdomainrelay/secrets-common@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0",

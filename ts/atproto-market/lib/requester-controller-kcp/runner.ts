@@ -1,5 +1,6 @@
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { parsePolicyArgs } from "@publicdomainrelay/policy-engine-cli-options";
+import { bidCost, bidPayloadNsid } from "@publicdomainrelay/requester-abc";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import {
   awaitComputeHostKeys,
@@ -28,6 +29,8 @@ import {
   type ComputeContract,
   type ComputeContractPhase,
   type ComputeContractStatus,
+  type ContractBid,
+  type ContractChosen,
   type NodeClaimContract,
   type NodeClaimGrant,
   parseComputeContract,
@@ -68,6 +71,8 @@ export interface ContractRunner {
 }
 
 const STATUS_WRITE_ATTEMPTS = 3;
+
+const MAX_RECORDED_BIDS = 20;
 
 const FETCH_BOUND_SLACK_MS = 0;
 
@@ -136,6 +141,8 @@ export function startContractRunner(
   let secretsUrl = status0?.secretsUrl;
   let secretsFetchedAt = status0?.secretsFetchedAt;
   let grant: NodeClaimGrant | undefined = status0?.grant;
+  const bids: ContractBid[] = [...(status0?.bids ?? [])];
+  let chosen: ContractChosen | undefined = status0?.chosen;
   let phaseNow: ComputeContractPhase = status0?.phase ?? "Pending";
   let messageNow = status0?.message ?? "";
   const execution = new ExecutionState({
@@ -155,6 +162,8 @@ export function startContractRunner(
       ...(secretsUrl ? { secretsUrl } : {}),
       ...(secretsFetchedAt ? { secretsFetchedAt } : {}),
       ...(grant ? { grant } : {}),
+      ...(bids.length > 0 ? { bids: bids.map((b) => ({ ...b })) } : {}),
+      ...(chosen ? { chosen } : {}),
       ...(state ? { contract: state as unknown as NodeClaimContract } : {}),
     } as ComputeContractStatus;
   }
@@ -370,11 +379,28 @@ export function startContractRunner(
         await track("Requesting", "the RFP is submitted")(event, s);
         return decide();
       },
-      onBid: () => {
+      onBid: (event) => {
         env.loop?.bid();
         execution.event(new Date());
+        if (bids.length < MAX_RECORDED_BIDS && !bids.some((b) => b.uri === event.bid.uri)) {
+          const cost = bidCost(event.bid);
+          const offer = bidPayloadNsid(event.bid);
+          bids.push({
+            did: event.bid.did,
+            uri: event.bid.uri,
+            ...(offer ? { offer } : {}),
+            ...(Number.isFinite(cost) ? { cost } : {}),
+            verdict: "considered",
+            arrivedAt: event.arrivedAt,
+          });
+        }
         statusWriter.set(null);
         return "accept" as const;
+      },
+      onWinner: (event) => {
+        chosen = { uri: event.bid.uri, did: event.did, reason: event.reason, considered: event.considered };
+        for (const b of bids) b.verdict = b.uri === event.bid.uri ? "chosen" : "notChosen";
+        statusWriter.set(null, true);
       },
       onAccepting: () => {
         stepTo("accepting");

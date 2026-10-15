@@ -61,6 +61,12 @@ export type ApplicationPhase = typeof APPLICATION_PHASES[number];
 export const COMPUTE_CONTRACT_PHASES = ["Pending", "Requesting", "Held", "Releasing", "Released", "Failed"] as const;
 export type ComputeContractPhase = typeof COMPUTE_CONTRACT_PHASES[number];
 
+export const CONTRACT_BID_VERDICTS = ["considered", "denied", "chosen", "notChosen", "policyRejected"] as const;
+export type ContractBidVerdict = typeof CONTRACT_BID_VERDICTS[number];
+
+export const CONTRACT_CHOSEN_REASONS = ["firstFree", "bestWithinWindow", "policy", "resumed"] as const;
+export type ContractChosenReason = typeof CONTRACT_CHOSEN_REASONS[number];
+
 export interface ObjectMeta {
   name?: string;
   generateName?: string;
@@ -580,8 +586,26 @@ export interface ComputeContractStatus {
   secretsFetchedAt?: string;
   contract?: NodeClaimContract;
   grant?: NodeClaimGrant;
+  bids?: ContractBid[];
+  chosen?: ContractChosen;
   conditions?: Condition[];
   execution?: ExecutionStatus;
+}
+
+export interface ContractBid {
+  did: string;
+  uri: string;
+  offer?: string;
+  cost?: number;
+  verdict: ContractBidVerdict;
+  arrivedAt: string;
+}
+
+export interface ContractChosen {
+  uri: string;
+  did: string;
+  reason: ContractChosenReason;
+  considered: number;
 }
 
 export interface ExecutionStatus {
@@ -749,7 +773,7 @@ export const COMPUTE_CONTRACT_RESOURCE: ApiResource = {
   listKind: "ComputeContractList",
   plural: "computecontracts",
   singular: "computecontract",
-  schema: "v1alpha1-3.computecontracts.socialweb.computer",
+  schema: "v1alpha1-4.computecontracts.socialweb.computer",
   export: "computecontracts",
 };
 
@@ -807,6 +831,10 @@ export type ApiTypeName =
   | "ComputeContractStatus"
   | "Condition"
   | "ContractAcceptPending"
+  | "ContractBid"
+  | "ContractBidVerdict"
+  | "ContractChosen"
+  | "ContractChosenReason"
   | "ContractHostKey"
   | "ContractHostKeys"
   | "ContractOutcome"
@@ -1467,6 +1495,15 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "ComputeContractStatus": {
     "properties": {
+      "bids": {
+        "items": {
+          "ref": "ContractBid"
+        },
+        "type": "array"
+      },
+      "chosen": {
+        "ref": "ContractChosen"
+      },
       "conditions": {
         "items": {
           "ref": "Condition"
@@ -1515,6 +1552,77 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "bidUri"
     ],
     "type": "object"
+  },
+  "ContractBid": {
+    "properties": {
+      "arrivedAt": {
+        "type": "string"
+      },
+      "cost": {
+        "type": "integer"
+      },
+      "did": {
+        "type": "string"
+      },
+      "offer": {
+        "type": "string"
+      },
+      "uri": {
+        "type": "string"
+      },
+      "verdict": {
+        "ref": "ContractBidVerdict"
+      }
+    },
+    "required": [
+      "did",
+      "uri",
+      "verdict",
+      "arrivedAt"
+    ],
+    "type": "object"
+  },
+  "ContractBidVerdict": {
+    "enum": [
+      "considered",
+      "denied",
+      "chosen",
+      "notChosen",
+      "policyRejected"
+    ],
+    "type": "string"
+  },
+  "ContractChosen": {
+    "properties": {
+      "considered": {
+        "type": "integer"
+      },
+      "did": {
+        "type": "string"
+      },
+      "reason": {
+        "ref": "ContractChosenReason"
+      },
+      "uri": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "uri",
+      "did",
+      "reason",
+      "considered"
+    ],
+    "type": "object"
+  },
+  "ContractChosenReason": {
+    "enum": [
+      "firstFree",
+      "bestWithinWindow",
+      "policy",
+      "resumed"
+    ],
+    "type": "string"
   },
   "ContractHostKey": {
     "properties": {
@@ -4231,6 +4339,78 @@ export function assertComputeContractPhase(value: unknown): asserts value is Com
 
 export function parseComputeContractPhase(value: unknown): ComputeContractPhase {
   assertComputeContractPhase(value);
+  return value;
+}
+
+export function validateContractBid(value: unknown): ApiIssue[] {
+  return validate("ContractBid", value);
+}
+
+export function isContractBid(value: unknown): value is ContractBid {
+  return validate("ContractBid", value).length === 0;
+}
+
+export function assertContractBid(value: unknown): asserts value is ContractBid {
+  const issues = validate("ContractBid", value);
+  if (issues.length > 0) throw new ApiValidationError("ContractBid", issues);
+}
+
+export function parseContractBid(value: unknown): ContractBid {
+  assertContractBid(value);
+  return value;
+}
+
+export function validateContractBidVerdict(value: unknown): ApiIssue[] {
+  return validate("ContractBidVerdict", value);
+}
+
+export function isContractBidVerdict(value: unknown): value is ContractBidVerdict {
+  return validate("ContractBidVerdict", value).length === 0;
+}
+
+export function assertContractBidVerdict(value: unknown): asserts value is ContractBidVerdict {
+  const issues = validate("ContractBidVerdict", value);
+  if (issues.length > 0) throw new ApiValidationError("ContractBidVerdict", issues);
+}
+
+export function parseContractBidVerdict(value: unknown): ContractBidVerdict {
+  assertContractBidVerdict(value);
+  return value;
+}
+
+export function validateContractChosen(value: unknown): ApiIssue[] {
+  return validate("ContractChosen", value);
+}
+
+export function isContractChosen(value: unknown): value is ContractChosen {
+  return validate("ContractChosen", value).length === 0;
+}
+
+export function assertContractChosen(value: unknown): asserts value is ContractChosen {
+  const issues = validate("ContractChosen", value);
+  if (issues.length > 0) throw new ApiValidationError("ContractChosen", issues);
+}
+
+export function parseContractChosen(value: unknown): ContractChosen {
+  assertContractChosen(value);
+  return value;
+}
+
+export function validateContractChosenReason(value: unknown): ApiIssue[] {
+  return validate("ContractChosenReason", value);
+}
+
+export function isContractChosenReason(value: unknown): value is ContractChosenReason {
+  return validate("ContractChosenReason", value).length === 0;
+}
+
+export function assertContractChosenReason(value: unknown): asserts value is ContractChosenReason {
+  const issues = validate("ContractChosenReason", value);
+  if (issues.length > 0) throw new ApiValidationError("ContractChosenReason", issues);
+}
+
+export function parseContractChosenReason(value: unknown): ContractChosenReason {
+  assertContractChosenReason(value);
   return value;
 }
 

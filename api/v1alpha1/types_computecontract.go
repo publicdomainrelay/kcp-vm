@@ -47,6 +47,56 @@ type ComputeContractSpec struct {
 	NodeJoin *ComputeContractNodeJoin `json:"nodeJoin,omitempty"`
 }
 
+type ContractBidVerdict string
+
+const (
+	ContractBidConsidered ContractBidVerdict = "considered"
+
+	ContractBidDenied ContractBidVerdict = "denied"
+
+	ContractBidChosen ContractBidVerdict = "chosen"
+
+	ContractBidNotChosen ContractBidVerdict = "notChosen"
+
+	ContractBidPolicyRejected ContractBidVerdict = "policyRejected"
+)
+
+type ContractBid struct {
+	Did string `json:"did"`
+
+	URI string `json:"uri"`
+
+	Offer string `json:"offer,omitempty"`
+
+	Cost int64 `json:"cost,omitempty"`
+
+	Verdict ContractBidVerdict `json:"verdict"`
+
+	ArrivedAt string `json:"arrivedAt"`
+}
+
+type ContractChosenReason string
+
+const (
+	ContractChosenFirstFree ContractChosenReason = "firstFree"
+
+	ContractChosenBestWithinWindow ContractChosenReason = "bestWithinWindow"
+
+	ContractChosenPolicy ContractChosenReason = "policy"
+
+	ContractChosenResumed ContractChosenReason = "resumed"
+)
+
+type ContractChosen struct {
+	URI string `json:"uri"`
+
+	Did string `json:"did"`
+
+	Reason ContractChosenReason `json:"reason"`
+
+	Considered int `json:"considered"`
+}
+
 type ComputeContractNodeJoin struct {
 	Cluster string `json:"cluster"`
 
@@ -95,6 +145,10 @@ type ComputeContractStatus struct {
 	Contract *NodeClaimContract `json:"contract,omitempty"`
 
 	Grant *NodeClaimGrant `json:"grant,omitempty"`
+
+	Bids []ContractBid `json:"bids,omitempty"`
+
+	Chosen *ContractChosen `json:"chosen,omitempty"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
