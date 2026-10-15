@@ -108,6 +108,8 @@ else
   runuser -u "$ACCOUNT" -- env XDG_RUNTIME_DIR="/run/user/$uid" CONFIG_PATH_SOCIALWEB_COMPUTER="$STATE_DIR/config.json" \
     "$copy" upgrade --binary "$copy" --sha256 "$SHA256" || { rm -f "$copy"; exit 1; }
   rm -f "$copy"
+  say "install gateway again with bin/current (renders the unit files, restarts a core whose unit changed)"
+  "$STATE_DIR/bin/current/socialweb-computer" install gateway --account "$ACCOUNT" --state-dir "$STATE_DIR" "${spec_args[@]}"
 fi
 
 say "waiting for the web app to answer"

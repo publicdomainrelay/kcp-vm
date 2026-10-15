@@ -304,7 +304,7 @@ BINARY=<release binary> SHA256=<its sha256> SSH_KEY=~/.ssh/id_ed25519_no_passwor
 | `GATEWAY_ENV_FILE` | The gateway's environment file, shipped as `gateway.env`. | |
 | `GATEWAY_SPEC_FILE` | A YAML `GatewaySpec`, shipped as the Gateway spec. | |
 
-The script installs the gateway on its first run and upgrades it after. The web app (`socialweb-computer-k8s`) serves `k8s.<domain>`, and caddy proxies the web app and the `/xrpc/computer.socialweb.k8s.*` routes to the gateway.
+The script installs the gateway on its first run. On every later run it upgrades the gateway, then runs `install gateway` again with the new `bin/current`, which re-renders the unit files and restarts a core whose unit changed. The web app (`socialweb-computer-k8s`) serves `k8s.<domain>`, and caddy proxies the web app and the `/xrpc/computer.socialweb.k8s.*` routes to the gateway.
 
 After a fresh deploy the requester account has no web app session, so cluster claims fail with a `no oauth session stored` message. Sign in with [Sign in with OAuth](#sign-in-with-oauth) and `--url https://k8s.socialweb.computer/`.
 
@@ -468,7 +468,7 @@ Symptoms: a gateway log line `no oauth session stored for did:...` means the web
 C=$(git rev-parse HEAD)
 scripts/build-socialweb-computer.sh --platform linux/amd64 --commit $C
 B=~/.tmp/socialweb-computer-build/release/$C/socialweb-computer-linux-amd64; SHA=$(sha256sum $B | cut -d' ' -f1)
-# 3. gateway (socialweb.computer): ship, install the first time or upgrade after, write the caddy sites
+# 3. gateway (socialweb.computer): ship, install the first time or upgrade and install again after, write the caddy sites
 BINARY=$B SHA256=$SHA SSH_KEY=~/.ssh/id_ed25519_no_password \
   GATEWAY_ENV_FILE=~/.tmp/deploy/gateway.env GATEWAY_SPEC_FILE=~/.tmp/deploy/gateway-spec.yaml scripts/deploy.sh
 # 4. bidder: stage the binary, then upgrade it as the account
