@@ -211,7 +211,7 @@ items:
     files: ["docs/ARCHITECTURE.md"]
     done_when: "the readings are recorded and every series plateaus."
     risks: ["24 h on hat-8 holds VM slots; it runs in its own stand-in account with its own subuid range."]
-    status: todo
+    status: done
     evidence:
 acceptance:
   where: hat-8
