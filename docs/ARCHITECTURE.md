@@ -3687,7 +3687,10 @@ refutation.
   contract ends. Readings (market network, one bidder, `TestRequestSecretsReachTheGuestThroughTheRFPFlow`
   as the live run, test-0001, UTC): `dev up` Ready in 74.0 s and 77.7 s; `run request --secrets` exit 0
   in 67.0 s and 97.8 s, the guest ran the command 56.2 s after it started and held the secret; release
-  answered `vm.delete` 200 and left no ComputeVM, VM unit or VM work dir; `dev down` left nothing.
+  answered `vm.delete` 200 and left no ComputeVM, VM unit or VM work dir; `dev down` left nothing. The
+  bidder log of a fifth run: `bidder_contract_store` with `tombstones: "Bid status.terminated"` at
+  18:21:47.152Z, the ComputeVM released at 18:24:09.448Z, and `bidder_tombstone_on_bid` (reason
+  `deleted_on_request`, the Bid `bid-40376f5ec8ba61a87033`) 51 ms later; no `bidder_tombstone_*` warning.
 
 - **An apply waits for its objects to be served, and adopts a schema that is already there, on
   2026-10-13 (branch `task/install-bringup`).** The first cold
