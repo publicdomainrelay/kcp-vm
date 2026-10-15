@@ -41,6 +41,7 @@ import {
 } from "@publicdomainrelay/policy-engine-evaluator";
 import type { PolicyEvaluator, ScopeCache } from "@publicdomainrelay/policy-engine-evaluator";
 import type { ScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
+import { DEFAULT_POLICY_CONCURRENCY, mapWithConcurrency } from "@publicdomainrelay/policy-common";
 import type { PolicyArgs, PolicyRecord } from "@publicdomainrelay/policy-common";
 import { WORKFLOWS } from "@publicdomainrelay/policies-gha-lite";
 import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript";
@@ -337,6 +338,8 @@ function wireTrustInvalidation(
 }
 
 const trustInvalidationWired = new WeakSet<object>();
+
+const POLICY_LIST_MEMO_MS = 15_000;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -1206,8 +1209,24 @@ runcmd:
       ref: { uri: string; cid: string },
     ): Promise<Record<string, unknown>> => resolveRecord({ uri: ref.uri, cid: ref.cid });
 
-    const listRecordsForPolicy = async (repo: string, coll: string) => {
-      type Listed = Array<{ uri: string; value: Record<string, unknown> }>;
+    type PolicyListed = Array<{ uri: string; value: Record<string, unknown> }>;
+    const policyListMemo = new Map<string, { at: number; read: Promise<PolicyListed> }>();
+    const listRecordsForPolicy = (repo: string, coll: string): Promise<PolicyListed> => {
+      const key = `${repo}|${coll}`;
+      const memo = policyListMemo.get(key);
+      if (memo && Date.now() - memo.at < POLICY_LIST_MEMO_MS) return memo.read;
+      const read = readRecordsForPolicy(repo, coll);
+      policyListMemo.set(key, { at: Date.now(), read });
+      read.then(
+        () => undefined,
+        () => {
+          if (policyListMemo.get(key)?.read === read) policyListMemo.delete(key);
+        },
+      );
+      return read;
+    };
+    const readRecordsForPolicy = async (repo: string, coll: string): Promise<PolicyListed> => {
+      type Listed = PolicyListed;
       const ownReads: Array<Promise<Listed | undefined>> = repo === marketDid
         ? [
           (async () => (await oauthAgent?.listRecords(repo, coll, { limit: 100 }))?.records)(),
@@ -1421,13 +1440,15 @@ runcmd:
       denied: bidderDids.length - filteredBidderDids.length,
     });
 
-    if (scopeCache && filteredBidderDids.length > 0) {
+    const prewarmDids = [...new Set([...vouchedDids, ...extraBidderDids])]
+      .filter((d) => !deniedSet.has(d));
+    if (scopeCache && prewarmDids.length > 0) {
       const startedAt = Date.now();
-      log("scope_prewarm", { candidates: filteredBidderDids.length });
+      log("scope_prewarm", { candidates: prewarmDids.length, discovered: filteredBidderDids.length });
       bestEffort(async () => {
-        await Promise.allSettled(filteredBidderDids.map((did) => scopeGate(did)));
+        await mapWithConcurrency(prewarmDids, DEFAULT_POLICY_CONCURRENCY, (did) => scopeGate(did));
         log("scope_prewarm_done", {
-          candidates: filteredBidderDids.length,
+          candidates: prewarmDids.length,
           entries: scopeCache.stats().entries,
           durationMs: Date.now() - startedAt,
         });

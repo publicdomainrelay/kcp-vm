@@ -8153,6 +8153,27 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   ended contract then matched `acceptToContract`, passed `checkAccept` as known, and the bidder answered
   `alreadyAccepted` 200 for a contract that had ended. `checkAccept` now answers 409 `ContractEnded`
   (`accept_contract_ended`) when the known accept's receipt is terminated. No VM was started in either case.
+- The gateway `requester` DenoPod was OOM-killed at its 1 GiB limit because policy evaluations were not
+  bounded. `compute-request-xrpc` ran the scope lane of the attached policy for every discovered bidder at
+  once (`Promise.allSettled(filteredBidderDids.map(scopeGate))`, 448 relay offerings on prod), and each
+  `GhaLiteExecutor` run starts net-only Worker isolates of about 25 to 30 MB each. Peak RSS grew with the
+  number of candidates, not with the work: 8 concurrent scope runs 291 MB, 40 concurrent 1122 MB (the
+  evaluator and the real `requester-tangled-vouch` workflow, stub trust resolvers). Each run also re-read
+  the requester's own `badgeBlueKeys` and `vouch` collections over the network, so hundreds of
+  `policy_public_records_failed` lines followed. The settlement: `createConcurrencyLimiter` and
+  `mapWithConcurrency` in `policy-common` (4 at a time, `DEFAULT_POLICY_CONCURRENCY`); the policy evaluator
+  limits `scope` runs and full evaluates, and `GhaLiteExecutor` limits workflow runs; the scope prewarm
+  covers the vouched and the extra bidders only (a relay-discovered bidder is scoped when its bid arrives,
+  and the scope cache dedupes that); `listRecordsForPolicy` shares one in-flight read per repo and
+  collection for 15 s. The gateway requester service values (`requester.prod.values.yaml`) raise
+  `memory` to 2Gi as headroom. Reading, in a market network with a gateway, a policy attached through
+  `node-policy` and 448 synthetic extra bidders on top of the 2 real ones (450 candidates, the dev backend
+  enforces no limit, so peak is VmHWM of the requester process): before 2479 MB with `tangled-vouch`;
+  after 366 MB with `tangled-vouch` (the claim fails as before with `winner rejected by policy: not
+  vouched`, since the network's bidders are not vouched) and 372 MB with `open`, where two NodeClaims won,
+  two market RFP VMs joined and both pods ran (first NodeClaim +19.3 s, both pods Ready +67.8 s). The same
+  network without a policy or extra bidders peaked at 197 MB. Not read: the prod gateway, which the lead
+  deploys.
 
 ## 16. Vocabulary
 

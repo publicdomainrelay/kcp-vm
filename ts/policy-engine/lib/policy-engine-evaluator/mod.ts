@@ -23,7 +23,12 @@ import type {
   PolicyResult,
   StrongRef,
 } from "@publicdomainrelay/policy-common";
-import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay/policy-common";
+import {
+  createConcurrencyLimiter,
+  DEFAULT_POLICY_CONCURRENCY,
+  POLICY_GHA_LITE_NSID,
+  POLICY_TYPESCRIPT_NSID,
+} from "@publicdomainrelay/policy-common";
 import { resolvePolicyName, type PolicyRegistry } from "@publicdomainrelay/policy-deno-typescript-shared";
 import type { ScopeCache, ScopeVerdict } from "@publicdomainrelay/policy-engine-scope-cache";
 
@@ -41,6 +46,8 @@ export interface PolicyEvaluatorOptions {
   getVouchedDids?: (did: string) => Promise<Set<string>>;
   /** Host scope verdict cache — converts per-event cost to per-novel-party. */
   scopeCache?: ScopeCache;
+  /** Cap on policy evaluations running at once (scope runs and full evaluates). */
+  maxConcurrentEvaluations?: number;
   /** First-party policy registry — used to canonicalize legacy names at mint. */
   policies?: PolicyRegistry;
   log?: (level: string, msg: string, meta?: Record<string, unknown>) => void;
@@ -97,6 +104,7 @@ export function createPolicyEvaluator(opts: PolicyEvaluatorOptions): PolicyEvalu
   const attachedRegistry = opts.attachedRegistry ?? registry;
   const resolveOperatorDid = opts.resolveOperatorDid ?? (async () => null);
   const getVouchedDids = opts.getVouchedDids ?? (async () => new Set<string>());
+  const limited = createConcurrencyLimiter(opts.maxConcurrentEvaluations ?? DEFAULT_POLICY_CONCURRENCY);
 
   function deny(msg: string, policyId: string): PolicyResult {
     return { allow: false, violations: [{ msg, policyId }] };
@@ -120,11 +128,13 @@ export function createPolicyEvaluator(opts: PolicyEvaluatorOptions): PolicyEvalu
       if (!executor) return deny(`unknown policy record type: ${$type}`, ref.uri);
 
       const policyRecord: PolicyRecord = { uri: ref.uri, cid: ref.cid, value };
-      const result = await executor.execute({
-        policyRecord,
-        ctx,
-        permissions: permissions ?? (value.permissions as Record<string, unknown> | undefined),
-      });
+      const result = await limited(() =>
+        executor.execute({
+          policyRecord,
+          ctx,
+          permissions: permissions ?? (value.permissions as Record<string, unknown> | undefined),
+        })
+      );
       if (!result.allow) return result;
     }
     return { allow: true, violations: [] };
@@ -169,7 +179,7 @@ export function createPolicyEvaluator(opts: PolicyEvaluatorOptions): PolicyEvalu
       const cacheHit = scopeCache?.get(identity, counterpartyDid, args);
       if (cacheHit) return cacheHit;
     }
-    const work = () => runScope(input, uri);
+    const work = () => limited(() => runScope(input, uri));
     if (!scopeCache) return (await work()).result;
     return await scopeCache.once(identity, counterpartyDid, args, work);
   }

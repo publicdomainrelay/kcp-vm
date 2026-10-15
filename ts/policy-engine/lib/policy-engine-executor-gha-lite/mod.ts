@@ -15,6 +15,8 @@
 import type { PolicyEngineExecutor, ScopeInput } from "@publicdomainrelay/policy-engine-abc";
 import { SANDBOX_DENIED_POLICY_ID } from "@publicdomainrelay/policy-engine-abc";
 import {
+  createConcurrencyLimiter,
+  DEFAULT_POLICY_CONCURRENCY,
   POLICY_GHA_LITE_NSID,
   splitAtUri,
 } from "@publicdomainrelay/policy-common";
@@ -57,6 +59,8 @@ export interface GhaLiteExecutorOptions {
   denoPath?: string;
   /** Cap on one workflow execution (ms) before it is treated as a denial. */
   timeoutMs?: number;
+  /** Cap on workflows running at once; each one holds worker isolates. */
+  maxConcurrentRuns?: number;
 }
 
 /** Evaluates gha-lite policy records by executing their workflow. */
@@ -67,8 +71,10 @@ export class GhaLiteExecutor implements PolicyEngineExecutor {
   private readonly sandbox?: SandboxConfig;
   private readonly denoPath?: string;
   private readonly workflowRunner?: GhaLiteWorkflowRunner;
+  private readonly limited: ReturnType<typeof createConcurrencyLimiter>;
 
   constructor(opts: GhaLiteExecutorOptions = {}) {
+    this.limited = createConcurrencyLimiter(opts.maxConcurrentRuns ?? DEFAULT_POLICY_CONCURRENCY);
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.sandbox = opts.sandbox;
     this.denoPath = opts.denoPath;
@@ -147,7 +153,7 @@ export class GhaLiteExecutor implements PolicyEngineExecutor {
       }).executeWorkflow(req));
 
     try {
-      const status = await withTimeout(run(request), this.timeoutMs);
+      const status = await this.limited(() => withTimeout(run(request), this.timeoutMs));
       return statusToResult(status);
     } catch (err) {
       return deny(errorMessage(err));

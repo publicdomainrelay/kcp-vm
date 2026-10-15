@@ -148,3 +148,36 @@ export interface RecordRef {
 export interface RefreshHandle {
   stop(): void;
 }
+
+export const DEFAULT_POLICY_CONCURRENCY = 4;
+
+export type ConcurrencyLimiter = <T>(work: () => Promise<T>) => Promise<T>;
+
+export function createConcurrencyLimiter(max: number): ConcurrencyLimiter {
+  const limit = Math.max(1, Math.floor(max));
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  const release = (): void => {
+    const next = waiting.shift();
+    if (next) next();
+    else active--;
+  };
+  return async <T>(work: () => Promise<T>): Promise<T> => {
+    if (active >= limit) await new Promise<void>((resolve) => waiting.push(resolve));
+    else active++;
+    try {
+      return await work();
+    } finally {
+      release();
+    }
+  };
+}
+
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  max: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<Array<PromiseSettledResult<R>>> {
+  const limited = createConcurrencyLimiter(max);
+  return await Promise.allSettled(items.map((item, index) => limited(() => fn(item, index))));
+}
