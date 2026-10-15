@@ -1,6 +1,17 @@
 import { Agent, CredentialSession } from "@atproto/api";
 import { IdResolver } from "@atproto/identity";
 import { getPdsEndpoint } from "@atproto/common-web";
+import { fetchWithRetry } from "@publicdomainrelay/http-retry-fetch";
+
+export const retryingFetch: typeof globalThis.fetch = (input, init) => {
+  const target = input instanceof Request ? input.url : String(input);
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  return fetchWithRetry(
+    () => globalThis.fetch(input instanceof Request ? input.clone() : input, init),
+    { label: `${method} ${new URL(target).pathname}`, ...(init?.signal ? { signal: init.signal } : {}) },
+  );
+};
+
 
 export const idResolver = new IdResolver();
 export let agent: Agent;
@@ -26,7 +37,7 @@ export async function loginAgent(handle: string, password: string): Promise<void
   if (!doc) throw new Error(`could not resolve did ${did}`);
   const pds = getPdsEndpoint(doc);
   if (!pds) throw new Error(`no pds for ${did}`);
-  session = new CredentialSession(new URL(pds));
+  session = new CredentialSession(new URL(pds), retryingFetch);
   await session.login({ identifier: handle, password });
   agent = new Agent(session);
   agentDid = session.did ?? did;

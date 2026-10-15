@@ -25,6 +25,7 @@ import type { RecordMap } from "@atiproto/atproto-attestation";
 import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
 import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
 import { fetchWithRetry } from "@publicdomainrelay/http-retry-fetch";
+import { retryingFetch } from "./misc.ts";
 
 export interface AtprotoAgentLike {
   did: string;
@@ -502,7 +503,7 @@ export interface RemoteAgent extends AtprotoAgentLike {
 }
 
 export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<RemoteAgent> {
-  const session = new CredentialSession(new URL(opts.pdsUrl));
+  const session = new CredentialSession(new URL(opts.pdsUrl), retryingFetch);
   await session.login({ identifier: opts.handle, password: opts.password });
   const agent = new Agent(session);
   const did = session.did ?? "";

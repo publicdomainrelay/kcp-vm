@@ -2948,8 +2948,8 @@ claimed again -- a new public `market.rfp` about every 50 s per missing node, 49
   `no_bids` end; `socialweb-computer-k8s/test/node_market_test.ts` "a no-bids end keeps the rfp it
   asked with and names no accept" pins that, so the cross-process contract is guarded on both sides.
   Status stays one writer per half: the door writes the claim's status, the provider only reads it.
-- *The wait.* `scale.BackoffDelay(n) = 30 s * 2^(n-1)` for the n-th declined end in a row, capped
-  at `scale.DefaultBackoffCap = 10m`: 30 s, 1 m, 2 m, 4 m, 8 m, 10 m, 10 m ... One confirm pass that
+- *The wait.* `scale.BackoffDelay(n) = 15 s * 2^(n-1)` for the n-th declined or failed end in a row, capped
+  at `scale.DefaultBackoffCap = 5m`: 15 s, 30 s, 1 m, 2 m, 4 m, 5 m, 5 m ... One confirm pass that
   sees several declined claims counts ONE end, because they are one answer from one market at one
   moment. The wait runs from the pass that saw the end. `Options.BackoffBase` / `BackoffCap` exist
   for tests; production uses the defaults.
@@ -8335,6 +8335,42 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   rootfs pin is the same. The aarch64 config is not touched (MP tables are x86 only). A guest now sees its 2 vCPUs, where it saw 1 before. The bidder refuses a modified image, so the
   published `main/<commit>/guest-image` of the first CI build with this commit carries the fix; a bidder that
   pins an older `versions.json` keeps the old image and the old cost.
+- A 429 from the PDS front proxy ended a requester contract Failed, and the retry storm that followed kept
+  the rate limit from clearing. Prod (build 66d9e9ff) logged `the contract flow threw:
+  com.atproto.repo.createRecord failed: 429 <html>...` one second after `postingRfp`
+  (`atproto-session-custody-openbao` `expectOk`); bsky.social allows 3000 requests per 300 s per IP
+  (`ratelimit-policy: 3000;w=300`). Three settlements. (a) Every PDS and relay request now goes through
+  `fetchWithRetry` (`ts/typescript-helpers/lib/http-retry-fetch`, with the pure policy in
+  `lib/common/http-retry-common`): 429, 408, 425, 500, 502, 503, 504 and network errors are retried;
+  `Retry-After` (seconds or date) and `ratelimit-reset` (seconds, or an epoch) are honored plus 250 ms;
+  without a header the wait is 1 s doubling to 30 s with 25 percent jitter; the total wait is 90 s and
+  the attempts are 8; a header that asks for more than the remaining wait ends at once. A DPoP proof is
+  made again for each attempt. It wraps the custody fetch handler, the OAuth DPoP fetch, the password
+  session agent, the `@atproto/api` credential sessions and the public reads of `market-atproto`
+  (`publicGet`); the error text names the attempts and the wait. (b) The back-off of the scale pass
+  already counts every `Failed` or `Lost` claim end (`scaledriver.Driver.Declined`); its cap is now 5 m
+  (15 s, 30 s, 1 m, 2 m, 4 m, 5 m) and the provider writes it into the Cluster status as condition
+  `NodeProvisionBackoff` (reason `MarketProvisionsFailing`, message with the count, the time before which
+  no attempt is made and the last end), set by `clusterprovider.Provider.SetNodeBackoff` from the scale
+  pass and carried by the next reconcile; it is removed when a node joins or the intent drops. (c)
+  `compute-request-xrpc` keeps the relay discovery (180 s, only a non-empty answer), each bidder's offering
+  list (120 s, only a non-empty list) and DID documents (stale after 60 s, gone after 300 s) in
+  process-wide `TtlMemo` caches (`lib/common/ttl-memo-common`), shared by concurrent contracts. A service
+  auth token is not reused: it is the one request per offering that stays.
+  Readings (market network with a gateway and one bidder, hono-pds answers 429 to `market.rfp` and
+  `market.accept` writes): six 429 with `Retry-After: 2` -> the requester retried at +0, 2.25, 4.5, 6.75,
+  9.0 and 11.25 s, the seventh write landed, the claim went Bidding, Provisioning, Joining, Running and the
+  pod was Ready 80 s after it was created (66 s in the first run; before: the claim was Failed at the first
+  429). Every write 429 with no header -> `gave up: 8 attempts used, the limit is 8` after 90 s of waiting,
+  claim Failed; the next contracts started 22 s, 36 s and 63 s after each end (15 s, 30 s, 60 s plus a
+  pass), and the Cluster showed `NodeProvisionBackoff=True ... the next attempt is not made before
+  23:43:07Z` and, after the second end, `2 market provision(s) in a row ... not before 23:45:11Z`. Request
+  count of one contract's discovery for 443 relay offerings (a stub relay, PLC and PDS counting
+  requests): before 887 reads (1 relay, 443 DID documents, 443 offering lists), after 887 on the first
+  contract and 0 on the next ones inside the cache window. Not changed: the 443 service-auth requests to
+  the requester's PDS and the 443 `submitRfp` posts that one contract makes to the bidders it found; an
+  RFP to every relay-discovered bidder stays 443 requests of bsky.social per contract, so a fan-out cap is
+  the next lever and a market decision. Not read: the prod gateway, which the lead deploys.
 
 ## 16. Vocabulary
 
