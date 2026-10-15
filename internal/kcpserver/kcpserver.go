@@ -27,6 +27,10 @@ const LeaderElection = "--enable-leader-election"
 
 const SlotStopTimeout = 30 * time.Second
 
+const EventTTL = "1h"
+
+const EventTTLFlag = "--event-ttl=" + EventTTL
+
 const ShardAdminUser = "shard-admin"
 
 const ShardBaseURLFlag = "--shard-base-url="
@@ -73,6 +77,7 @@ func SlotArgv(c SlotConfig) ([]string, error) {
 		"--experimental-bind-free-port",
 		"--shutdown-delay-duration=2s",
 		WorkspaceMountsGate,
+		EventTTLFlag,
 		"--audit-policy-file=" + filepath.Join(c.Root, "audit-policy.yaml"),
 		"--audit-log-path=" + filepath.Join(c.Root, "audit.log"),
 		"--audit-log-maxsize=100", "--audit-log-maxage=0", "--audit-log-maxbackup=0",
@@ -105,6 +110,9 @@ func CheckArgv(argv []string, shape Shape) error {
 	}
 	if !has(WorkspaceMountsGate) {
 		return fmt.Errorf("kcpserver: kcp refused without %s: every tenant's mounted API silently stops being served (versions.json kcp invariant)", WorkspaceMountsGate)
+	}
+	if !has(EventTTLFlag) {
+		return fmt.Errorf("kcpserver: kcp refused without %s: the Event objects of a busy network would stay in the store for the apiserver's default", EventTTLFlag)
 	}
 	if !has("--secure-port=0") {
 		return errors.New("kcpserver: kcp refused on a fixed port: behind the edge every listener binds port 0")

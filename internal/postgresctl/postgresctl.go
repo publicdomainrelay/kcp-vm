@@ -43,7 +43,7 @@ const (
 var (
 	GVR             = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "postgreses"}
 	nameRE          = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
-	DefaultSettings = []string{"wal_level=logical"}
+	DefaultSettings = []string{"wal_level=logical", "autovacuum=on", "track_counts=on"}
 )
 
 type Config struct {

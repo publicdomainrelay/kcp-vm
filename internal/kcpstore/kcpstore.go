@@ -17,8 +17,10 @@ const (
 	PostgresUser    = "kcp"
 	KineDatabase    = "kine"
 
-	SqliteParams = "_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=30000&_txlock=immediate&_stmt_cache_size=20"
+	SqliteParams = "_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=30000&_txlock=immediate&_stmt_cache_size=20&_auto_vacuum=incremental"
 )
+
+var PostgresSettings = []string{"autovacuum=on", "track_counts=on"}
 
 type KineConfig struct {
 	Unit              string
@@ -38,7 +40,7 @@ type PostgresConfig struct {
 }
 
 func (c PostgresConfig) Server() pgunit.Server {
-	return pgunit.Server{Data: c.Data, SocketDir: c.SocketDir, User: PostgresUser}
+	return pgunit.Server{Data: c.Data, SocketDir: c.SocketDir, User: PostgresUser, Settings: PostgresSettings}
 }
 
 func checkSocket(path string) error {
