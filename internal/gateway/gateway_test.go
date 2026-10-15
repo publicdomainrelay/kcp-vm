@@ -54,7 +54,7 @@ func (s *fakeStore) Ensure(_ context.Context, caller Caller, name string) error 
 	return nil
 }
 
-func (s *fakeStore) Kubeconfig(_ context.Context, _ Caller, name string, ttl time.Duration) (string, error) {
+func (s *fakeStore) Kubeconfig(_ context.Context, _ Caller, name string, ttl time.Duration, _ bool) (string, error) {
 	s.ttl = ttl
 	return "server: https://kcp.invalid/clusters/root:abc:def:" + name, nil
 }

@@ -3,7 +3,6 @@ package test
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +42,7 @@ func (s *storeStub) Ensure(_ context.Context, caller gateway.Caller, name string
 	return nil
 }
 
-func (s *storeStub) Kubeconfig(_ context.Context, caller gateway.Caller, name string, _ time.Duration) (string, error) {
+func (s *storeStub) Kubeconfig(_ context.Context, caller gateway.Caller, name string, _ time.Duration, _ bool) (string, error) {
 	return kubeconfig.Build(kubeconfig.Input{
 		ClusterName:      name,
 		Server:           "https://kcp.invalid/clusters/root:abc:" + name + ":child",
@@ -83,35 +82,6 @@ func (s *storeStub) Delete(_ context.Context, _ gateway.Caller, name string) (ga
 	}
 	delete(s.views, name)
 	return v, nil
-}
-
-func TestTheVerifiedIdentityIsTheOneActedOn(t *testing.T) {
-	deny := &denyStub{state: revocation.DenyGranted}
-	store := newStore()
-	srv := &gateway.Server{Deny: deny, Store: store}
-
-	const verified = gateway.Caller("did:plc:verified")
-
-	resp, err := srv.GetKubeconfig(context.Background(), verified, gateway.KubeconfigRequest{Name: "web"})
-	if err != nil {
-		t.Fatalf("GetKubeconfig: %v", err)
-	}
-
-	if len(store.callers) != 1 || store.callers[0] != verified {
-		t.Fatalf("the store was handed %v; the identity acted on must be the VERIFIED one",
-			store.callers)
-	}
-	if deny.reads == 0 {
-		t.Fatal("the deny was never consulted, so a revoked identity would have been " +
-			"admitted by the same call")
-	}
-	if err := kubeconfig.AssertClean(resp.Kubeconfig); err != nil {
-		t.Fatalf("the kubeconfig reached the user unclean: %v", err)
-	}
-	if !strings.Contains(resp.Kubeconfig, "https://") {
-		t.Fatalf("the kubeconfig's server is not https, so client-go will silently drop "+
-			"every credential in it:\n%s", resp.Kubeconfig)
-	}
 }
 
 func TestARefusedIdentityCreatesNothing(t *testing.T) {

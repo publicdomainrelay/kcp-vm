@@ -18,11 +18,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/clientcertfront"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devcore"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
@@ -30,6 +32,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/gatewaymain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
@@ -50,6 +53,7 @@ const (
 	Poll               = 500 * time.Millisecond
 	ListenerXRPC       = "xrpc"
 	ListenerTLS        = "tls"
+	ListenerClientCert = "client-cert"
 	ListenerWebApp     = "web-app-front"
 	ComponentCore      = "core"
 	DefaultAddress     = "127.0.0.1:0"
@@ -79,6 +83,7 @@ type Config struct {
 	Spec                v1alpha1.GatewaySpec
 	FrontAddress        string
 	TLSAddress          string
+	CertFrontAddress    string
 	TLSCert             string
 	TLSKey              string
 	BootstrapCluster    string
@@ -492,6 +497,32 @@ func (g *gateway) members(ctx context.Context, rec devinstance.Record) error {
 			}
 			ended <- err
 		}()
+	}
+	denyCfg, err := clientcmd.BuildConfigFromFlags("", g.memberKubeconfig())
+	if err != nil {
+		return fmt.Errorf("gatewaykcp: reading the member kubeconfig: %w", err)
+	}
+	kcpserver.FollowTokenFile(denyCfg)
+	deny, err := kcpclient.New(kcpclient.Options{Host: rec.KcpURL, RestConfig: denyCfg})
+	if err != nil {
+		return err
+	}
+	certFrontAddress := g.c.CertFrontAddress
+	if certFrontAddress == "" {
+		certFrontAddress = DefaultAddress
+	}
+	start(member{"client certificate front", func(ctx context.Context) error {
+		return clientcertfront.Run(ctx, clientcertfront.Config{Address: certFrontAddress, CertFile: cert, KeyFile: key,
+			EdgeDir: filepath.Join(g.c.StateDir, "tls"), ClusterStateDir: env.get("SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"), Deny: deny,
+			OnListen: func(a net.Addr) { g.reg.set(ListenerClientCert, "https", a) }, Log: g.c.Log})
+	}})
+	certFront, err := g.waitListener(mctx, ended, ListenerClientCert)
+	if err != nil {
+		return err
+	}
+	if env.get("SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST") == "" {
+		env.set("SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST", "https://"+certFront)
+		env.dflt("SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE", cert)
 	}
 	start(member{"gateway", func(ctx context.Context) error {
 		inv := g.invocation(env, nil, "serve", "gateway", "xrpc")

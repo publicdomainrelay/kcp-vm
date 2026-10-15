@@ -524,6 +524,12 @@
       "env": "SOCIALWEB_TLS_FRONT_ADDRESS",
       "default": "127.0.0.1:0"
     },
+    "cert-front-address": {
+      "type": "string",
+      "description": "serve gateway kcp: listen address of the client certificate front (an edge entry point; port 0 is read back into the Gateway status)",
+      "env": "SOCIALWEB_CERT_FRONT_ADDRESS",
+      "default": "127.0.0.1:0"
+    },
     "tls-cert-file": {
       "type": "string",
       "description": "serve gateway kcp: the TLS front's certificate (with tls-key-file; unset, a self-signed one under <state>/tls)",

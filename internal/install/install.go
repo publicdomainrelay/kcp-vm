@@ -142,6 +142,7 @@ type Options struct {
 const (
 	OptKcpFront       = "kcp-front-address"
 	OptTLSFront       = "tls-front-address"
+	OptCertFront      = "cert-front-address"
 	OptSpecFile       = "gateway-spec-file"
 	OptGuestImg       = "guest-image-source"
 	OptGuestImgBase   = "guest-image-release-base"
@@ -149,9 +150,9 @@ const (
 	OptNetworkTimeout = "network-timeout"
 )
 
-var GatewayListen = map[string]string{OptKcpFront: "127.0.0.1:6443", OptTLSFront: "127.0.0.1:8443"}
+var GatewayListen = map[string]string{OptKcpFront: "127.0.0.1:6443", OptTLSFront: "127.0.0.1:8443", OptCertFront: "127.0.0.1:8444"}
 
-var Passed = []string{OptKcpFront, OptTLSFront, OptSpecFile, OptGuestImg, OptGuestImgBase}
+var Passed = []string{OptKcpFront, OptTLSFront, OptCertFront, OptSpecFile, OptGuestImg, OptGuestImgBase}
 
 func Rooted(root string) bool { return root != "" && filepath.Clean(root) != "/" }
 

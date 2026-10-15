@@ -99,7 +99,7 @@ func (s *fakeStore) Ensure(_ context.Context, c gateway.Caller, name string) err
 	return nil
 }
 
-func (s *fakeStore) Kubeconfig(_ context.Context, c gateway.Caller, name string, ttl time.Duration) (string, error) {
+func (s *fakeStore) Kubeconfig(_ context.Context, c gateway.Caller, name string, ttl time.Duration, _ bool) (string, error) {
 	s.saw(c, name)
 	s.ttls = append(s.ttls, ttl)
 	return "server: https://kcp.invalid/clusters/" + name, nil

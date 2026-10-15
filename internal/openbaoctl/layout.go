@@ -264,6 +264,7 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 		put(data, "key_bits", r.KeyBits)
 		put(data, "key_usage", r.KeyUsage)
 		put(data, "organization", r.Organization)
+		put(data, "ou", r.OrganizationalUnit)
 		put(data, "cn_validations", r.CNValidations)
 		put(data, "ttl", r.TTL)
 		put(data, "max_ttl", r.MaxTTL)

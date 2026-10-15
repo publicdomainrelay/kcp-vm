@@ -595,7 +595,7 @@ items:
     risks:
       - "The front reads the cluster's TLS files from disk; a cluster on another host (not the case today) needs the clusterprovider to publish them."
       - "A request already streaming (watch, exec) when the deny is written runs until it ends or until the certificate's NotAfter (at most 24 h)."
-    status: todo
+    status: done
     evidence:
   - id: M2-NO-EXPIRY-CERT
     milestone: M2
@@ -645,7 +645,7 @@ items:
       - OpenBao refuses not_after beyond the mount/role limits after the settings above (report the error text).
       - The tenant k3s/front chain check refuses a cert whose NotAfter equals the CA NotAfter (report).
     done_when: "an opt-in no-expiry kubeconfig works, is visible as a serial record, and is refused within 2 s after revoke or cluster delete; the 24 h path is unchanged."
-    status: todo
+    status: done
     evidence:
   - id: M2-REVOCATION
     milestone: M2
@@ -694,7 +694,7 @@ items:
         is not done or is broken; fix it there, do not continue.
     done_when: "after revokeIdentity the old kubeconfigs are refused within 2 s and their serials are in the CRL; after deleteCluster the old kubeconfig is refused, also after the cluster is created again."
     risks: ["Revoke reads every stored certificate of the cluster PKI (LIST pki/certs). It is bounded by pki tidy (plan 0013 M3-VAULT-TIDY)."]
-    status: todo
+    status: done
     evidence:
   - id: M2-FRESH-CA-PER-CREATION
     milestone: M2

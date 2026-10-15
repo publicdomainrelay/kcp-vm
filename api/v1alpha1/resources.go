@@ -60,7 +60,7 @@ var APIResources = []APIResource{
 		{Name: "PID", Type: "integer", JSONPath: ".status.runtime.pid"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
-	{Kind: "OpenBaoServer", Plural: "openbaoservers", Revision: 6, Export: "hostprocesses", Object: OpenBaoServer{}, PrinterColumns: []PrinterColumn{
+	{Kind: "OpenBaoServer", Plural: "openbaoservers", Revision: 7, Export: "hostprocesses", Object: OpenBaoServer{}, PrinterColumns: []PrinterColumn{
 		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
 		{Name: "Address", Type: "string", JSONPath: ".status.address"},
 		{Name: "Initialized", Type: "boolean", JSONPath: ".status.initialized"},

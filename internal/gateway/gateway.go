@@ -110,7 +110,7 @@ type ClusterView struct {
 type Store interface {
 	Ensure(ctx context.Context, caller Caller, name string) error
 
-	Kubeconfig(ctx context.Context, caller Caller, name string, ttl time.Duration) (string, error)
+	Kubeconfig(ctx context.Context, caller Caller, name string, ttl time.Duration, noExpiry bool) (string, error)
 
 	Get(ctx context.Context, caller Caller, name string) (ClusterView, bool, error)
 	List(ctx context.Context, caller Caller) ([]ClusterView, error)
@@ -124,11 +124,17 @@ type Revoker interface {
 	FanOut(ctx context.Context, did string) ([]revocation.ClusterView, error)
 }
 
+type CertRevoker interface {
+	Revoke(ctx context.Context, did, cluster string) (int, error)
+}
+
 type Server struct {
 	Deny  revocation.Deny
 	Store Store
 
 	Revoker Revoker
+
+	Certs CertRevoker
 
 	Feed Feed
 
@@ -145,6 +151,8 @@ type KubeconfigRequest struct {
 	Name string
 
 	TTLSeconds *int64
+
+	NoExpiry bool
 }
 
 type GetKubeconfigResponse struct {
@@ -153,9 +161,15 @@ type GetKubeconfigResponse struct {
 }
 
 func (s *Server) GetKubeconfig(ctx context.Context, caller Caller, req KubeconfigRequest) (*GetKubeconfigResponse, error) {
+	if req.NoExpiry && req.TTLSeconds != nil {
+		return nil, ErrInvalidRequest
+	}
 	ttl, err := clientCertTTL(req.TTLSeconds)
 	if err != nil {
 		return nil, err
+	}
+	if req.NoExpiry {
+		ttl = 0
 	}
 	if err := s.create(ctx, "getKubeconfig", caller, req.Name); err != nil {
 		return nil, err
@@ -171,7 +185,7 @@ func (s *Server) GetKubeconfig(ctx context.Context, caller Caller, req Kubeconfi
 	if !view.Running {
 		return nil, ErrClusterNotRunning
 	}
-	kubeconfig, err := s.Store.Kubeconfig(ctx, caller, req.Name, ttl)
+	kubeconfig, err := s.Store.Kubeconfig(ctx, caller, req.Name, ttl, req.NoExpiry)
 	if err != nil {
 		if errors.Is(err, ErrIssuerUnavailable) {
 			slog.Warn("getKubeconfig: the certificate issuer is not ready", "caller", string(caller), "name", req.Name, "err", err)
@@ -258,7 +272,20 @@ func (s *Server) DeleteCluster(ctx context.Context, caller Caller, req NameReque
 	if _, err := s.lookup(ctx, caller, req); err != nil {
 		return ClusterView{}, err
 	}
+	s.revokeCerts(ctx, "deleteCluster", caller, req.Name)
 	return s.Store.Delete(ctx, caller, req.Name)
+}
+
+func (s *Server) revokeCerts(ctx context.Context, verb string, caller Caller, cluster string) {
+	if s.Certs == nil {
+		return
+	}
+	n, err := s.Certs.Revoke(ctx, string(caller), cluster)
+	if err != nil {
+		slog.Warn(verb+": the PKI revoke failed; the deny or the delete already ends access", "caller", string(caller), "name", cluster, "err", err)
+		return
+	}
+	slog.Info(verb+": certificates revoked", "caller", string(caller), "name", cluster, "count", n)
 }
 
 func (s *Server) ListClusters(ctx context.Context, caller Caller) ([]ClusterView, error) {
@@ -308,6 +335,11 @@ func (s *Server) RevokeIdentity(ctx context.Context, caller Caller, req RevokeRe
 			return nil, ErrClusterNotFound
 		}
 		observed = scoped
+	}
+	for _, c := range observed {
+		if c.Name != "" {
+			s.revokeCerts(ctx, "revokeIdentity", caller, c.Name)
+		}
 	}
 
 	return &RevokeResponse{Revoked: revocation.Reply(revocation.Plan(observed))}, nil

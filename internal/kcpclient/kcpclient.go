@@ -47,6 +47,8 @@ type GrantInput struct {
 	Server string
 
 	TTL time.Duration
+
+	NoExpiry bool
 }
 
 type DeviceKeyGranter interface {
@@ -497,7 +499,7 @@ func (c *Client) Delete(ctx context.Context, caller gateway.Caller, name string)
 	return viewOf(cl, n), nil
 }
 
-func (c *Client) Kubeconfig(ctx context.Context, caller gateway.Caller, name string, ttl time.Duration) (string, error) {
+func (c *Client) Kubeconfig(ctx context.Context, caller gateway.Caller, name string, ttl time.Duration, noExpiry bool) (string, error) {
 	if _, err := c.homePath(caller, name); err != nil {
 		return "", err
 	}
@@ -509,10 +511,11 @@ func (c *Client) Kubeconfig(ctx context.Context, caller gateway.Caller, name str
 		host = c.publicHost
 	}
 	return c.deviceKeys.Grant(ctx, GrantInput{
-		Caller:  caller,
-		Cluster: name,
-		Server:  host + "/clusters/" + MountPath(string(caller), name),
-		TTL:     ttl,
+		Caller:   caller,
+		Cluster:  name,
+		Server:   host + "/clusters/" + MountPath(string(caller), name),
+		TTL:      ttl,
+		NoExpiry: noExpiry,
 	})
 }
 

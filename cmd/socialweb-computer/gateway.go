@@ -18,7 +18,7 @@ import (
 )
 
 var serveGatewayOptions = append([]string{backendOpt, "state-dir", "unit-prefix", "kcp-path", "kine-path", "k3s-path", "postgres-root", "bao-path",
-	"openbao-plugin-dir", "deno-path", "asset-cache", "ready-timeout", "kcp-front-address", "tls-front-address", "tls-cert-file", "tls-key-file",
+	"openbao-plugin-dir", "deno-path", "asset-cache", "ready-timeout", "kcp-front-address", "tls-front-address", "cert-front-address", "tls-cert-file", "tls-key-file",
 	"gateway-spec-file", "gateway-profile", "bootstrap-cluster", "bootstrap-account-did"}, devOnly(tsbundle.SourceRootOption)...)
 
 func (a *app) optionalExe(ctx context.Context, vals clicfg.Values, name, option string) (devinstance.Executable, error) {
@@ -137,7 +137,8 @@ func runServeGatewayKcp(ctx context.Context, a *app, vals clicfg.Values, rest []
 	os.Setenv(denoruntime.WatchListEnv, "false")
 	cfg := gatewaykcp.Config{StateDir: state, Prefix: prefix, Backend: backend, Executables: exes, Closure: closure,
 		Spec: spec, Unit: unit, FrontAddress: vals.String("kcp-front-address"), TLSAddress: vals.String("tls-front-address"),
-		TLSCert: vals.String("tls-cert-file"), TLSKey: vals.String("tls-key-file"),
+		CertFrontAddress: vals.String("cert-front-address"),
+		TLSCert:          vals.String("tls-cert-file"), TLSKey: vals.String("tls-key-file"),
 		BootstrapCluster: vals.String("bootstrap-cluster"), BootstrapAccountDID: vals.String("bootstrap-account-did"),
 		ReadyTimeout: readyTimeout, Environ: environ, Exe: exes[gatewaykcp.ExeCore].Path, Stderr: a.stderr, Log: a.log}
 	var m hostsvc.Manager
@@ -193,6 +194,7 @@ func (a *app) runGatewayChild(ctx context.Context, rec devinstance.Record, deno 
 	}
 	cfg := gatewaykcp.Config{Backend: hostsvc.BackendProc, Executables: exes, Closure: deno.Closure,
 		Spec: gatewaykcp.Spec(base, base.Profile, environ), Unit: deno.Unit, TLSAddress: gatewaykcp.DefaultAddress,
+		CertFrontAddress: gatewaykcp.DefaultAddress,
 		BootstrapCluster: rec.Gateway.BootstrapCluster, BootstrapAccountDID: rec.Gateway.BootstrapAccountDID,
 		ReadyTimeout: timeout, Environ: environ, Exe: exes[gatewaykcp.ExeCore].Path, Stderr: a.stderr, Log: a.log}
 	return gatewaykcp.RunChild(ctx, cfg, rec.Layout, deno, m)

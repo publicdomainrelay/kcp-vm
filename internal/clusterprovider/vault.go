@@ -28,6 +28,10 @@ const (
 	VaultPKIRoleTenant = "tenant-superuser"
 
 	VaultPKIRoleKubeconfig = "kubeconfig-user"
+
+	VaultPKIRoleKubeconfigNoExpiry = "kubeconfig-user-noexpiry"
+
+	NoExpiryOrganizationalUnit = "socialweb.computer:no-expiry"
 )
 
 func VaultAddr(port int) string {
@@ -128,6 +132,9 @@ func ImportClientCA(ctx context.Context, dataDir string, client *openbao.Client)
 	bundle := strings.TrimRight(string(certPEM), "\n") + "\n" + strings.TrimRight(string(keyPEM), "\n") + "\n"
 	if err := client.Write(ctx, VaultPKIPath+"/config/ca", map[string]any{"pem_bundle": bundle}); err != nil {
 		return fmt.Errorf("clusterprovider: importing the cluster's client CA into the vault: %w", err)
+	}
+	if err := client.Write(ctx, VaultPKIPath+"/issuer/default", map[string]any{"leaf_not_after_behavior": "truncate", "usage": "read-only,issuing-certificates"}); err != nil {
+		return fmt.Errorf("clusterprovider: setting the client CA issuer to truncate leaf lifetimes: %w", err)
 	}
 	return nil
 }

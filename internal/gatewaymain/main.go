@@ -128,6 +128,8 @@ func buildDeps(cfg Config) (Deps, error) {
 		return Deps{}, err
 	}
 
+	certs.Recorder = client
+
 	worklist, err := sweepkcp.NewWorklist(sweepkcp.Options{Host: cfg.KCPHost, RestConfig: kcpRestConfig})
 	if err != nil {
 		return Deps{}, fmt.Errorf("the sweep's worklist: %w", err)
@@ -149,6 +151,8 @@ func buildDeps(cfg Config) (Deps, error) {
 		Directory: dir,
 
 		Revoker: client,
+
+		Certs: certs,
 
 		MintStore: mintStore,
 

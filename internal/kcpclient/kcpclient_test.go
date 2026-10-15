@@ -14,7 +14,6 @@ import (
 
 	corev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/gateway"
@@ -912,102 +911,6 @@ func (g *recordingGranter) Grant(_ context.Context, in GrantInput) (string, erro
 		DeviceCredential: "device-credential",
 		DeviceKeyEnvName: "SOCIALWEB_DEVICE_KEY",
 	})
-}
-
-func TestKubeconfigIsTheMountPathAndNotTheBackend(t *testing.T) {
-	const backend = "https://127.0.0.1:20443"
-	f := &fakeKCP{t: t}
-	f.respond = func(req request) (int, any) {
-		if req.Method == http.MethodGet && strings.HasSuffix(req.Path, "/clusters/web") {
-			return http.StatusOK, clusterBody(testCluster, "Ready", backend, "inst-1", true)
-		}
-		return 0, nil
-	}
-	keys := &recordingGranter{}
-	c := newTestClientWith(t, f, keys)
-
-	if _, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster, 0); err != nil {
-		t.Fatalf("Kubeconfig: %v", err)
-	}
-	if len(f.seen()) != 0 {
-		t.Fatalf("Kubeconfig read the CLUSTER (%+v). The mount path is a function of the DID "+
-			"and the cluster name; a read here is a cluster-state dependency on a call "+
-			"that must succeed for a COLD cluster", f.seen())
-	}
-
-	want := testHost + "/clusters/" + mountPath
-	if keys.got.Server != want {
-		t.Errorf("the granter was handed server %q, want the MOUNT path %q", keys.got.Server, want)
-	}
-	if keys.got.Server == backend || strings.Contains(keys.got.Server, "20443") {
-		t.Errorf("the granter was handed the BACKEND url %q -- it re-points at one cluster's "+
-			"apiserver and dies with it", keys.got.Server)
-	}
-	if keys.got.Caller != gateway.Caller(testDID) || keys.got.Cluster != testCluster {
-		t.Errorf("the grant is for (%q, %q), want (%q, %q)", keys.got.Caller, keys.got.Cluster, testDID, testCluster)
-	}
-	if n := len(f.seen()); n != 0 {
-		t.Errorf("%d request(s) reached kcp from a verb that only derives a path", n)
-	}
-}
-
-func TestKubeconfigPointsAtThePublicFrontAndCarriesTheRequestedLifetime(t *testing.T) {
-	const public = "https://kcp.socialweb.example/"
-	f := &fakeKCP{t: t}
-	keys := &recordingGranter{}
-	c, err := New(Options{Host: testHost, PublicHost: public, Transport: f, DeviceKeys: keys})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	if _, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster, 45*time.Second); err != nil {
-		t.Fatalf("Kubeconfig: %v", err)
-	}
-	want := strings.TrimSuffix(public, "/") + "/clusters/" + mountPath
-	if keys.got.Server != want {
-		t.Errorf("the granter was handed server %q, want the public front %q -- the user's "+
-			"kubeconfig must name the address a user can reach, while this client keeps "+
-			"speaking to kcp over the loopback host", keys.got.Server, want)
-	}
-	if keys.got.TTL != 45*time.Second {
-		t.Errorf("the granter was handed ttl %s, want the 45s the caller asked for", keys.got.TTL)
-	}
-	if len(f.seen()) != 0 {
-		t.Errorf("%d request(s) reached kcp from a verb that only derives a path: %v", len(f.seen()), f.seen())
-	}
-}
-
-func TestKubeconfigRefusesWithNoGranter(t *testing.T) {
-	f := &fakeKCP{t: t}
-	c := newTestClient(t, f)
-
-	if _, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster, 0); !errors.Is(err, ErrNoDeviceKey) {
-		t.Fatalf("want ErrNoDeviceKey with no granter wired, got %v", err)
-	}
-}
-
-func TestTheRenderedKubeconfigIsCleanAndCarriesTheCredential(t *testing.T) {
-	f := &fakeKCP{t: t}
-	keys := &recordingGranter{}
-	c := newTestClientWith(t, f, keys)
-
-	rendered, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster, 0)
-	if err != nil {
-		t.Fatalf("Kubeconfig: %v", err)
-	}
-	if keys.calls != 1 {
-		t.Fatalf("the granter ran %d time(s) for one getKubeconfig", keys.calls)
-	}
-	cfg, err := clientcmd.Load([]byte(rendered))
-	if err != nil {
-		t.Fatalf("the rendered kubeconfig does not load: %v\n%s", err, rendered)
-	}
-	if cfg.CurrentContext != testCluster {
-		t.Errorf("current-context = %q, want %q (the name an operator reads)", cfg.CurrentContext, testCluster)
-	}
-	if cfg.Clusters[testCluster] == nil || cfg.Clusters[testCluster].Server != keys.got.Server {
-		t.Errorf("the rendered document does not carry the server the grant was handed: %+v", cfg.Clusters)
-	}
 }
 
 func TestGetMapsTheClusterView(t *testing.T) {

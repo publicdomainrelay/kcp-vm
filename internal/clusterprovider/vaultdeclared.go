@@ -17,7 +17,7 @@ const (
 
 	VaultGatewayClient       = "gateway-kubeconfig"
 	VaultGatewayClientPolicy = "gateway-kubeconfig"
-	vaultAppRoleMount = "approle"
+	vaultAppRoleMount        = "approle"
 )
 
 func durationString(d time.Duration) string {
@@ -35,6 +35,7 @@ func clusterProviderRules() []v1alpha1.OpenBaoPolicyRule {
 		{Path: vaultlayout.NodesKVMount + "/data/*", Capabilities: cu},
 		{Path: clusterlink.Mount + "/data/*", Capabilities: cru},
 		{Path: VaultPKIPath + "/config/ca", Capabilities: cu},
+		{Path: VaultPKIPath + "/issuer/*", Capabilities: cu},
 		{Path: VaultPKIPath + "/issue/" + VaultPKIRoleTenant, Capabilities: cu},
 		{Path: VaultPKIPath + "/issue/" + vaultcert.PKIRoleNode, Capabilities: cu},
 	}
@@ -44,9 +45,12 @@ func gatewayKubeconfigRules() []v1alpha1.OpenBaoPolicyRule {
 	cu := []string{"create", "update"}
 	return []v1alpha1.OpenBaoPolicyRule{
 		{Path: VaultPKIPath + "/issue/" + VaultPKIRoleKubeconfig, Capabilities: cu},
+		{Path: VaultPKIPath + "/issue/" + VaultPKIRoleKubeconfigNoExpiry, Capabilities: cu},
 		{Path: VaultPKIPath + "/revoke", Capabilities: cu},
 		{Path: VaultPKIPath + "/certs", Capabilities: []string{"list"}},
 		{Path: VaultPKIPath + "/certs/", Capabilities: []string{"list"}},
+		{Path: VaultPKIPath + "/certs/revoked", Capabilities: []string{"list"}},
+		{Path: VaultPKIPath + "/certs/revoked/", Capabilities: []string{"list"}},
 		{Path: VaultPKIPath + "/cert/*", Capabilities: []string{"read"}},
 	}
 }
@@ -99,7 +103,11 @@ func staticClusterDeclared() *v1alpha1.OpenBaoServerDeclared {
 			KeyType: "ec", KeyBits: 256, TTL: durationString(vaultcert.NodeCertTTL), MaxTTL: durationString(vaultcert.NodeMaxTTL)},
 		v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: VaultPKIRoleKubeconfig, AllowAnyName: true, EnforceHostnames: false,
 			ClientFlag: true, ServerFlag: false, RequireCN: true, KeyType: "ec", KeyBits: 256, KeyUsage: []string{"DigitalSignature"},
-			Organization: []string{kcpclient.OwnersGroup}, CNValidations: []string{"disabled"}, TTL: "8h", MaxTTL: "24h"})
+			Organization: []string{kcpclient.OwnersGroup}, CNValidations: []string{"disabled"}, TTL: "8h", MaxTTL: "24h"},
+		v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: VaultPKIRoleKubeconfigNoExpiry, AllowAnyName: true, EnforceHostnames: false,
+			ClientFlag: true, ServerFlag: false, RequireCN: true, KeyType: "ec", KeyBits: 256, KeyUsage: []string{"DigitalSignature"},
+			Organization: []string{kcpclient.OwnersGroup}, OrganizationalUnit: []string{NoExpiryOrganizationalUnit},
+			CNValidations: []string{"disabled"}})
 	return d
 }
 

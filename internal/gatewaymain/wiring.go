@@ -26,6 +26,8 @@ type Deps struct {
 
 	Revoker gateway.Revoker
 
+	Certs gateway.CertRevoker
+
 	MintStore mint.Store
 
 	Tenant gateway.TenantAPI
@@ -60,7 +62,7 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Gateway, error) {
 	}
 
 	verbs := &gateway.Server{
-		Deny: d.Deny, Store: d.Store, Revoker: d.Revoker, Feed: d.Feed,
+		Deny: d.Deny, Store: d.Store, Revoker: d.Revoker, Certs: d.Certs, Feed: d.Feed,
 		MaxDeviceKeyTTL: cfg.DeviceKeyMaxTTL,
 		Tenant:          d.Tenant,
 	}
