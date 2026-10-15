@@ -16,6 +16,6 @@ spec:
         crd: {}
     - group: socialweb.computer
       name: openbaoservers
-      schema: v1alpha1-5.openbaoservers.socialweb.computer
+      schema: v1alpha1-6.openbaoservers.socialweb.computer
       storage:
         crd: {}

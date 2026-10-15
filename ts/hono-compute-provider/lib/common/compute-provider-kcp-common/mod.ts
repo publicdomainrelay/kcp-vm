@@ -500,6 +500,7 @@ export interface OpenBaoPKIRole {
   keyBits?: number;
   keyUsage?: string[];
   organization?: string[];
+  cnValidations?: string[];
   ttl?: string;
   maxTTL?: string;
 }
@@ -647,7 +648,7 @@ export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
   listKind: "OpenBaoServerList",
   plural: "openbaoservers",
   singular: "openbaoserver",
-  schema: "v1alpha1-5.openbaoservers.socialweb.computer",
+  schema: "v1alpha1-6.openbaoservers.socialweb.computer",
   export: "hostprocesses",
 };
 
@@ -1897,6 +1898,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "clientFlag": {
         "type": "boolean"
+      },
+      "cnValidations": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
       },
       "enforceHostnames": {
         "type": "boolean"

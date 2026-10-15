@@ -61,6 +61,8 @@ func ClusterKey(home string) (string, error) {
 
 const TenantNamespace = "users"
 
+const OwnersGroup = "socialweb.computer:cluster-owners"
+
 func ServiceAccountName(did string) string {
 	return "did-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(did)))
 }

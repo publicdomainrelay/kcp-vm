@@ -234,7 +234,7 @@ items:
     risks:
       - "Decided by the user 2026-10-13: the gateway does NOT share the clusterprovider vault identity. Each cluster OpenBao declares a gateway-only client (cert-auth role `gateway-kubeconfig`, its own client certificate) whose policy allows ONLY pki/issue/kubeconfig-user, pki/revoke and pki/certs listing for that role; M1-PKI-ROLE adds the client and policy, M1-CERT-ISSUER logs in with it. A gateway bug can then never issue tenant-superuser or node certificates."
       - "Plan 0013 M3-VAULT-TIDY must keep no_store false for kubeconfig-user; pki tidy removes its expired certificates."
-    status: todo
+    status: done
     evidence:
   - id: M1-OWNERS-GROUP-RBAC
     milestone: M1

@@ -264,6 +264,7 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 		put(data, "key_bits", r.KeyBits)
 		put(data, "key_usage", r.KeyUsage)
 		put(data, "organization", r.Organization)
+		put(data, "cn_validations", r.CNValidations)
 		put(data, "ttl", r.TTL)
 		put(data, "max_ttl", r.MaxTTL)
 		d.Objects = append(d.Objects, baosync.Object{Path: strings.Trim(r.Mount, "/") + "/roles/" + r.Name, Data: data})

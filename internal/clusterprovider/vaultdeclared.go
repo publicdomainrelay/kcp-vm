@@ -7,12 +7,16 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterlink"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultcert"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
 )
 
 const (
 	VaultClientPolicy = "clusterprovider"
+
+	VaultGatewayClient       = "gateway-kubeconfig"
+	VaultGatewayClientPolicy = "gateway-kubeconfig"
 	vaultAppRoleMount = "approle"
 )
 
@@ -33,6 +37,17 @@ func clusterProviderRules() []v1alpha1.OpenBaoPolicyRule {
 		{Path: VaultPKIPath + "/config/ca", Capabilities: cu},
 		{Path: VaultPKIPath + "/issue/" + VaultPKIRoleTenant, Capabilities: cu},
 		{Path: VaultPKIPath + "/issue/" + vaultcert.PKIRoleNode, Capabilities: cu},
+	}
+}
+
+func gatewayKubeconfigRules() []v1alpha1.OpenBaoPolicyRule {
+	cu := []string{"create", "update"}
+	return []v1alpha1.OpenBaoPolicyRule{
+		{Path: VaultPKIPath + "/issue/" + VaultPKIRoleKubeconfig, Capabilities: cu},
+		{Path: VaultPKIPath + "/revoke", Capabilities: cu},
+		{Path: VaultPKIPath + "/certs", Capabilities: []string{"list"}},
+		{Path: VaultPKIPath + "/certs/", Capabilities: []string{"list"}},
+		{Path: VaultPKIPath + "/cert/*", Capabilities: []string{"read"}},
 	}
 }
 
@@ -63,7 +78,8 @@ func staticClusterDeclared() *v1alpha1.OpenBaoServerDeclared {
 	}
 	d.Policies = append(d.Policies,
 		v1alpha1.OpenBaoPolicy{Name: vaultlayout.PolicyESO, HCL: vaultlayout.ESOCertPolicyHCL()},
-		v1alpha1.OpenBaoPolicy{Name: VaultClientPolicy, Rules: clusterProviderRules()})
+		v1alpha1.OpenBaoPolicy{Name: VaultClientPolicy, Rules: clusterProviderRules()},
+		v1alpha1.OpenBaoPolicy{Name: VaultGatewayClientPolicy, Rules: gatewayKubeconfigRules()})
 	d.CertRoles = append(d.CertRoles, v1alpha1.OpenBaoCertRole{Mount: vaultlayout.CertAuthPath, Name: vaultlayout.RoleESO,
 		CommonNames: []string{vaultlayout.RoleESO}, CAFromPKI: VaultPKIPath, Policies: []string{vaultlayout.PolicyESO},
 		TokenTTL: vaultcert.NodeTokenTTL, TokenMaxTTL: vaultcert.NodeTokenMax, NoDefaultPolicy: true})
@@ -80,7 +96,10 @@ func staticClusterDeclared() *v1alpha1.OpenBaoServerDeclared {
 		v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: VaultPKIRoleTenant, AllowAnyName: true, ClientFlag: true, RequireCN: true,
 			KeyType: "ec", KeyBits: 256, Organization: []string{SuperuserOrganization}, TTL: "8760h", MaxTTL: "87600h"},
 		v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: vaultcert.PKIRoleNode, AllowAnyName: true, ClientFlag: true, RequireCN: true,
-			KeyType: "ec", KeyBits: 256, TTL: durationString(vaultcert.NodeCertTTL), MaxTTL: durationString(vaultcert.NodeMaxTTL)})
+			KeyType: "ec", KeyBits: 256, TTL: durationString(vaultcert.NodeCertTTL), MaxTTL: durationString(vaultcert.NodeMaxTTL)},
+		v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: VaultPKIRoleKubeconfig, AllowAnyName: true, EnforceHostnames: false,
+			ClientFlag: true, ServerFlag: false, RequireCN: true, KeyType: "ec", KeyBits: 256, KeyUsage: []string{"DigitalSignature"},
+			Organization: []string{kcpclient.OwnersGroup}, CNValidations: []string{"disabled"}, TTL: "8h", MaxTTL: "24h"})
 	return d
 }
 

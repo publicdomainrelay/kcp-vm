@@ -46,26 +46,38 @@ type VaultAccess struct {
 }
 
 func VaultAccessPath(dataDir string) string {
-	return filepath.Join(clusterstack.OpenBaoDir(dataDir), VaultAccessFile)
+	return vaultAccessPathFor(dataDir, VaultClient)
+}
+
+func vaultAccessPathFor(dataDir, client string) string {
+	if client == VaultClient {
+		return filepath.Join(clusterstack.OpenBaoDir(dataDir), VaultAccessFile)
+	}
+	return filepath.Join(clusterstack.OpenBaoDir(dataDir), "access-"+client+".json")
 }
 
 func ReadVaultAccess(dataDir string) (VaultAccess, error) {
+	return readVaultAccessFor(dataDir, VaultClient)
+}
+
+func readVaultAccessFor(dataDir, client string) (VaultAccess, error) {
 	var a VaultAccess
-	raw, err := os.ReadFile(VaultAccessPath(dataDir))
+	path := vaultAccessPathFor(dataDir, client)
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return a, fmt.Errorf("clusterprovider: reading how to reach the cluster vault at %s: %w", VaultAccessPath(dataDir), err)
+		return a, fmt.Errorf("clusterprovider: reading how to reach the cluster vault at %s: %w", path, err)
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return a, fmt.Errorf("clusterprovider: %s is not JSON: %w", VaultAccessPath(dataDir), err)
+		return a, fmt.Errorf("clusterprovider: %s is not JSON: %w", path, err)
 	}
 	if a.Address == "" || a.CAFile == "" || a.ClientCert == "" || a.ClientKey == "" || a.CertRole == "" {
-		return a, fmt.Errorf("clusterprovider: %s names no complete way to the cluster vault", VaultAccessPath(dataDir))
+		return a, fmt.Errorf("clusterprovider: %s names no complete way to the cluster vault", path)
 	}
 	return a, nil
 }
 
-func writeVaultAccess(dataDir string, a VaultAccess) error {
-	path := VaultAccessPath(dataDir)
+func writeVaultAccess(dataDir, client string, a VaultAccess) error {
+	path := vaultAccessPathFor(dataDir, client)
 	raw, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {
 		return err
@@ -97,6 +109,7 @@ var vaultTokens = struct {
 func forgetVaultToken(dataDir string) {
 	vaultTokens.Lock()
 	delete(vaultTokens.m, dataDir)
+	delete(vaultTokens.m, dataDir+"|"+VaultGatewayClient)
 	vaultTokens.Unlock()
 }
 
@@ -113,8 +126,16 @@ func ClusterVaultClient(ctx context.Context, dataDir string) (*openbao.Client, V
 	return clusterVault(ctx, dataDir)
 }
 
+func GatewayVaultClient(ctx context.Context, dataDir string) (*openbao.Client, VaultAccess, error) {
+	return clusterVaultAs(ctx, dataDir, VaultGatewayClient)
+}
+
 func clusterVault(ctx context.Context, dataDir string) (*openbao.Client, VaultAccess, error) {
-	a, err := ReadVaultAccess(dataDir)
+	return clusterVaultAs(ctx, dataDir, VaultClient)
+}
+
+func clusterVaultAs(ctx context.Context, dataDir, client string) (*openbao.Client, VaultAccess, error) {
+	a, err := readVaultAccessFor(dataDir, client)
 	if err != nil {
 		return nil, a, err
 	}
@@ -128,10 +149,13 @@ func clusterVault(ctx context.Context, dataDir string) (*openbao.Client, VaultAc
 	}
 	pair, err := tls.LoadX509KeyPair(a.ClientCert, a.ClientKey)
 	if err != nil {
-		return nil, a, fmt.Errorf("clusterprovider: the client certificate of %s: %w", VaultClient, err)
+		return nil, a, fmt.Errorf("clusterprovider: the client certificate of %s: %w", client, err)
 	}
 	base := openbao.New(a.Address, "", openbao.WithCACertPool(pool), openbao.WithClientCertificate(pair))
 	key := dataDir
+	if client != VaultClient {
+		key += "|" + client
+	}
 	vaultTokens.Lock()
 	t, ok := vaultTokens.m[key]
 	vaultTokens.Unlock()
@@ -212,7 +236,8 @@ func (h *UnitsHost) vaultSpec(key string, st procgroup.Step, declared *v1alpha1.
 			Database: PostgresVaultDatabase}},
 		TLS: &v1alpha1.OpenBaoServerTLS{CertFile: clusterstack.OpenBaoTLSCertPath(dataDir), KeyFile: clusterstack.OpenBaoTLSKeyPath(dataDir),
 			CAFile: clusterstack.OpenBaoTLSCAPath(dataDir), ClientCertOptional: true},
-		Clients:  []v1alpha1.OpenBaoServerClient{{Name: VaultClient, Policies: []string{VaultClientPolicy}}},
+		Clients: []v1alpha1.OpenBaoServerClient{{Name: VaultClient, Policies: []string{VaultClientPolicy}},
+			{Name: VaultGatewayClient, Policies: []string{VaultGatewayClientPolicy}}},
 		Declared: ClusterVaultDeclared(declared)}, nil
 }
 
@@ -286,22 +311,27 @@ func (h *UnitsHost) recordVaultAccess(key string, o *v1alpha1.OpenBaoServer) err
 	if err != nil {
 		return err
 	}
-	a := VaultAccess{Server: o.Name, Address: o.Status.Address, CertMount: openbaoctl.CertAuthMount, CertRole: VaultClient}
-	if o.Spec.TLS != nil {
-		a.CAFile = o.Spec.TLS.CAFile
-	}
-	for _, c := range o.Status.Clients {
-		if c.Name == VaultClient {
-			a.ClientCert, a.ClientKey = strings.TrimPrefix(c.ClientCert, "file:"), strings.TrimPrefix(c.ClientKey, "file:")
-			if c.CertAuthMount != "" {
-				a.CertMount = c.CertAuthMount
+	for _, client := range []string{VaultClient, VaultGatewayClient} {
+		a := VaultAccess{Server: o.Name, Address: o.Status.Address, CertMount: openbaoctl.CertAuthMount, CertRole: client}
+		if o.Spec.TLS != nil {
+			a.CAFile = o.Spec.TLS.CAFile
+		}
+		for _, c := range o.Status.Clients {
+			if c.Name == client {
+				a.ClientCert, a.ClientKey = strings.TrimPrefix(c.ClientCert, "file:"), strings.TrimPrefix(c.ClientKey, "file:")
+				if c.CertAuthMount != "" {
+					a.CertMount = c.CertAuthMount
+				}
 			}
 		}
+		if a.ClientCert == "" {
+			return fmt.Errorf("clusterprovider: the OpenBaoServer %s reports no client %s", o.Name, client)
+		}
+		if err := writeVaultAccess(dataDir, client, a); err != nil {
+			return err
+		}
 	}
-	if a.ClientCert == "" {
-		return fmt.Errorf("clusterprovider: the OpenBaoServer %s reports no client %s", o.Name, VaultClient)
-	}
-	return writeVaultAccess(dataDir, a)
+	return nil
 }
 
 func (h *UnitsHost) waitVault(ctx context.Context, key string, timeout time.Duration) (*v1alpha1.OpenBaoServer, error) {

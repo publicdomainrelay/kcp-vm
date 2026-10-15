@@ -26,6 +26,8 @@ const (
 	VaultPKIPath = "pki"
 
 	VaultPKIRoleTenant = "tenant-superuser"
+
+	VaultPKIRoleKubeconfig = "kubeconfig-user"
 )
 
 func VaultAddr(port int) string {

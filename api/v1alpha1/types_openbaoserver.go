@@ -230,6 +230,8 @@ type OpenBaoPKIRole struct {
 
 	Organization []string `json:"organization,omitempty"`
 
+	CNValidations []string `json:"cnValidations,omitempty"`
+
 	TTL string `json:"ttl,omitempty"`
 
 	MaxTTL string `json:"maxTTL,omitempty"`
