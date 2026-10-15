@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
@@ -133,6 +134,52 @@ type Provider struct {
 	mints map[string]*rest.Config
 
 	readySatisfied map[string]bool
+
+	nodeBackoff map[string]NodeBackoff
+}
+
+type NodeBackoff struct {
+	Ends int
+
+	Until time.Time
+
+	Reason string
+}
+
+const ReasonMarketProvisionsFailing = "MarketProvisionsFailing"
+
+func (p *Provider) SetNodeBackoff(cluster string, b NodeBackoff) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if b.Ends <= 0 {
+		delete(p.nodeBackoff, cluster)
+		return
+	}
+	if p.nodeBackoff == nil {
+		p.nodeBackoff = map[string]NodeBackoff{}
+	}
+	p.nodeBackoff[cluster] = b
+}
+
+func (p *Provider) withNodeBackoff(cluster string, conds []metav1.Condition, generation int64) []metav1.Condition {
+	p.mu.Lock()
+	b, held := p.nodeBackoff[cluster]
+	p.mu.Unlock()
+	out := make([]metav1.Condition, len(conds))
+	copy(out, conds)
+	if !held {
+		meta.RemoveStatusCondition(&out, v1alpha1.ConditionNodeProvisionBackoff)
+		return out
+	}
+	meta.SetStatusCondition(&out, metav1.Condition{
+		Type:   v1alpha1.ConditionNodeProvisionBackoff,
+		Status: metav1.ConditionTrue,
+		Reason: ReasonMarketProvisionsFailing,
+		Message: fmt.Sprintf("%d market provision(s) of this cluster in a row ended without a node; the next attempt "+
+			"is not made before %s; the last end: %s", b.Ends, b.Until.UTC().Format(time.RFC3339), b.Reason),
+		ObservedGeneration: generation,
+	})
+	return out
 }
 
 type Pass struct {
@@ -318,6 +365,7 @@ func (p *Provider) reconcile(ctx context.Context, ref Ref, with func(*materialis
 	if err != nil {
 		return pass, err
 	}
+	res.Conditions = p.withNodeBackoff(o.Cluster.Name, res.Conditions, cl.Generation)
 	pass.Result = res
 	if !p.opts.WriteStatus {
 		return pass, nil

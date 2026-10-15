@@ -503,6 +503,8 @@ func (p *Provider) scale(ctx context.Context, key, name string, running bool) {
 		}
 	}
 	dec, err := p.nodeScale.RunPass(ctx, key)
+	b := p.nodeScale.State(key).Backoff
+	p.provider.SetNodeBackoff(key, clusterprovider.NodeBackoff{Ends: b.Ends, Until: b.Until, Reason: b.Reason})
 	if err != nil {
 		p.log.Warn("cluster provider: the node-scale pass did not complete",
 			"cluster", name, "key", key, "error", err.Error())

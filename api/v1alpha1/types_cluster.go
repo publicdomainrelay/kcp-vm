@@ -59,6 +59,8 @@ const (
 	ConditionRevocationPending = "RevocationPending"
 
 	ConditionIdentityVerificationFailed = "IdentityVerificationFailed"
+
+	ConditionNodeProvisionBackoff = "NodeProvisionBackoff"
 )
 
 const FinalizerCluster = "cluster.socialweb.computer/teardown"

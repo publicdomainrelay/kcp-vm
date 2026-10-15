@@ -7,7 +7,7 @@ import (
 
 const DefaultBackoffBase = 15 * time.Second
 
-const DefaultBackoffCap = 2 * time.Minute
+const DefaultBackoffCap = 5 * time.Minute
 
 type Backoff struct {
 	Ends int

@@ -7,6 +7,7 @@ export const CONDITION_TENANT_PATH_SHUT = "TenantPathShut";
 export const CONDITION_REACHABLE = "Reachable";
 export const CONDITION_REVOCATION_PENDING = "RevocationPending";
 export const CONDITION_IDENTITY_VERIFICATION_FAILED = "IdentityVerificationFailed";
+export const CONDITION_NODE_PROVISION_BACKOFF = "NodeProvisionBackoff";
 export const FINALIZER_CLUSTER = "cluster.socialweb.computer/teardown";
 export const CONDITION_SIGNED_IN = "SignedIn";
 export const CONDITION_ASSOCIATED = "Associated";
