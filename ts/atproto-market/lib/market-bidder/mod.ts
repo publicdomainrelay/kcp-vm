@@ -225,6 +225,11 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       }));
     },
     knownAccept: (acceptUri, acceptCid) => acceptToContract.has(`${acceptUri}#${acceptCid}`),
+    endedAccept: (acceptUri, acceptCid) => {
+      const contract = acceptToContract.get(`${acceptUri}#${acceptCid}`);
+      const ended = contract ? terminatedReceipts.get(contract.receiptUri) : undefined;
+      return contract && ended ? { uri: contract.receiptUri, ended: `${ended.reason} at ${ended.at}` } : undefined;
+    },
     ownReceiptFor: async (acceptUri) => {
       const pdsUrl = await resolvePds(atproto.idResolver, atproto.did);
       let receiptUri: string | undefined;

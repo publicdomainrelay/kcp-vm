@@ -24,6 +24,7 @@ export interface BidLoopOptions {
   logger: StructuredLoggerInterface;
   listOwnBids(): Promise<OwnBidRecord[]>;
   knownAccept(acceptUri: string, acceptCid: string): boolean;
+  endedAccept(acceptUri: string, acceptCid: string): OwnReceipt | undefined;
   ownReceiptFor(acceptUri: string): Promise<OwnReceipt | null>;
 }
 
@@ -212,6 +213,10 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
       return { status: 503, body: { error: "RepoUnavailable", message: "the bidder could not read its own receipts" } };
     }
     if (!prior) return undefined;
+    return refuseEnded(accept, prior);
+  }
+
+  function refuseEnded(accept: AcceptRefs, prior: OwnReceipt): HandlerResult {
     logger.warn("accept_contract_ended", { acceptUri: accept.acceptUri, receiptUri: prior.uri, ended: prior.ended });
     return {
       status: 409,
@@ -223,6 +228,8 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
   }
 
   async function checkAccept(accept: AcceptRefs): Promise<HandlerResult | undefined> {
+    const endedHere = opts.endedAccept(accept.acceptUri, accept.acceptCid);
+    if (endedHere) return refuseEnded(accept, endedHere);
     if (opts.knownAccept(accept.acceptUri, accept.acceptCid)) return undefined;
     if (!bids || !accept.rfp?.uri) return await contractEnded(accept);
     if (accept.bid?.uri && !accept.bid.uri.startsWith(`at://${opts.selfDid}/`)) {
