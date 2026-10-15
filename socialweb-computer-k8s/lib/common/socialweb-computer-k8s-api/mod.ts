@@ -274,6 +274,28 @@ export interface ClusterLinkStatus {
   message?: string;
 }
 
+export interface ClusterClientCertificate {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: ClusterClientCertificateSpec;
+  status?: ClusterClientCertificateStatus;
+}
+
+export interface ClusterClientCertificateSpec {
+  cluster: string;
+  did: string;
+  serial: string;
+  notAfter: string;
+  noExpiry?: boolean;
+  revoked?: boolean;
+}
+
+export interface ClusterClientCertificateStatus {
+  revokedAt?: string;
+  lastError?: string;
+}
+
 export interface AtprotoIdentity {
   apiVersion?: string;
   kind?: string;
@@ -789,6 +811,17 @@ export const CLUSTER_LINK_RESOURCE: ApiResource = {
   export: "clusters",
 };
 
+export const CLUSTER_CLIENT_CERTIFICATE_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "ClusterClientCertificate",
+  listKind: "ClusterClientCertificateList",
+  plural: "clusterclientcertificates",
+  singular: "clusterclientcertificate",
+  schema: "v1alpha1-1.clusterclientcertificates.socialweb.computer",
+  export: "clusters",
+};
+
 export const ATPROTO_IDENTITY_RESOURCE: ApiResource = {
   group: "socialweb.computer",
   version: "v1alpha1",
@@ -877,7 +910,7 @@ export const SSH_GATEWAY_RESOURCE: ApiResource = {
   export: "applications",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE, MARKET_NETWORK_RESOURCE, MARKET_BIDDER_RESOURCE, MARKET_REQUESTER_RESOURCE, COMPUTE_CONTRACT_RESOURCE, GATEWAY_RESOURCE, SSH_GATEWAY_RESOURCE];
+export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, CLUSTER_CLIENT_CERTIFICATE_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE, MARKET_NETWORK_RESOURCE, MARKET_BIDDER_RESOURCE, MARKET_REQUESTER_RESOURCE, COMPUTE_CONTRACT_RESOURCE, GATEWAY_RESOURCE, SSH_GATEWAY_RESOURCE];
 
 export type ApiTypeName =
   | "ApplicationComponent"
@@ -893,6 +926,9 @@ export type ApiTypeName =
   | "AtprotoIdentitySpec"
   | "AtprotoIdentityStatus"
   | "Cluster"
+  | "ClusterClientCertificate"
+  | "ClusterClientCertificateSpec"
+  | "ClusterClientCertificateStatus"
   | "ClusterLink"
   | "ClusterLinkPhase"
   | "ClusterLinkService"
@@ -1357,6 +1393,68 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "status": {
         "ref": "ClusterStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "ClusterClientCertificate": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "ClusterClientCertificateSpec"
+      },
+      "status": {
+        "ref": "ClusterClientCertificateStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "ClusterClientCertificateSpec": {
+    "properties": {
+      "cluster": {
+        "type": "string"
+      },
+      "did": {
+        "type": "string"
+      },
+      "noExpiry": {
+        "type": "boolean"
+      },
+      "notAfter": {
+        "type": "string"
+      },
+      "revoked": {
+        "type": "boolean"
+      },
+      "serial": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "cluster",
+      "did",
+      "serial",
+      "notAfter"
+    ],
+    "type": "object"
+  },
+  "ClusterClientCertificateStatus": {
+    "properties": {
+      "lastError": {
+        "type": "string"
+      },
+      "revokedAt": {
+        "type": "string"
       }
     },
     "required": [],
@@ -3833,6 +3931,60 @@ export function assertClusterLinkPhase(value: unknown): asserts value is Cluster
 
 export function parseClusterLinkPhase(value: unknown): ClusterLinkPhase {
   assertClusterLinkPhase(value);
+  return value;
+}
+
+export function validateClusterClientCertificate(value: unknown): ApiIssue[] {
+  return validate("ClusterClientCertificate", value);
+}
+
+export function isClusterClientCertificate(value: unknown): value is ClusterClientCertificate {
+  return validate("ClusterClientCertificate", value).length === 0;
+}
+
+export function assertClusterClientCertificate(value: unknown): asserts value is ClusterClientCertificate {
+  const issues = validate("ClusterClientCertificate", value);
+  if (issues.length > 0) throw new ApiValidationError("ClusterClientCertificate", issues);
+}
+
+export function parseClusterClientCertificate(value: unknown): ClusterClientCertificate {
+  assertClusterClientCertificate(value);
+  return value;
+}
+
+export function validateClusterClientCertificateSpec(value: unknown): ApiIssue[] {
+  return validate("ClusterClientCertificateSpec", value);
+}
+
+export function isClusterClientCertificateSpec(value: unknown): value is ClusterClientCertificateSpec {
+  return validate("ClusterClientCertificateSpec", value).length === 0;
+}
+
+export function assertClusterClientCertificateSpec(value: unknown): asserts value is ClusterClientCertificateSpec {
+  const issues = validate("ClusterClientCertificateSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("ClusterClientCertificateSpec", issues);
+}
+
+export function parseClusterClientCertificateSpec(value: unknown): ClusterClientCertificateSpec {
+  assertClusterClientCertificateSpec(value);
+  return value;
+}
+
+export function validateClusterClientCertificateStatus(value: unknown): ApiIssue[] {
+  return validate("ClusterClientCertificateStatus", value);
+}
+
+export function isClusterClientCertificateStatus(value: unknown): value is ClusterClientCertificateStatus {
+  return validate("ClusterClientCertificateStatus", value).length === 0;
+}
+
+export function assertClusterClientCertificateStatus(value: unknown): asserts value is ClusterClientCertificateStatus {
+  const issues = validate("ClusterClientCertificateStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("ClusterClientCertificateStatus", issues);
+}
+
+export function parseClusterClientCertificateStatus(value: unknown): ClusterClientCertificateStatus {
+  assertClusterClientCertificateStatus(value);
   return value;
 }
 

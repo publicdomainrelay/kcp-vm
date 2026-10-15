@@ -24,3 +24,8 @@ spec:
       schema: v1alpha1-1.clusterlinks.socialweb.computer
       storage:
         crd: {}
+    - group: socialweb.computer
+      name: clusterclientcertificates
+      schema: v1alpha1-1.clusterclientcertificates.socialweb.computer
+      storage:
+        crd: {}

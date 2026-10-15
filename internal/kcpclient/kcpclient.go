@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -85,6 +86,9 @@ type Client struct {
 	hostProcessWorkspace string
 
 	nodeClaimQuota int64
+
+	certMu      sync.Mutex
+	certWatches map[string]*certWatch
 }
 
 var ErrNoDeviceKey = errors.New(

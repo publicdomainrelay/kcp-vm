@@ -10,7 +10,6 @@ import (
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
@@ -32,7 +31,8 @@ const (
 const noExpiryNotAfter = "9999-12-31T23:59:59Z"
 
 type Recorder interface {
-	RecordNoExpiry(ctx context.Context, did, cluster, serial string, issuedAt time.Time) error
+	RecordCertificate(ctx context.Context, rec kcpclient.CertificateRecord) error
+	MarkCertificateRevoked(ctx context.Context, did, cluster, serial string) error
 }
 
 type Issuer struct {
@@ -112,15 +112,15 @@ func (i *Issuer) Grant(ctx context.Context, in kcpclient.GrantInput) (string, er
 	case cert.PrivateKey == "":
 		return "", errors.New("clientcert: the issuer returned no private key")
 	}
-	if in.NoExpiry {
-		if i.Recorder == nil {
-			i.revokeSerial(ctx, client, cert.Serial)
-			return "", fmt.Errorf("%w: no recorder for no-expiry certificates", ErrVaultUnavailable)
-		}
-		if err := i.Recorder.RecordNoExpiry(ctx, string(in.Caller), in.Cluster, cert.Serial, leaf.NotBefore); err != nil {
-			i.revokeSerial(ctx, client, cert.Serial)
-			return "", fmt.Errorf("%w: record: %v", ErrVaultUnavailable, err)
-		}
+	if i.Recorder == nil {
+		i.revokeSerial(ctx, client, cert.Serial)
+		return "", fmt.Errorf("%w: no recorder for certificates", ErrVaultUnavailable)
+	}
+	rec := kcpclient.CertificateRecord{DID: string(in.Caller), Cluster: in.Cluster, Serial: cert.Serial,
+		NotAfter: leaf.NotAfter, NoExpiry: in.NoExpiry}
+	if err := i.Recorder.RecordCertificate(ctx, rec); err != nil {
+		i.revokeSerial(ctx, client, cert.Serial)
+		return "", fmt.Errorf("%w: record: %v", ErrVaultUnavailable, err)
 	}
 	var caPEM []byte
 	if i.CAFile != "" {
@@ -190,6 +190,11 @@ func (i *Issuer) Revoke(ctx context.Context, did, cluster string) (int, error) {
 			return count, fmt.Errorf("clientcert: revoking a certificate: %w", err)
 		}
 		count++
+		if i.Recorder != nil {
+			if err := i.Recorder.MarkCertificateRevoked(ctx, did, cluster, serial); err != nil {
+				i.log().Warn("clientcert: the record of a revoked certificate was not updated", "serial", serial, "err", err.Error())
+			}
+		}
 	}
 	i.log().Info("clientcert: revoked kubeconfig certificates", "did", did, "cluster", cluster, "count", count)
 	return count, nil
@@ -214,5 +219,5 @@ func FetchRevoked(ctx context.Context, dataDir string) (map[string]struct{}, err
 }
 
 func NormalizeSerial(s string) string {
-	return strings.TrimLeft(strings.ToLower(strings.ReplaceAll(s, ":", "")), "0")
+	return kcpclient.CertSerialKey(s)
 }

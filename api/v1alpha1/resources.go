@@ -29,6 +29,15 @@ var APIResources = []APIResource{
 	{Kind: "Node", Plural: "nodes", Revision: 1, Export: "clusters", Object: Node{}},
 	{Kind: "NodeClaim", Plural: "nodeclaims", Revision: 5, Export: "clusters", Object: NodeClaim{}},
 	{Kind: "ClusterLink", Plural: "clusterlinks", Revision: 1, Export: "clusters", Object: ClusterLink{}},
+	{Kind: "ClusterClientCertificate", Plural: "clusterclientcertificates", Revision: 1, Export: "clusters", Object: ClusterClientCertificate{}, PrinterColumns: []PrinterColumn{
+		{Name: "Cluster", Type: "string", JSONPath: ".spec.cluster"},
+		{Name: "DID", Type: "string", JSONPath: ".spec.did"},
+		{Name: "Serial", Type: "string", JSONPath: ".spec.serial"},
+		{Name: "NotAfter", Type: "string", JSONPath: ".spec.notAfter"},
+		{Name: "NoExpiry", Type: "boolean", JSONPath: ".spec.noExpiry"},
+		{Name: "Revoked", Type: "boolean", JSONPath: ".spec.revoked"},
+		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
+	}},
 	{Kind: "AtprotoIdentity", Plural: "atprotoidentities", Revision: 1, Export: "atprotoidentities", Object: AtprotoIdentity{}},
 	{Kind: "MarketIdentity", Plural: "marketidentities", Revision: 1, Export: "marketidentities", Object: MarketIdentity{}},
 	{Kind: "ComputeVM", Plural: "computevms", Revision: 3, Export: "computevms", Object: ComputeVM{}, PrinterColumns: []PrinterColumn{

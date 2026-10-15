@@ -513,7 +513,7 @@ func (g *gateway) members(ctx context.Context, rec devinstance.Record) error {
 	}
 	start(member{"client certificate front", func(ctx context.Context) error {
 		return clientcertfront.Run(ctx, clientcertfront.Config{Address: certFrontAddress, CertFile: cert, KeyFile: key,
-			EdgeDir: filepath.Join(g.c.StateDir, "tls"), ClusterStateDir: env.get("SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"), Deny: deny,
+			EdgeDir: filepath.Join(g.c.StateDir, "tls"), ClusterStateDir: env.get("SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"), Deny: deny, Records: deny,
 			OnListen: func(a net.Addr) { g.reg.set(ListenerClientCert, "https", a) }, Log: g.c.Log})
 	}})
 	certFront, err := g.waitListener(mctx, ended, ListenerClientCert)

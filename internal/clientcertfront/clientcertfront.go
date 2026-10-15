@@ -54,6 +54,10 @@ const (
 
 var pathPattern = regexp.MustCompile(`^/clusters/root:([a-z0-9]+):([a-z0-9]([a-z0-9-]*[a-z0-9])?):clusters(/.*)?$`)
 
+type Records interface {
+	CertificateState(ctx context.Context, did, cluster, serial string) (kcpclient.CertificateState, error)
+}
+
 type Config struct {
 	Address         string
 	CertFile        string
@@ -61,6 +65,7 @@ type Config struct {
 	EdgeDir         string
 	ClusterStateDir string
 	Deny            revocation.Deny
+	Records         Records
 	OnListen        func(net.Addr)
 	Log             *slog.Logger
 }
@@ -137,6 +142,9 @@ type server struct {
 func Run(ctx context.Context, c Config) error {
 	if c.Deny == nil {
 		return errors.New("clientcertfront: no deny lookup")
+	}
+	if c.Records == nil {
+		return errors.New("clientcertfront: no certificate records")
 	}
 	edgeCert, _, err := EnsureEdgeClient(c.EdgeDir)
 	if err != nil {
@@ -273,6 +281,18 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, gone := revoked[clientcert.NormalizeSerial(serial)]; gone {
 		s.refuse(w, r, http.StatusUnauthorized, cn, cluster, serial, "revoked in the PKI")
+		return
+	}
+	record, err := s.c.Records.CertificateState(r.Context(), cn, cluster, serial)
+	switch {
+	case err != nil:
+		s.refuse(w, r, http.StatusServiceUnavailable, cn, cluster, serial, "certificate records: "+err.Error())
+		return
+	case !record.Present:
+		s.refuse(w, r, http.StatusUnauthorized, cn, cluster, serial, "no ClusterClientCertificate for this serial")
+		return
+	case record.Revoked:
+		s.refuse(w, r, http.StatusUnauthorized, cn, cluster, serial, "ClusterClientCertificate revoked")
 		return
 	}
 	if status, reason := s.admit(r.Context(), cn); status != 0 {

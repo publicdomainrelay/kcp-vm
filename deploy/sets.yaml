@@ -17,6 +17,7 @@ sets:
           - path: node-apiresourceschema.yaml
           - path: nodeclaim-apiresourceschema.yaml
           - path: clusterlink-apiresourceschema.yaml
+          - path: clusterclientcertificate-apiresourceschema.yaml
           - path: atprotoidentity-apiresourceschema.yaml
           - path: cluster-apiexport.yaml
           - path: atprotoidentity-apiexport.yaml

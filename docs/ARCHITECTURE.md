@@ -1116,7 +1116,8 @@ a request-header identity is forgeable.
 - **Bearer through the mount, certificates through the client certificate front.** A bearer crosses the
   kcp mount as a header and nothing else. A client certificate never reaches kcp: Caddy (prod) or the
   client certificate front itself (market network) ends TLS, the front (`internal/clientcertfront`)
-  checks the certificate against the cluster's client CA, the PKI CRL and the deny record, and forwards
+  checks the certificate against the cluster's client CA, the PKI CRL, the deny record and the
+  `ClusterClientCertificate` of its serial (it must exist and not be revoked), and forwards
   to k3s by request-header authentication (client-auth-proxy, X-Remote-User = the CN, X-Remote-Group =
   `socialweb.computer:cluster-owners`). No JWKS, no `--authentication-config`.
 - **ServiceAccount tokens via TokenRequest** for the machine class.
@@ -7960,6 +7961,45 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   join profile above): in TestTenantClusterScalesFromZeroOnMarketVMsAndBack two pods made two NodeClaims at
   +29.2 s, both claims were Joining at +47.9 s, both nodes and pods were Ready at +64.7 s, and scale-in
   reached zero nodes 20.9 s after the last pod went.
+
+- **Every kubeconfig certificate has a `ClusterClientCertificate`, and the front admits a serial only while
+  its object exists and is not revoked (plan 0014 M3-KUBECTL-CLIENT-CERT, 2026-10-15).** The kind
+  (`api/v1alpha1/types_clusterclientcertificate.go`, export `clusters`, schema `v1alpha1-1`) lives in the
+  home workspace of the cluster, next to the `Cluster` it hangs from through `ownerReferences`; spec
+  `{cluster, did, serial, notAfter, noExpiry, revoked}`, status `{revokedAt, lastError}`; no key and no
+  certificate body. `clientcert.Issuer.Grant` (the `getKubeconfig` handler) writes it after `pki/issue`
+  and before it hands the kubeconfig back (`kcpclient.RecordCertificate`); when the write fails it revokes
+  the serial and answers ClusterInitializing, so no certificate exists without its object. It replaces
+  the `noexpiry-<serial>` ConfigMap, which only no-expiry certificates had. `Issuer.Revoke` (a cluster
+  delete, `revokeIdentity`) revokes the serials in the PKI and sets `spec.revoked` and `status.revokedAt`
+  (`MarkCertificateRevoked`); a Cluster delete also removes the objects with the Cluster. The front
+  (`clientcertfront.Config.Records`, implemented by `kcpclient.CertificateState`) keeps one list and watch
+  per home workspace, started by the first request for it and stopped after 10 minutes without one, and
+  checks the serial after the chain, the PKI revoked list and before the deny record: no object is 401,
+  a revoked object is 401, an unsynced watch is 503. The PKI list stays the second source. A user
+  of the web app downloads the kubeconfig through the bao proof path of M2-WEB-APP-SIGNIN
+  (service auth from the plugin, `getKubeconfig`); the web app holds no key. Not built: the "revoke my
+  certificates" choice at sign-out (no method of the gateway revokes certificates without denying the
+  DID). Readings (market network cc3, `dev up --profile market-network --bidders 0 --with-gateway`, gateway
+  option public-origin `https://127.0.0.1:43871` fronted by a TLS forwarder with a pod leaf of the network,
+  headless Chrome with the PDS name mapped, UTC 2026-10-15 14:35-14:42): `oauth-signin.ts` signed the
+  owner DID in (cookie swc_session HttpOnly Secure SameSite Strict) and `POST /api/clusters/kubeconfig`
+  answered 200 with `Cache-Control: no-store`; `kubectl --kubeconfig <download> get ns` listed five
+  namespaces through the client certificate front, and `kubectl get clusterclientcertificates -o wide`
+  in the home workspace listed the serial, `notAfter` and `revoked`, with an `ownerReferences` entry
+  Cluster/tenant and no key. A script with only a PDS session (`createSession`, `getServiceAuth`,
+  `getKubeconfig` over the gateway's xrpc listener) got `200`, `no-store`, and a kubeconfig that worked;
+  the same call with another `lxm` or another `aud` was 401; a second account's call for the name
+  `tenant` was answered for its own cluster (`ClusterNotRunning`), never the owner's. Patching
+  `spec.revoked` to true refused the next `kubectl` call 50 ms later (front log reason
+  `ClusterClientCertificate revoked`); deleting the object refused it 35 ms later (`no
+  ClusterClientCertificate for this serial`); a certificate issued with `ttlSeconds` 60 was accepted at
+  14:40:06 and refused at 14:41:14. A cluster created through the web app (`cc3b`) got a no-expiry
+  kubeconfig that worked; `deleteCluster` through the web app logged `certificates revoked count 1`, the
+  old kubeconfig was refused, and the objects were gone with the Cluster 30 s later. `revokeIdentity`
+  marked the fresh certificate revoked (`REVOKED true`, the expired one stayed false). A scan of the
+  gateway's logs and DenoPod run directories for `PRIVATE KEY` and `client-key-data` (tls.key files
+  excluded) found none after five issues.
 
 - **Every child object hangs from an owner that ends, and each root reports what does not (plan 0013
   M2-OWNERSHIP-TREE, 2026-10-15).** kcp's garbage collector cascades `ownerReferences` inside one

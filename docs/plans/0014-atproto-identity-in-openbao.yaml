@@ -217,7 +217,7 @@ items:
     files: ["internal/xrpcserver", "internal/gateway", "api/types_clusterclientcertificate.go", "internal/clusterprovider/vaultdeclared.go", "internal/clusterprovider/tenantcredential.go", "internal/clusterstack", "internal/tlsfront", "internal/stack/gatewaykcp", "internal/kubeconfig", "socialweb-computer-k8s/lib/hono-factory-socialweb-computer-k8s", "socialweb-computer-k8s/web"]
     done_when: "on a market network gateway, `kubectl --kubeconfig <download> get nodes` works with no exec plugin; a script with only a PDS session calls getKubeconfig with a service JWT and gets a kubeconfig that works the same; a JWT with another lxm, another aud or for a DID that does not own the cluster is refused; after revoke the next kubectl call is refused at the front within 1 s; an expired certificate is refused; `kubectl get clusterclientcertificates` shows every certificate with its serial and state and no key; no log line or kcp object holds the key."
     risks: ["A tenant apiserver that is not set up for request-header authentication: the cluster stack (internal/clusterstack) sets --requestheader-* from the cluster's pki at create; a cluster created before this item is recreated (no migration)."]
-    status: todo
+    status: done
     evidence:
   - id: M3-RETIRE-EXEC-PLUGIN
     milestone: M3
