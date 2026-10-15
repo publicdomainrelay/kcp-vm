@@ -336,6 +336,24 @@ export default {
       env: "BID_WINDOW_SEC",
       default: 300,
     },
+    "bid-quota": {
+      type: "number" as const,
+      description: "Most Bid objects the bidder holds; at that count it declines every RFP with reason capacity (0: no limit)",
+      env: "BID_QUOTA",
+      default: 0,
+    },
+    "computevm-quota": {
+      type: "number" as const,
+      description: "Most ComputeVM objects the bidder holds; at that count it declines every RFP with reason capacity (0: no limit)",
+      env: "COMPUTEVM_QUOTA",
+      default: 0,
+    },
+    "bid-ttl-sec": {
+      type: "number" as const,
+      description: "Seconds a finished Bid object lives before the TTL controller removes it, and after which the bidder removes its own market.bid record",
+      env: "BID_TTL_SEC",
+      default: 86400,
+    },
     "tls-cert-file": {
       type: "string" as const,
       description: "PEM certificate to serve TLS with; requires tls-key-file",

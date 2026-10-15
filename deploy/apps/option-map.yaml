@@ -66,6 +66,9 @@ apps:
       - {name: only-remote-policy-exec, to: options}
       - {name: allow-untrusted-policy-exec, to: options}
       - {name: offering-refresh-sec, to: options}
+      - {name: bid-ttl-sec, to: options}
+      - {name: bid-quota, to: profile}
+      - {name: computevm-quota, to: profile}
       - {name: tls-cert-file, to: profile}
       - {name: tls-key-file, to: profile}
       - {name: port-file, to: listener}
@@ -160,6 +163,8 @@ apps:
       - {name: per-account-max, to: options}
       - {name: unclaimed-grace-ms, to: options}
       - {name: orphan-scan-interval-ms, to: options}
+      - {name: record-retention-sec, to: options}
+      - {name: record-retention-scan-ms, to: options}
       - {name: compute-contract-kcp-server, to: profile}
       - {name: compute-contract-kcp-workspace, to: profile}
       - {name: compute-contract-kcp-token-file, to: state}

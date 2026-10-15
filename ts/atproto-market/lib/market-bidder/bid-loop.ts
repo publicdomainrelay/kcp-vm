@@ -1,7 +1,8 @@
 import type { DispatchRfpInput, RfpGate } from "@publicdomainrelay/market-atproto";
 import type { MarketLoopRecorder } from "@publicdomainrelay/market-abc";
 import type { BidClaim, BidEntry, BidLedger, BidRef } from "@publicdomainrelay/market-bidder-abc";
-import { bidOpen } from "@publicdomainrelay/market-bidder-abc";
+import { bidOpen, DECLINE_CAPACITY } from "@publicdomainrelay/market-bidder-abc";
+import { type BidRetentionOptions, createBidRetention } from "./bid-retention.ts";
 import type { HandlerResult } from "@publicdomainrelay/market-abc";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 
@@ -18,6 +19,7 @@ export interface BidLoopOptions {
   claimant: string;
   claimStaleMs?: number;
   bids?: BidLedger;
+  retention?: Omit<BidRetentionOptions, "bids" | "selfDid" | "logger">;
   loop?: MarketLoopRecorder;
   logger: StructuredLoggerInterface;
   listOwnBids(): Promise<OwnBidRecord[]>;
@@ -55,6 +57,7 @@ const nowIso = () => new Date().toISOString();
 
 export function createBidLoop(opts: BidLoopOptions): BidLoop {
   const { bids, loop, logger } = opts;
+  const retention = bids && opts.retention ? createBidRetention({ ...opts.retention, bids, selfDid: opts.selfDid, logger }) : undefined;
   const rfpsInFlight = new Map<string, Promise<void>>();
   const expiry = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -137,6 +140,13 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
       if (declined) return duplicate(input, `declined at ${declined.at}: ${declined.reason}`);
       const existing = await findBid(input.rfpUri);
       if (existing) return duplicate(input, "a Bid answers it", existing);
+      const full = await bids?.capacity?.().catch(() => undefined);
+      if (full) {
+        loop?.rfpSeen();
+        loop?.declined(DECLINE_CAPACITY, input.rfpUri, new Date());
+        logger.warn("rfp_declined_capacity", { rfpUri: input.rfpUri, quota: full });
+        return json({ ok: false, error: DECLINE_CAPACITY, message: `the quota of ${full} is used up` }, 503);
+      }
       return await run();
     } finally {
       rfpsInFlight.delete(input.rfpUri);
@@ -190,6 +200,7 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
       }
     }
     logger.info("bids_restored", { bids: entries.length, ...counts });
+    retention?.start();
   }
 
   async function contractEnded(accept: AcceptRefs): Promise<HandlerResult | undefined> {
@@ -304,6 +315,7 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
   }
 
   function close(): void {
+    retention?.stop();
     for (const timer of expiry.values()) clearTimeout(timer);
     expiry.clear();
   }

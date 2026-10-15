@@ -174,6 +174,7 @@ export interface BidEntry {
   computeVM?: string;
   publishedAt?: string;
   terminated?: Tombstone;
+  settledAt?: string;
 }
 
 export interface BidAcceptClaim {
@@ -198,9 +199,19 @@ export interface BidLedger {
   expired(rfpUri: string, at: string): Promise<void>;
   release(rfpUri: string): Promise<boolean>;
   list(): Promise<BidEntry[]>;
+  capacity?(): Promise<string | undefined>;
 }
 
 export const DEFAULT_BID_WINDOW_MS = 300_000;
+
+export const DECLINE_CAPACITY = "capacity";
+
+export class BidCapacityError extends Error {
+  constructor(readonly resource: string, cause?: unknown) {
+    super(`no capacity: the quota of ${resource} is used up`, { cause });
+    this.name = "BidCapacityError";
+  }
+}
 
 export function bidExpiresAt(decidedAt: string, windowMs: number = DEFAULT_BID_WINDOW_MS): string {
   return new Date(Date.parse(decidedAt) + windowMs).toISOString();

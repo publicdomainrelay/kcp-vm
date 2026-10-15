@@ -37,7 +37,7 @@ import type {
   MarketBidderProviderRef,
   Tombstone,
 } from "@publicdomainrelay/market-bidder-abc";
-import { TerminatedReceipts } from "@publicdomainrelay/market-bidder-abc";
+import { BidCapacityError, DECLINE_CAPACITY, TerminatedReceipts } from "@publicdomainrelay/market-bidder-abc";
 import {
   BID_NSID,
   RECEIPT_NSID,
@@ -433,6 +433,10 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
           decidedAt: nowIso,
         });
       } catch (err) {
+        if (err instanceof BidCapacityError) {
+          cbLog("warn", "bid_claim_refused_capacity", { rfpUri, quota: err.resource });
+          return { body: { ok: false, error: DECLINE_CAPACITY } };
+        }
         cbLog("error", "bid_claim_failed", { rfpUri, error: String(err) });
         return { body: { ok: false, error: "bid ledger unavailable" } };
       }

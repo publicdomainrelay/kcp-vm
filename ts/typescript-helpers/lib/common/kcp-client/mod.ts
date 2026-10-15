@@ -35,6 +35,8 @@ export interface KcpObject {
 export interface KcpList<T> {
   items: T[];
   resourceVersion: string;
+  remainingItemCount?: number;
+  continueToken?: string;
 }
 
 export type KcpWatchEventType = "ADDED" | "MODIFIED" | "DELETED" | "BOOKMARK" | "ERROR";
@@ -55,6 +57,7 @@ export interface KcpStatusObject {
 export interface KcpListOptions {
   labelSelector?: string;
   fieldSelector?: string;
+  limit?: number;
 }
 
 export interface KcpWatchOptions extends KcpListOptions {
@@ -105,6 +108,16 @@ export const isKcpStatus = (err: unknown, ...statuses: number[]): err is KcpErro
 export const isNotFound = (err: unknown): err is KcpError => isKcpStatus(err, 404);
 
 export const isConflict = (err: unknown): err is KcpError => isKcpStatus(err, 409, 422);
+
+export const isQuotaExceeded = (err: unknown): err is KcpError => isKcpStatus(err, 403) && /exceeded quota/.test(err.body);
+
+export const RESOURCE_QUOTA_RESOURCE: KcpResource = { group: "", version: "v1", plural: "resourcequotas", kind: "ResourceQuota" };
+
+export const BOUNDED_QUOTA_NAME = "socialweb-bounded";
+
+export function quotaCountKey(plural: string, group: string): string {
+  return `count/${plural}.${group}`;
+}
 
 export async function absentOnNotFound<T>(work: Promise<T>): Promise<T | null> {
   try {

@@ -3,7 +3,7 @@ import { parseContractState } from "@publicdomainrelay/compute-request-abc";
 import type { SecretEntry } from "@publicdomainrelay/secrets-common";
 import type { IdentityVault } from "@publicdomainrelay/market-identity-abc";
 import type { KcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
-import { isNotFound } from "@publicdomainrelay/kcp-client-common";
+import { isNotFound, isQuotaExceeded } from "@publicdomainrelay/kcp-client-common";
 import type {
   ClusterLinkReader,
   NodeClaim,
@@ -61,6 +61,10 @@ const ENDED_PHASES: ReadonlySet<NodeClaimPhase> = new Set(["Failed", "Released",
 const CONTRACT_NAME_PREFIX = "nodeclaim-";
 
 const NODE_CLAIM_ANNOTATION = "socialweb.computer/nodeclaim";
+
+const CONTRACT_TTL_ANNOTATION = "socialweb.computer/ttl-after-finished";
+
+const CONTRACT_TTL = "8d";
 
 const NODE_CLAIM_UID_LABEL = "socialweb.computer/nodeclaim-uid";
 
@@ -268,7 +272,7 @@ export function createNodeClaimMapper(opts: NodeClaimMapperOptions): NodeClaimMa
         metadata: {
           name,
           labels: claim.uid ? { [NODE_CLAIM_UID_LABEL]: claim.uid } : {},
-          annotations: { [NODE_CLAIM_ANNOTATION]: key },
+          annotations: { [NODE_CLAIM_ANNOTATION]: key, [CONTRACT_TTL_ANNOTATION]: CONTRACT_TTL },
         },
         spec: specOf(claim, name, adopt),
       } as ComputeContract);
@@ -282,6 +286,12 @@ export function createNodeClaimMapper(opts: NodeClaimMapperOptions): NodeClaimMa
         contract: claim.status.contract ?? {},
       });
     } catch (err) {
+      if (isQuotaExceeded(err)) {
+        const message = "AtCapacity: the quota of ComputeContracts of this gateway is used up; the claim waits";
+        log("node_claim_contract_at_capacity", { claim: key, error: String(err) });
+        if (claim.status.message !== message) await replaceStatus(claim, { ...claim.status, phase: "Pending", message });
+        return;
+      }
       log("node_claim_contract_failed", { claim: key, error: String(err) });
       await replaceStatus(claim, {
         ...claim.status,

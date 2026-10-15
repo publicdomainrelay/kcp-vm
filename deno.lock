@@ -2206,6 +2206,7 @@
         "dependencies": [
           "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
           "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-common@0",
           "jsr:@publicdomainrelay/market-bidder-abc@0"
         ]
       },

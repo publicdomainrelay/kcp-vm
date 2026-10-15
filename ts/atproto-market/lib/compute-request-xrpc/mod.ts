@@ -811,6 +811,7 @@ export type ComputeRequestOptions =
     relayUrl?: string;
     returnSignal?: AbortSignal;
     acceptCopies?: number;
+    onRfpAnswer?: (answer: { bidderDid: string; status: number; error?: string }) => void;
     offeringWatcherDids?: () => string[];
     logger?: StructuredLoggerInterface;
     payloadFactory?: () => Promise<{ uri: string; cid: string }>;
@@ -1472,6 +1473,8 @@ runcmd:
                 },
               );
               log("submitRfp_result", { bidderDid, status: r.status, ok: r.ok });
+              const answered = (r.body as { error?: unknown } | null | undefined)?.error;
+              opts.onRfpAnswer?.({ bidderDid, status: r.status, ...(typeof answered === "string" ? { error: answered } : {}) });
             }
           } catch (err) {
             log("bidder_error", { bidderDid, error: String(err) });

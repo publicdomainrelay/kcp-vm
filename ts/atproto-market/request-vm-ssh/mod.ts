@@ -381,6 +381,8 @@ const controller = createRequesterController({
   scanOwners: () => ownerDids,
   unclaimedGraceMs: o.unclaimedGraceMs as number,
   orphanScanIntervalMs: o.orphanScanIntervalMs as number,
+  recordRetentionMs: (o.recordRetentionSec as number) * 1000,
+  recordRetentionScanMs: o.recordRetentionScanMs as number,
 });
 
 function shutdown(): void {

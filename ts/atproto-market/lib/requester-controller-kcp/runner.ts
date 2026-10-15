@@ -19,7 +19,7 @@ import { parseSecretsFile, type SecretEntry } from "@publicdomainrelay/secrets-c
 import type { UserDataPatch } from "@publicdomainrelay/cloud-init-common";
 import type { IdentityVault, VaultRef } from "@publicdomainrelay/market-identity-abc";
 import type { MarketLoopRecorder } from "@publicdomainrelay/market-abc";
-import type { AccountPdsProvider, ContractDisposition, ContractProfile, ProfilePreparation } from "@publicdomainrelay/requester-controller-abc";
+import { type AccountPdsProvider, type ContractDisposition, type ContractProfile, type ProfilePreparation, withContractConditions } from "@publicdomainrelay/requester-controller-abc";
 import { ExecutionState, type KcpClient, kcpResourceClient, type KcpCondition } from "@publicdomainrelay/kcp-client-abc";
 import { isNotFound } from "@publicdomainrelay/kcp-client-common";
 import { createCoalescedStatusWriter } from "@publicdomainrelay/kcp-client-rest";
@@ -74,6 +74,8 @@ export interface ContractRunner {
 const STATUS_WRITE_ATTEMPTS = 3;
 
 const MAX_RECORDED_BIDS = 20;
+
+export const AT_CAPACITY_RETRY_MS = 60_000;
 
 const FETCH_BOUND_SLACK_MS = 0;
 
@@ -145,6 +147,10 @@ export function startContractRunner(
   const bids: ContractBid[] = [...(status0?.bids ?? [])];
   let chosen: ContractChosen | undefined = status0?.chosen;
   let phaseNow: ComputeContractPhase = status0?.phase ?? "Pending";
+  let atCapacity: string | undefined;
+  let retryAtCapacity = false;
+  let rfpAnswers = 0;
+  let capacityAnswers = 0;
   let messageNow = status0?.message ?? "";
   const execution = new ExecutionState({
     phase: status0?.phase,
@@ -156,7 +162,7 @@ export function startContractRunner(
 
   function contractStatus(): ComputeContractStatus {
     const view = execution.view();
-    return {
+    return withContractConditions({
       ...view,
       phase: phaseNow,
       message: messageNow,
@@ -166,7 +172,7 @@ export function startContractRunner(
       ...(bids.length > 0 ? { bids: bids.map((b) => ({ ...b })) } : {}),
       ...(chosen ? { chosen } : {}),
       ...(state ? { contract: state as unknown as NodeClaimContract } : {}),
-    } as ComputeContractStatus;
+    } as ComputeContractStatus, new Date(), atCapacity);
   }
 
   let statusWriteError: unknown;
@@ -479,6 +485,10 @@ export function startContractRunner(
         resume: state,
         returnSignal: releaseEarly.signal,
         acceptCopies: env.acceptCopies,
+        onRfpAnswer: (answer: { error?: string }) => {
+          rfpAnswers++;
+          if (answer.error === "capacity") capacityAnswers++;
+        },
       } as unknown as ComputeRequestOptions, handlers);
     } catch (err) {
       failedStep(err);
@@ -491,6 +501,14 @@ export function startContractRunner(
       if (released) {
         await handle.dispose();
         await writeStatus("Released", "the contract was released before a VM was held");
+        return;
+      }
+      if (state.outcome === "no_bids" && rfpAnswers > 0 && capacityAnswers === rfpAnswers && aborted() === undefined) {
+        atCapacity = `every bidder (${rfpAnswers}) declined the RFP with reason capacity; the contract asks again in ${AT_CAPACITY_RETRY_MS / 1000}s`;
+        retryAtCapacity = true;
+        await handle.dispose();
+        stepTo("atCapacity");
+        await writeStatus("Pending", atCapacity);
         return;
       }
       const why = preparation?.explainEnd(state, { error: state.error, grantFailed: aborted() !== undefined }) ??
@@ -571,7 +589,19 @@ export function startContractRunner(
 
   const done = (async () => {
     try {
-      await flow();
+      for (;;) {
+        retryAtCapacity = false;
+        atCapacity = undefined;
+        rfpAnswers = 0;
+        capacityAnswers = 0;
+        await flow();
+        if (!retryAtCapacity || released || stopping.signal.aborted) break;
+        await untilAny([stopping.signal, releaseEarly.signal], AT_CAPACITY_RETRY_MS, new Promise<void>(() => {}));
+        if (released || stopping.signal.aborted) break;
+        state = undefined;
+        bids.length = 0;
+        chosen = undefined;
+      }
     } catch (err) {
       logger.error("requester_contract_failed", { error: String(err) });
       failedStep(err);

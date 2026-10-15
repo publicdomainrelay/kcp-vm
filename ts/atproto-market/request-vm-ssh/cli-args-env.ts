@@ -149,6 +149,16 @@ export default {
       description: "How often the controller looks for VM receipts that no contract names",
       default: 300000,
     },
+    "record-retention-sec": {
+      type: "number" as const,
+      description: "Seconds after a contract is Released or Failed before the requester removes its own rfp, payload and accept records; 0 keeps them",
+      default: 604800,
+    },
+    "record-retention-scan-ms": {
+      type: "number" as const,
+      description: "How often the controller looks for finished contracts whose records are due for removal",
+      default: 600000,
+    },
     "market-root-name": {
       type: "string" as const,
       description: "Name of the MarketRequester root object in the ComputeContract's kcp workspace; the requester writes its loop counters to its status.market",

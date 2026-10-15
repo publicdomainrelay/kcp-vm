@@ -8,6 +8,7 @@ import {
   type AccountPdsProvider,
   dispositionOf,
   FINISHED_PHASES,
+  withContractConditions,
 } from "@publicdomainrelay/requester-controller-abc";
 import type { KcpClient } from "@publicdomainrelay/kcp-client-abc";
 import { kcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
@@ -20,6 +21,7 @@ import {
 } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import { type ContractRunner, type RunnerEnvironment, startContractRunner } from "./runner.ts";
 import { createOrphanScanner, DEFAULT_ORPHAN_SCAN_INTERVAL_MS, DEFAULT_UNCLAIMED_GRACE_MS } from "./orphans.ts";
+import { createRecordRetention, DEFAULT_RECORD_RETENTION_MS, DEFAULT_RECORD_RETENTION_SCAN_MS } from "./retention.ts";
 
 export interface RequesterControllerOptions extends Omit<RunnerEnvironment, "logger" | "kcp" | "workspace"> {
   kcp: KcpClient;
@@ -30,6 +32,8 @@ export interface RequesterControllerOptions extends Omit<RunnerEnvironment, "log
   orphanScan?: boolean;
   unclaimedGraceMs?: number;
   orphanScanIntervalMs?: number;
+  recordRetentionMs?: number;
+  recordRetentionScanMs?: number;
   resyncMs?: number;
 }
 
@@ -85,7 +89,20 @@ export function createRequesterController(opts: RequesterControllerOptions): Req
       intervalMs: opts.orphanScanIntervalMs ?? DEFAULT_ORPHAN_SCAN_INTERVAL_MS,
     })
     : null;
+  const retentionMs = opts.recordRetentionMs ?? DEFAULT_RECORD_RETENTION_MS;
+  const retention = retentionMs > 0
+    ? createRecordRetention({
+      logger,
+      pds: opts.pds,
+      retentionMs,
+      intervalMs: opts.recordRetentionScanMs,
+      annotate: async (name, annotations) => {
+        await contracts.patch(name, { type: "merge", body: { metadata: { annotations } } });
+      },
+    })
+    : null;
   let known: ComputeContract[] = [];
+  let retentionTimer: ReturnType<typeof setInterval> | undefined;
   let reconciling: Promise<void> = Promise.resolve();
   let started = false;
 
@@ -98,15 +115,15 @@ export function createRequesterController(opts: RequesterControllerOptions): Req
     finished.add(name);
     waiting.delete(name);
     if (contract.spec?.release === true && contract.status?.phase && !FINISHED_PHASES.has(contract.status.phase)) {
-      await contracts.replaceStatus(name, {
+      await contracts.replaceStatus(name, withContractConditions({
         ...(contract.status ?? {}),
         phase: "Released",
         message: reason,
-      }).catch((err) => {
+      }, new Date())).catch((err) => {
         if (!isNotFound(err)) logger.warn("requester_contract_settle_failed", { contract: name, error: String(err) });
       });
     } else if (contract.spec?.release === true && !contract.status?.phase) {
-      await contracts.replaceStatus(name, { phase: "Released", message: reason }).catch((err) => {
+      await contracts.replaceStatus(name, withContractConditions({ phase: "Released", message: reason }, new Date())).catch((err) => {
         if (!isNotFound(err)) logger.warn("requester_contract_settle_failed", { contract: name, error: String(err) });
       });
     }
@@ -128,11 +145,11 @@ export function createRequesterController(opts: RequesterControllerOptions): Req
     if (!decision.admit) {
       if (!waiting.has(name)) {
         logger.info("requester_contract_waiting", { contract: name, reason: decision.reason });
-        void contracts.replaceStatus(name, {
+        void contracts.replaceStatus(name, withContractConditions({
           ...(contract.status ?? {}),
           phase: "Pending",
           message: decision.reason,
-        }).catch(() => undefined);
+        }, new Date(), decision.reason)).catch(() => undefined);
       }
       waiting.set(name, contract);
       return;
@@ -250,8 +267,14 @@ export function createRequesterController(opts: RequesterControllerOptions): Req
       if (started) return;
       started = true;
       following = follow();
+      if (retention) {
+        retentionTimer = setInterval(() => {
+          void retention.sweep(known, stateOf).catch((err) => logger.warn("requester_retention_sweep_failed", { error: String(err) }));
+        }, opts.recordRetentionScanMs ?? DEFAULT_RECORD_RETENTION_SCAN_MS);
+      }
     },
     async stop() {
+      if (retentionTimer !== undefined) clearInterval(retentionTimer);
       stopping.abort();
       for (const runner of runners.values()) runner.stop();
       await following;

@@ -4,13 +4,50 @@ import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import type { SecretEntry } from "@publicdomainrelay/secrets-common";
-import type { ComputeContractPhase, ComputeContractSpec, NodeClaimGrant } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import type { ComputeContractPhase, ComputeContractSpec, ComputeContractStatus, NodeClaimGrant } from "@publicdomainrelay/socialweb-computer-k8s-api";
 
 export const DEFAULT_MAX_CONCURRENT = 64;
 
 export const DEFAULT_PER_ACCOUNT = 16;
 
 export const FINISHED_PHASES: ReadonlySet<ComputeContractPhase> = new Set(["Released", "Failed"]);
+
+export const CONDITION_AT_CAPACITY = "AtCapacity";
+
+export const CONTRACT_TTL_ANNOTATION = "socialweb.computer/ttl-after-finished";
+
+function conditionType(c: Record<string, unknown>): string {
+  return typeof c.type === "string" ? c.type : "";
+}
+
+export function withContractConditions(
+  status: ComputeContractStatus,
+  now: Date,
+  atCapacity?: string,
+): ComputeContractStatus {
+  const kept = (status.conditions ?? []).filter((c) => conditionType(c) !== CONDITION_AT_CAPACITY);
+  const next = [...kept];
+  if (atCapacity !== undefined) {
+    next.push({
+      type: CONDITION_AT_CAPACITY,
+      status: "True",
+      reason: "AdmissionFull",
+      message: atCapacity,
+      lastTransitionTime: now.toISOString(),
+    });
+  }
+  const finishedType = status.phase === "Failed" ? "Failed" : status.phase === "Released" ? "Complete" : undefined;
+  if (finishedType && !next.some((c) => (conditionType(c) === "Complete" || conditionType(c) === "Failed") && c.status === "True")) {
+    next.push({
+      type: finishedType,
+      status: "True",
+      reason: status.phase,
+      message: status.message ?? "",
+      lastTransitionTime: now.toISOString(),
+    });
+  }
+  return { ...status, conditions: next };
+}
 
 export interface AdmissionLimits {
   maxConcurrent: number;

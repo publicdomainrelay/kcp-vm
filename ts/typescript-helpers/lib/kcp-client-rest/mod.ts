@@ -49,6 +49,7 @@ function retryAfterMs(res: Response): number {
 function selectorQuery(opts: KcpListOptions | undefined, q: URLSearchParams): URLSearchParams {
   if (opts?.labelSelector) q.set("labelSelector", opts.labelSelector);
   if (opts?.fieldSelector) q.set("fieldSelector", opts.fieldSelector);
+  if (opts?.limit) q.set("limit", String(opts.limit));
   return q;
 }
 
@@ -211,10 +212,15 @@ export function createKcpRestClient(credentials: KcpCredentials, opts: KcpRestCl
     async list(target, lopts) {
       const q = selectorQuery(lopts, new URLSearchParams()).toString();
       const out = await request("GET", `${pathOf(target)}${q ? `?${q}` : ""}`) as {
-        metadata?: { resourceVersion?: string };
+        metadata?: { resourceVersion?: string; remainingItemCount?: number; continue?: string };
         items?: unknown[];
       };
-      return { items: out?.items ?? [], resourceVersion: out?.metadata?.resourceVersion ?? "" };
+      return {
+        items: out?.items ?? [],
+        resourceVersion: out?.metadata?.resourceVersion ?? "",
+        ...(out?.metadata?.remainingItemCount !== undefined ? { remainingItemCount: out.metadata.remainingItemCount } : {}),
+        ...(out?.metadata?.continue ? { continueToken: out.metadata.continue } : {}),
+      };
     },
     watch,
     async create(target, object) {

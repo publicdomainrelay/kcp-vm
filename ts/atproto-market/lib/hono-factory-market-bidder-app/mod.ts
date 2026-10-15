@@ -120,6 +120,9 @@ export interface MarketBidderMarketSpec {
   firehoseMode?: string;
   offeringRefreshSec?: number;
   bidWindowSec?: number;
+  bidTtlSec?: number;
+  bidQuota?: number;
+  computeVMQuota?: number;
   policy?: string;
   policyArgs?: unknown;
   onlyRemotePolicyExec?: boolean;
@@ -567,6 +570,9 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           kcp: createKcpRestClient({ server: p.server, tokenFile: p.tokenFile, caFile: p.caFile }),
           workspace: p.workspace,
           windowMs: (spec.market.bidWindowSec ?? DEFAULT_BID_WINDOW_SEC) * 1_000,
+          ...(spec.market.bidTtlSec ? { ttl: `${spec.market.bidTtlSec}s` } : {}),
+          bidQuota: spec.market.bidQuota,
+          computeVMQuota: spec.market.computeVMQuota,
         });
         return createComputeProviderHooks({ provider: kcp.provider });
       }
@@ -688,6 +694,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
       acceptToContract,
       loop,
       bids: bidLedger,
+      ...(spec.market.bidTtlSec ? { bidRecordTtlMs: spec.market.bidTtlSec * 1_000 } : {}),
     });
     await bidder.beginServe();
     return { did: atproto.did, ingressRef: marketRelay?.ingressRef, servePort: bidderServe.tcpPort };

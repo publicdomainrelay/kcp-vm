@@ -1,5 +1,6 @@
 import {
   acceptClaimable,
+  BidCapacityError,
   bidExpiresAt,
   DEFAULT_TERMINATED_RECEIPTS_CAPACITY,
   type BidClaim,
@@ -11,13 +12,17 @@ import {
   type ContractStore,
   type Tombstone,
 } from "@publicdomainrelay/market-bidder-abc";
-import { type Bid, BID_RESOURCE, type BidStatus, parseBid } from "@publicdomainrelay/compute-provider-kcp-common";
+import { type Bid, BID_RESOURCE, COMPUTE_VM_RESOURCE, type BidStatus, parseBid } from "@publicdomainrelay/compute-provider-kcp-common";
 import { type KcpClient, kcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
+import { isQuotaExceeded } from "@publicdomainrelay/kcp-client-common";
 
 export const BID_NAME_PREFIX = "bid-";
 export const BID_NAME_HEX = 20;
 export const BID_API_VERSION = `${BID_RESOURCE.group}/${BID_RESOURCE.version}`;
 export const DEFAULT_TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const TTL_ANNOTATION = "socialweb.computer/ttl-after-finished";
+export const DEFAULT_BID_TTL = "24h";
+export const DEFAULT_QUOTA_CACHE_MS = 2_000;
 
 export async function bidNameOf(rfpUri: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rfpUri)));
@@ -29,10 +34,21 @@ function refOf(r: { uri: string; cid?: string }): BidRef {
   return r.cid ? { uri: r.uri, cid: r.cid } : { uri: r.uri };
 }
 
+function settledAtOf(status: BidStatus): string | undefined {
+  let at: string | undefined;
+  for (const c of status.conditions ?? []) {
+    if ((c.type !== "Complete" && c.type !== "Failed") || c.status !== "True") continue;
+    if (typeof c.lastTransitionTime === "string" && (at === undefined || c.lastTransitionTime > at)) at = c.lastTransitionTime;
+  }
+  return at;
+}
+
 export function bidEntryOf(bid: Bid): BidEntry {
   const s = bid.status ?? {};
   const spec = bid.spec!;
+  const settledAt = settledAtOf(s);
   return {
+    ...(settledAt ? { settledAt } : {}),
     name: bid.metadata?.name ?? "",
     rfp: refOf(spec.rfp),
     requester: spec.requester,
@@ -59,11 +75,11 @@ function tombstoneOf(t: NonNullable<BidStatus["terminated"]>, accept: BidStatus[
   };
 }
 
-export function bidObjectOf(name: string, decision: BidDecision, windowMs?: number): Bid {
+export function bidObjectOf(name: string, decision: BidDecision, windowMs?: number, ttl: string = DEFAULT_BID_TTL): Bid {
   return {
     apiVersion: BID_API_VERSION,
     kind: BID_RESOURCE.kind,
-    metadata: { name },
+    metadata: { name, annotations: { [TTL_ANNOTATION]: ttl } },
     spec: {
       rfp: refOf(decision.rfp),
       requester: decision.requester,
@@ -84,6 +100,10 @@ export interface KcpBidLedgerOptions {
   kcp: KcpClient;
   workspace?: string;
   windowMs?: number;
+  ttl?: string;
+  quotaCacheMs?: number;
+  bidQuota?: number;
+  computeVMQuota?: number;
 }
 
 interface Pending {
@@ -110,14 +130,52 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
     return p ?? {};
   }
 
+
+  let gauge: { at: number; full: string | undefined } | undefined;
+
+  async function countOf(resource: typeof BID_RESOURCE): Promise<number> {
+    const out = await opts.kcp.list({ resource, workspace: opts.workspace }, { limit: 1 });
+    if (out.remainingItemCount !== undefined) return out.items.length + out.remainingItemCount;
+    if (!out.continueToken) return out.items.length;
+    return (await opts.kcp.list({ resource, workspace: opts.workspace })).items.length;
+  }
+
+  async function fullQuota(fresh = false): Promise<string | undefined> {
+    const now = Date.now();
+    if (!fresh && gauge && now - gauge.at < (opts.quotaCacheMs ?? DEFAULT_QUOTA_CACHE_MS)) return gauge.full;
+    let full: string | undefined;
+    try {
+      for (const [limit, resource] of [[opts.bidQuota, BID_RESOURCE], [opts.computeVMQuota, COMPUTE_VM_RESOURCE]] as const) {
+        if (!limit || limit <= 0) continue;
+        if (await countOf(resource) >= limit) {
+          full = `${resource.plural}.${resource.group}`;
+          break;
+        }
+      }
+    } catch {
+      full = undefined;
+    }
+    gauge = { at: now, full };
+    return full;
+  }
+
   return {
+    capacity: () => fullQuota(),
     async find(rfpUri) {
       const bid = await bids.get(await bidNameOf(rfpUri));
       return bid ? bidEntryOf(bid) : null;
     },
     async claim(decision): Promise<BidClaim> {
       const name = await bidNameOf(decision.rfp.uri);
-      const out = await bids.createIfAbsent(bidObjectOf(name, decision, opts.windowMs));
+      const full = await bids.get(name).then((existing) => existing ? undefined : fullQuota(true));
+      if (full) throw new BidCapacityError(full);
+      let out;
+      try {
+        out = await bids.createIfAbsent(bidObjectOf(name, decision, opts.windowMs, opts.ttl));
+      } catch (err) {
+        if (isQuotaExceeded(err)) throw new BidCapacityError(`${BID_RESOURCE.plural}.${BID_RESOURCE.group}`, err);
+        throw err;
+      }
       if (out.created) pending.set(name, { rfpSeenAt: decision.rfpSeenAt, decidedAt: decision.decidedAt });
       return { claimed: out.created, entry: bidEntryOf(out.object) } as BidClaim;
     },
