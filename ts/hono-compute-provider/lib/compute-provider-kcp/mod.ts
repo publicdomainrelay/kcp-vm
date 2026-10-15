@@ -588,7 +588,11 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     adopt,
     createBidConfig,
     injectAcceptBundle: (userData: string, bundle: Record<string, unknown>) =>
-      injectAcceptBundle(userData, bundle, acceptPathVm),
+      injectAcceptBundle(
+        userData,
+        { ...bundle, guest_onnetwork_url: `${ctx.getIssuerUrl().replace(/\/+$/, "")}/v1/on-network` },
+        acceptPathVm,
+      ),
     getDroplet,
     onGuestGone,
     setup: ensureSync,

@@ -8140,6 +8140,19 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `--record-retention-sec 1 --record-retention-scan-ms 500` logged `requester_records_removed` for its
   contract while the invocation still stood (the CLI saw the contract Released at 20:50:12 and the line is stamped 20:50:12.787). Not read: a 1000-contract run, which the
   soak (M4-SOAK-READING) reads.
+- Two defects of the guest-kcp split and the Bid-held tombstones, closed together. (a) The accept bundle
+  that the bidder injects into a guest named the bidder's own relay as `guest_onnetwork_url`, so the
+  guest's on-network report (with its OpenBao bearer) reached the bidder's unauthenticated
+  `/v1/on-network`, which wrote the PDS onNetwork record but never the ComputeVM `status.market`; the
+  guest-kcp route, which verifies the bearer and records `address`, was never called. The kcp provider
+  now sets `guest_onnetwork_url` to the guest endpoint it already uses for the login
+  (`compute-provider-kcp` `injectAcceptBundle`). Before: ComputeVM `address` and `onNetworkUri` empty
+  while the guest logged `http 200`. After: `address iroh://...` and `onNetworkUri` set, identical across
+  kill -9 of the bidder, `dev restart` of the bidder DenoPod and kill -9 of the bidder core.
+  (b) A restarted bidder loads tombstones from the Bid `status.terminated`; a replayed accept of an
+  ended contract then matched `acceptToContract`, passed `checkAccept` as known, and the bidder answered
+  `alreadyAccepted` 200 for a contract that had ended. `checkAccept` now answers 409 `ContractEnded`
+  (`accept_contract_ended`) when the known accept's receipt is terminated. No VM was started in either case.
 
 ## 16. Vocabulary
 
