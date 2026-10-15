@@ -7425,6 +7425,22 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   stays a manual live reading. The integration job of `.gitlab-ci.yml` has 90 minutes instead of 75 for the
   two added networks.
 
+- **The GitLab fixture serves a runner on a tenant cluster (plan 0010 G1-GITLAB-FIXTURE, 2026-10-15).**
+  Live proof of `scripts/gitlab-fixture.sh up` and `down` on hat-8 (docker, the pinned gitlab-ce
+  19.2.7 image, plain http on the host's LAN address and a docker-picked port): `up --name itac4924` was
+  ready in 230.2 s with the project `root/fixture-probe`, its template commit (a pipeline already
+  created) and a project runner tagged `socialweb-computer-fixture`. On a market network with a gateway
+  and one bidder, a pod running `gitlab/gitlab-runner:alpine-v19.2.0` was applied to the tenant cluster at
+  zero nodes (a ServiceAccount and Role for the kubernetes executor, the runner token in a Secret, `gitlab-runner
+  register --executor kubernetes` then `run`). The cluster scaled out on a market RFP VM (claim Bidding
+  +18.8 s, Provisioning +22.1 s, Joining +37.7 s, node Ready +47.0 s), the runner pod ran +60.0 s, and the
+  pipeline of the template commit was `success` +73.0 s after the pod was created: job `clone-probe` ran as
+  a pod of the executor on the market node, cloned the project from the fixture over the guest's own
+  network and printed `FIXTURE_CLONE_OK`. `down --name itac4924` left no container, no volume and no state
+  dir. The run was a manual reading through a scratch Go test (not kept: it needs docker and a free
+  8 GiB for GitLab, which the CI runner of `test/integration` does not promise); the guest reaches the host
+  address the fixture publishes on, so the default `--address` works for a runner in a tenant cluster.
+
 ## 16. Vocabulary
 
 | | |

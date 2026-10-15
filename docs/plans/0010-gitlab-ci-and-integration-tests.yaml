@@ -170,7 +170,7 @@ items:
     files: ["scripts/gitlab-fixture.sh", "deploy/gitlab-fixture/ (template project)"]
     done_when: one command brings up a fresh GitLab fixture and a project whose pipeline a runner on a tenant cluster picks up; a second command tears it down with nothing left.
     risks: ["GitLab CE needs several GiB of RAM; it runs on hat-8, not on the gateway host."]
-    status: doing
+    status: done
     evidence:
   - id: G1-CI-GATE
     milestone: G1
