@@ -125,14 +125,19 @@ func RequesterVaultRules() []v1alpha1.OpenBaoPolicyRule {
 	}
 }
 
-func RootVaultSpec() v1alpha1.OpenBaoServerSpec {
+func RootVaultSpec(g v1alpha1.GatewaySpec) (v1alpha1.OpenBaoServerSpec, error) {
 	declared := RootVaultDeclared()
 	declared.Policies = append(declared.Policies, v1alpha1.OpenBaoPolicy{Name: GatewayRequesterPolicy, Rules: RequesterVaultRules()})
+	declared.Policies = append(declared.Policies, AtprotoPolicies()...)
+	plugin, err := AtprotoPlugin(g.Options, g.Network)
+	if err != nil {
+		return v1alpha1.OpenBaoServerSpec{}, err
+	}
 	return v1alpha1.OpenBaoServerSpec{Asset: &v1alpha1.HostProcessAsset{Name: RootVaultAsset},
 		Clients: []v1alpha1.OpenBaoServerClient{{Name: vaultlayout.RootClient, Policies: []string{vaultlayout.PolicyRootWriter}},
 			{Name: WebAppVaultClient, KVMount: WebAppVaultMount},
-			{Name: RequesterVaultClient, KVMount: RequesterVaultMount, Policies: []string{GatewayRequesterPolicy}}},
-		Declared: declared}
+			{Name: RequesterVaultClient, KVMount: RequesterVaultMount, Policies: []string{GatewayRequesterPolicy, AtprotoSessionProxyPolicy}}},
+		Declared: declared, Plugins: []v1alpha1.OpenBaoPlugin{plugin}}, nil
 }
 
 func sameSpec(a, b any) bool {
@@ -141,12 +146,15 @@ func sameSpec(a, b any) bool {
 	return err1 == nil && err2 == nil && string(x) == string(y)
 }
 
-func (ctl *Controller) ensureRootVault(ctx context.Context, owner string) (*v1alpha1.OpenBaoServer, error) {
+func (ctl *Controller) ensureRootVault(ctx context.Context, owner string, g v1alpha1.GatewaySpec) (*v1alpha1.OpenBaoServer, error) {
 	ri, err := ctl.client(ctl.c.workspace(), OpenBaoServerGVR)
 	if err != nil {
 		return nil, err
 	}
-	want := RootVaultSpec()
+	want, err := RootVaultSpec(g)
+	if err != nil {
+		return nil, err
+	}
 	for range 5 {
 		u, err := ri.Get(ctx, vaultlayout.RootServerName, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
@@ -238,7 +246,7 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 		st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, fmt.Sprintf("profile %q: want %s or %s", o.Spec.Profile, ProfileGatewayProd, ProfileGatewayNetwork)
 		return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
 	}
-	vault, err := ctl.ensureRootVault(ctx, owner)
+	vault, err := ctl.ensureRootVault(ctx, owner, o.Spec)
 	if err != nil {
 		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its root vault: "+err.Error()
 		return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)

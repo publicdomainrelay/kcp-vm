@@ -340,11 +340,21 @@ func recordTidy(st *v1alpha1.OpenBaoServerStatus, s synced, interval time.Durati
 }
 
 func syncWith(ctx context.Context, admin *openbao.Client, in layoutInput) (synced, error) {
+	in.accessors = accessorsOf(ctx, admin)
 	d, pending, err := desired(ctx, in, pkiCA(admin))
 	if err != nil {
 		return synced{}, err
 	}
 	rep, err := baosync.Sync(ctx, admin, d)
+	if err == nil && rep.Err == nil && len(pending) > 0 && rep.Changed() {
+		in.accessors = accessorsOf(ctx, admin)
+		if d2, pending2, derr := desired(ctx, in, pkiCA(admin)); derr == nil && len(pending2) < len(pending) {
+			rep2, err2 := baosync.Sync(ctx, admin, d2)
+			rep.Applied = append(rep.Applied, rep2.Applied...)
+			rep.Conflicts, rep.Err = rep2.Conflicts, errors.Join(rep.Err, rep2.Err)
+			d, pending, err = d2, pending2, err2
+		}
+	}
 	s := synced{report: rep, pending: pending, desired: d}
 	if err == nil && in.tidyDue {
 		s.tidied, s.tidyErr = tidyTokensAndLeases(ctx, admin)
@@ -358,6 +368,20 @@ func syncWith(ctx context.Context, admin *openbao.Client, in layoutInput) (synce
 		}
 	}
 	return s, err
+}
+
+func accessorsOf(ctx context.Context, admin *openbao.Client) map[string]string {
+	out := map[string]string{}
+	auths, err := admin.AuthMounts(ctx)
+	if err != nil {
+		return out
+	}
+	for p, m := range auths {
+		if m.Accessor != "" {
+			out[p] = m.Accessor
+		}
+	}
+	return out
 }
 
 func (c *Controller) syncCore(ctx context.Context, client *openbao.Client, keysPath string, in layoutInput) (synced, error) {

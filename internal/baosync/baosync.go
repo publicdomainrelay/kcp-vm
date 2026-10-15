@@ -44,8 +44,10 @@ type Policy struct {
 }
 
 type Object struct {
-	Path string
-	Data map[string]any
+	Path      string
+	Data      map[string]any
+	WriteOnly []string
+	Derived   map[string]any
 }
 
 type KVScope struct {
@@ -56,10 +58,11 @@ type KVScope struct {
 }
 
 type Plugin struct {
-	Type    string
-	Name    string
-	Command string
-	SHA256  string
+	Type         string
+	Name         string
+	Command      string
+	SHA256       string
+	ManagedRoles bool
 }
 
 type PluginEntry struct {
@@ -166,10 +169,29 @@ func KVScopeKey(s KVScope) string {
 	return strings.Trim(s.Mount, "/") + "/metadata/" + strings.Trim(s.Prefix, "/")
 }
 
+func (d Desired) managedRoles(mountType string) bool {
+	for _, p := range d.Plugins {
+		if p.Type == PluginAuth && p.Name == mountType && p.ManagedRoles {
+			return true
+		}
+	}
+	return false
+}
+
+func (d Desired) AuthRoleCollection(m AuthMount) string {
+	if c := RoleCollection(m.Path, m.Type); c != "" {
+		return c
+	}
+	if d.managedRoles(m.Type) {
+		return "auth/" + strings.Trim(m.Path, "/") + "/" + collRole
+	}
+	return ""
+}
+
 func (d Desired) Collections() []string {
 	var out []string
 	for _, m := range d.AuthMounts {
-		if c := RoleCollection(m.Path, m.Type); c != "" {
+		if c := d.AuthRoleCollection(m); c != "" {
 			out = append(out, c)
 		}
 	}
@@ -317,7 +339,9 @@ func Diff(d Desired, a Actual) Plan {
 		case !ok:
 			add(Op{Kind: OpWriteObject, Target: p, Body: o.Data, Why: "declared and missing"})
 		default:
-			if k := Drifted(o.Data, got); k != "" {
+			if k := Drifted(o.Data, got, o.WriteOnly...); k != "" {
+				add(Op{Kind: OpWriteObject, Target: p, Body: o.Data, Why: "field " + k + " drifted from the declaration"})
+			} else if k := Drifted(o.Derived, got); k != "" {
 				add(Op{Kind: OpWriteObject, Target: p, Body: o.Data, Why: "field " + k + " drifted from the declaration"})
 			}
 		}

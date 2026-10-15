@@ -74,15 +74,16 @@ type MarketRequester struct {
 }
 
 type SshGateway struct {
-	StateDir  string `json:",omitempty"`
-	WebDir    string `json:",omitempty"`
-	CABundle  string `json:",omitempty"`
-	EnvAllow  string `json:",omitempty"`
-	Kcp       KcpRef
-	Vault     BidderVault
-	IrohDial  IrohDial
-	ExtraArgs string
-	ExtraRead string
+	StateDir   string `json:",omitempty"`
+	WebDir     string `json:",omitempty"`
+	CABundle   string `json:",omitempty"`
+	EnvAllow   string `json:",omitempty"`
+	Kcp        KcpRef
+	Vault      BidderVault
+	IrohDial   IrohDial
+	ExtraArgs  string
+	ExtraRead  string
+	VaultExtra string
 }
 
 type IrohDial struct {

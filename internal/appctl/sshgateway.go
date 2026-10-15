@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/yaml"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
@@ -111,7 +112,29 @@ func SshGatewayValues(spec v1alpha1.SshGatewaySpec, stateDir string, l devinstan
 	if v.ExtraRead, err = fragment(read); err != nil {
 		return v, err
 	}
+	if v.VaultExtra, err = SshGatewayVaultExtra(spec); err != nil {
+		return v, err
+	}
 	return v, nil
+}
+
+func SshGatewayVaultExtra(spec v1alpha1.SshGatewaySpec) (string, error) {
+	plugin, err := AtprotoPlugin(spec.Options, spec.Network)
+	if err != nil {
+		return "", err
+	}
+	raw, err := yaml.Marshal(map[string]any{
+		"plugins":  []v1alpha1.OpenBaoPlugin{plugin},
+		"declared": v1alpha1.OpenBaoServerDeclared{Policies: AtprotoPolicies()},
+	})
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		b.WriteString("  " + line + "\n")
+	}
+	return b.String(), nil
 }
 
 func (ctl *Controller) sshGatewayKcp(ctx context.Context, stateDir string) (manifests.KcpRef, manifests.BidderVault, error) {

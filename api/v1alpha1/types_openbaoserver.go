@@ -65,6 +65,44 @@ type OpenBaoPlugin struct {
 	Asset HostProcessAsset `json:"asset"`
 
 	MountPath string `json:"mountPath,omitempty"`
+
+	Atproto *OpenBaoAtprotoPlugin `json:"atproto,omitempty"`
+}
+
+type OpenBaoAtprotoPlugin struct {
+	Config OpenBaoAtprotoConfig `json:"config,omitempty"`
+
+	Roles []OpenBaoAtprotoRole `json:"roles,omitempty"`
+}
+
+type OpenBaoAtprotoConfig struct {
+	ClientID string `json:"clientID,omitempty"`
+
+	RedirectURIs []string `json:"redirectURIs,omitempty"`
+
+	ClientName string `json:"clientName,omitempty"`
+
+	Scope string `json:"scope,omitempty"`
+
+	PLCDirectoryURL string `json:"plcDirectoryURL,omitempty"`
+
+	TrustedHosts []string `json:"trustedHosts,omitempty"`
+
+	TrustedCAPEM string `json:"trustedCAPEM,omitempty"`
+}
+
+type OpenBaoAtprotoRole struct {
+	Name string `json:"name"`
+
+	BoundDIDs []string `json:"boundDIDs,omitempty"`
+
+	BoundHandles []string `json:"boundHandles,omitempty"`
+
+	Policies []string `json:"policies,omitempty"`
+
+	TokenTTL string `json:"tokenTTL,omitempty"`
+
+	TokenMaxTTL string `json:"tokenMaxTTL,omitempty"`
 }
 
 type OpenBaoServerClient struct {

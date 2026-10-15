@@ -537,6 +537,31 @@ export interface OpenBaoPlugin {
   type: string;
   asset: HostProcessAsset;
   mountPath?: string;
+  atproto?: OpenBaoAtprotoPlugin;
+}
+
+export interface OpenBaoAtprotoPlugin {
+  config?: OpenBaoAtprotoConfig;
+  roles?: OpenBaoAtprotoRole[];
+}
+
+export interface OpenBaoAtprotoConfig {
+  clientID?: string;
+  redirectURIs?: string[];
+  clientName?: string;
+  scope?: string;
+  plcDirectoryURL?: string;
+  trustedHosts?: string[];
+  trustedCAPEM?: string;
+}
+
+export interface OpenBaoAtprotoRole {
+  name: string;
+  boundDIDs?: string[];
+  boundHandles?: string[];
+  policies?: string[];
+  tokenTTL?: string;
+  tokenMaxTTL?: string;
 }
 
 export interface OpenBaoServerTidy {
@@ -679,7 +704,7 @@ export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
   listKind: "OpenBaoServerList",
   plural: "openbaoservers",
   singular: "openbaoserver",
-  schema: "v1alpha1-8.openbaoservers.socialweb.computer",
+  schema: "v1alpha1-9.openbaoservers.socialweb.computer",
   export: "hostprocesses",
 };
 
@@ -732,6 +757,9 @@ export type ApiTypeName =
   | "HostProcessStop"
   | "ObjectMeta"
   | "OpenBaoAppRole"
+  | "OpenBaoAtprotoConfig"
+  | "OpenBaoAtprotoPlugin"
+  | "OpenBaoAtprotoRole"
   | "OpenBaoAuthMount"
   | "OpenBaoCertRole"
   | "OpenBaoJWTConfig"
@@ -1800,6 +1828,89 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "OpenBaoAtprotoConfig": {
+    "properties": {
+      "clientID": {
+        "type": "string"
+      },
+      "clientName": {
+        "type": "string"
+      },
+      "plcDirectoryURL": {
+        "type": "string"
+      },
+      "redirectURIs": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "scope": {
+        "type": "string"
+      },
+      "trustedCAPEM": {
+        "type": "string"
+      },
+      "trustedHosts": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoAtprotoPlugin": {
+    "properties": {
+      "config": {
+        "ref": "OpenBaoAtprotoConfig"
+      },
+      "roles": {
+        "items": {
+          "ref": "OpenBaoAtprotoRole"
+        },
+        "type": "array"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoAtprotoRole": {
+    "properties": {
+      "boundDIDs": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "boundHandles": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "name": {
+        "type": "string"
+      },
+      "policies": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "tokenMaxTTL": {
+        "type": "string"
+      },
+      "tokenTTL": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
   "OpenBaoAuthMount": {
     "properties": {
       "jwt": {
@@ -2045,6 +2156,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "properties": {
       "asset": {
         "ref": "HostProcessAsset"
+      },
+      "atproto": {
+        "ref": "OpenBaoAtprotoPlugin"
       },
       "mountPath": {
         "type": "string"
@@ -3908,6 +4022,60 @@ export function assertOpenBaoPlugin(value: unknown): asserts value is OpenBaoPlu
 
 export function parseOpenBaoPlugin(value: unknown): OpenBaoPlugin {
   assertOpenBaoPlugin(value);
+  return value;
+}
+
+export function validateOpenBaoAtprotoPlugin(value: unknown): ApiIssue[] {
+  return validate("OpenBaoAtprotoPlugin", value);
+}
+
+export function isOpenBaoAtprotoPlugin(value: unknown): value is OpenBaoAtprotoPlugin {
+  return validate("OpenBaoAtprotoPlugin", value).length === 0;
+}
+
+export function assertOpenBaoAtprotoPlugin(value: unknown): asserts value is OpenBaoAtprotoPlugin {
+  const issues = validate("OpenBaoAtprotoPlugin", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoAtprotoPlugin", issues);
+}
+
+export function parseOpenBaoAtprotoPlugin(value: unknown): OpenBaoAtprotoPlugin {
+  assertOpenBaoAtprotoPlugin(value);
+  return value;
+}
+
+export function validateOpenBaoAtprotoConfig(value: unknown): ApiIssue[] {
+  return validate("OpenBaoAtprotoConfig", value);
+}
+
+export function isOpenBaoAtprotoConfig(value: unknown): value is OpenBaoAtprotoConfig {
+  return validate("OpenBaoAtprotoConfig", value).length === 0;
+}
+
+export function assertOpenBaoAtprotoConfig(value: unknown): asserts value is OpenBaoAtprotoConfig {
+  const issues = validate("OpenBaoAtprotoConfig", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoAtprotoConfig", issues);
+}
+
+export function parseOpenBaoAtprotoConfig(value: unknown): OpenBaoAtprotoConfig {
+  assertOpenBaoAtprotoConfig(value);
+  return value;
+}
+
+export function validateOpenBaoAtprotoRole(value: unknown): ApiIssue[] {
+  return validate("OpenBaoAtprotoRole", value);
+}
+
+export function isOpenBaoAtprotoRole(value: unknown): value is OpenBaoAtprotoRole {
+  return validate("OpenBaoAtprotoRole", value).length === 0;
+}
+
+export function assertOpenBaoAtprotoRole(value: unknown): asserts value is OpenBaoAtprotoRole {
+  const issues = validate("OpenBaoAtprotoRole", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoAtprotoRole", issues);
+}
+
+export function parseOpenBaoAtprotoRole(value: unknown): OpenBaoAtprotoRole {
+  assertOpenBaoAtprotoRole(value);
   return value;
 }
 

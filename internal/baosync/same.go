@@ -10,10 +10,12 @@ import (
 	"time"
 )
 
-func Drifted(want, got map[string]any) string {
+func Drifted(want, got map[string]any, skip ...string) string {
 	keys := make([]string, 0, len(want))
 	for k := range want {
-		keys = append(keys, k)
+		if !slices.Contains(skip, k) {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 	for _, k := range keys {

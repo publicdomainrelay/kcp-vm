@@ -128,6 +128,7 @@ type layoutInput struct {
 	declared     *v1alpha1.OpenBaoServerDeclared
 	plugins      []placedPlugin
 	tidyDue      bool
+	accessors    map[string]string
 }
 
 func or(v, dflt string) string {
@@ -181,8 +182,11 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 	d.Objects = append(d.Objects, kvConfig(KVMount))
 	core := CorePolicyRules
 	for _, p := range in.plugins {
-		d.Plugins = append(d.Plugins, p.plugin)
+		bp := p.plugin
+		bp.ManagedRoles = atprotoPlugin(p.spec)
+		d.Plugins = append(d.Plugins, bp)
 		d.AuthMounts = append(d.AuthMounts, baosync.AuthMount{Path: strings.Trim(p.spec.MountPath, "/"), Type: p.plugin.Name})
+		d.Objects = append(d.Objects, atprotoObjects(p)...)
 	}
 	if len(in.plugins) > 0 {
 		core = append(append([]v1alpha1.OpenBaoPolicyRule(nil), CorePolicyRules...), PluginCorePolicyRules...)
@@ -244,7 +248,12 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 		} else if len(p.Rules) > 0 {
 			return d, nil, fmt.Errorf("spec.declared.policies: %s carries both rules and hcl", p.Name)
 		}
-		d.Policies = append(d.Policies, baosync.Policy{Name: p.Name, HCL: hcl})
+		rendered, missing := renderAccessors(hcl, in.accessors)
+		if len(missing) > 0 {
+			pending = append(pending, fmt.Sprintf("policy %s waits for the accessor of the auth mount %s", p.Name, strings.Join(missing, ", ")))
+			continue
+		}
+		d.Policies = append(d.Policies, baosync.Policy{Name: p.Name, HCL: rendered})
 	}
 	cas := map[string]string{}
 	for _, r := range decl.CertRoles {

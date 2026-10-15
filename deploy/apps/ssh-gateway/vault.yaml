@@ -9,7 +9,7 @@ spec:
   clients:
     - name: ssh-gateway
       kvMount: ssh-gateway
----
+{{.VaultExtra}}---
 apiVersion: v1
 kind: ServiceAccount
 metadata:

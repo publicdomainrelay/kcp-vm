@@ -60,6 +60,19 @@ func checkPlugins(ps []v1alpha1.OpenBaoPlugin) error {
 		if names[p.Name] || mounts[mount] {
 			return fmt.Errorf("plugin %s: names and mount paths are each used once", p.Name)
 		}
+		if p.Atproto != nil {
+			if !atprotoPlugin(p) {
+				return fmt.Errorf("plugin %s: atproto settings need the %s asset", p.Name, AtprotoPluginAsset)
+			}
+			if c := p.Atproto.Config; (c.ClientID == "") != (len(c.RedirectURIs) == 0) {
+				return fmt.Errorf("plugin %s: atproto config names a clientID and redirectURIs together or neither", p.Name)
+			}
+			for _, r := range p.Atproto.Roles {
+				if !pluginNamePattern.MatchString(r.Name) || (len(r.BoundDIDs) == 0 && len(r.BoundHandles) == 0) {
+					return fmt.Errorf("plugin %s: atproto role %q needs a lower case name and boundDIDs or boundHandles", p.Name, r.Name)
+				}
+			}
+		}
 		names[p.Name], mounts[mount] = true, true
 	}
 	return nil

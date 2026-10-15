@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-8.openbaoservers.socialweb.computer
+  name: v1alpha1-9.openbaoservers.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -382,6 +382,55 @@ spec:
                         - sha256
                     mountPath:
                       type: string
+                    atproto:
+                      type: object
+                      properties:
+                        config:
+                          type: object
+                          properties:
+                            clientID:
+                              type: string
+                            redirectURIs:
+                              type: array
+                              items:
+                                type: string
+                            clientName:
+                              type: string
+                            scope:
+                              type: string
+                            plcDirectoryURL:
+                              type: string
+                            trustedHosts:
+                              type: array
+                              items:
+                                type: string
+                            trustedCAPEM:
+                              type: string
+                        roles:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                              boundDIDs:
+                                type: array
+                                items:
+                                  type: string
+                              boundHandles:
+                                type: array
+                                items:
+                                  type: string
+                              policies:
+                                type: array
+                                items:
+                                  type: string
+                              tokenTTL:
+                                type: string
+                              tokenMaxTTL:
+                                type: string
+                            required:
+                              - name
                   required:
                     - name
                     - type

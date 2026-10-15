@@ -13,6 +13,7 @@ type Mount struct {
 	Type          string         `json:"type"`
 	Options       map[string]any `json:"options"`
 	RunningSHA256 string         `json:"running_sha256"`
+	Accessor      string         `json:"accessor"`
 }
 
 func (c *Client) SecretMounts(ctx context.Context) (map[string]Mount, error) {
