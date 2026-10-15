@@ -294,8 +294,8 @@
         "linux/arm64": {"kind": "go", "package": "./cmd/socialweb-vmexec", "members": {"socialweb-vmexec": "socialweb-vmexec"}}
       },
       "platforms": {
-        "linux/amd64": {"treeSha256": "0f7b4bad18b29539bcdcee8fd76180441d0c66bea1bdb2f0d5c595d4f99dff25", "rawBytes": 2326654, "zstdBytes": 880276},
-        "linux/arm64": {"treeSha256": "ca840d4843577978a2adae5ff964bbecef1f40b8f0d87d6b64c2d60a11bc5621", "rawBytes": 2293886, "zstdBytes": 788101}
+        "linux/amd64": {"treeSha256": "ae874ccc584d49cd732b059728cc58a988fdf13df45c223fc3774b9848e9b2ac", "rawBytes": 2326654, "zstdBytes": 880328},
+        "linux/arm64": {"treeSha256": "2eb317c703917e9737fa060fae8c75abf6f6387a72c9d1a53262b5a811c3a7f5", "rawBytes": 2293886, "zstdBytes": 788087}
       }
     },
     "openbao-plugin-auth-atproto": {
