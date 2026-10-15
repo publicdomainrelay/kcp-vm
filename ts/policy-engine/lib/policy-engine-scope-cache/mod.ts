@@ -25,7 +25,7 @@ export interface ScopeCacheOptions {
   positiveTtlMs?: number;
   /** TTL for allow=false verdicts. Default 30s. */
   negativeTtlMs?: number;
-  /** Hard cap on cached verdicts (LRU). Default 1024. */
+  /** Hard cap on cached verdicts (LRU). Default 10000. */
   maxEntries?: number;
   log?: (level: string, msg: string, meta?: Record<string, unknown>) => void;
 }
@@ -65,7 +65,7 @@ interface Entry {
 
 const DEFAULT_POSITIVE_TTL_MS = 5 * 60_000;
 const DEFAULT_NEGATIVE_TTL_MS = 30_000;
-const DEFAULT_MAX_ENTRIES = 1024;
+const DEFAULT_MAX_ENTRIES = 10000;
 
 /** Stable, order-dependent hash (djb2) used to fold args into a cache key. */
 function hashString(s: string): string {

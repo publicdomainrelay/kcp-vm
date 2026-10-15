@@ -22,6 +22,8 @@ import { createATProtoRelay } from "@publicdomainrelay/atproto-event-stream-rela
 import { createATProtoJetstream } from "@publicdomainrelay/atproto-event-stream-jetstream";
 import type { LoggerInterface } from "@publicdomainrelay/logger";
 
+const MAX_DEDUP_ENTRIES = 10_000;
+
 export type {
   ATProtoRelay,
   ATProtoJetstream,
@@ -95,6 +97,7 @@ export function createATProtoEventStreamsClient(opts: {
       const last = seen.get(key);
       if (last !== undefined && (now - last) < dedupWindowMs) return;
       seen.set(key, now);
+      if (seen.size > MAX_DEDUP_ENTRIES) seen.delete(seen.keys().next().value!);
       const r = wo.onEvent(event);
       if (r instanceof Promise) r.catch(() => {});
     };
@@ -140,6 +143,7 @@ export function createATProtoEventStreamsClient(opts: {
       const last = seen.get(key);
       if (last !== undefined && (now - last) < dedupWindowMs) return;
       seen.set(key, now);
+      if (seen.size > MAX_DEDUP_ENTRIES) seen.delete(seen.keys().next().value!);
 
       for (const reg of registrations) {
         if (reg.wantedCollections.includes(event.collection)) {
