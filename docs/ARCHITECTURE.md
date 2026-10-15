@@ -3791,6 +3791,30 @@ refutation.
   at 18:57:01Z deleted both roles and the policy ("no declaration names it") and `kubectl get
   guestidentitygrants` listed none.
 
+- **A deleted cluster is torn down completely, and a cluster of the same name gets new CAs, on
+  2026-10-15 (plan 0015 M2-FRESH-CA-PER-CREATION).** Before this, `deleteCluster` left the members
+  running and every byte of the cluster on disk: a Cluster created through the bootstrap path carried no
+  finalizer, so the delete removed the object at once and nothing reaped it, and a Cluster created
+  through `createCluster` was reaped but its data dir, its OpenBaoServer dir and its Postgres data stayed,
+  so a new cluster of the same name was seeded with the old CAs. Now the provider's pass for a deleting
+  Cluster (`internal/providermain` `one`) reaps the members, deletes the ClusterLinks, sets
+  `spec.deleteData` on the Postgres object and deletes it (the Postgres controller removes the data
+  after the unit stops), removes the cluster data dir and the OpenBaoServer dir
+  (`SOCIALWEB_CLUSTERPROVIDER_VAULT_STATE_DIR`, defaulted by the gateway to its state dir), forgets the
+  cached instance token, and only when the Postgres object is gone releases the ports and the subnet and
+  removes the Cluster finalizer. The bootstrap Cluster now carries the finalizer. The identity bundle is
+  bound to the Cluster `metadata.uid` by the file `cluster-uid` in the bundle dir (`internal/identitybundle`
+  `BindClusterUID`): `GuardFor` writes it on the first start of a creation and refuses a start whose bundle
+  names another uid with "identity bundle belongs to an earlier creation of this cluster"; a bundle with no
+  uid is adopted once. Readings (market network `wf15ca`, one gateway, test-0001, UTC 2026-10-15): the
+  bootstrap Cluster `tenant` Ready, client-ca.crt sha256 19:DD:23:7B..., a no-expiry kubeconfig worked
+  (`get ns`); `deleteCluster` stopped every member, purged the data dir, the vault dir and the Postgres
+  data, and removed the Cluster 14.8 s after the request; `createCluster tenant` came Ready with client-ca.crt
+  sha256 63:5B:EE:F2..., and all 13 identity bundle entries differ from the deleted creation; the old
+  no-expiry kubeconfig was refused by the client certificate front with "chain: x509: certificate signed by
+  unknown authority" (the new vault holds no revoked serial, so the CA path alone refused it) while a
+  kubeconfig of the new creation authenticated; a bundle copied back from the deleted creation made the
+  restart fail before k3s with the bind refusal.
 - **The bidder carries one compute provider, the kcp provider, and keeps its tombstones on the Bid, on
   2026-10-15 (plan 0009 M4-LEGACY-BIDDER-CUT).** `hono-factory-market-bidder-app` and `hono-bidder` no
   longer import `compute-provider-digitalocean`, `compute-provider-firecracker`,

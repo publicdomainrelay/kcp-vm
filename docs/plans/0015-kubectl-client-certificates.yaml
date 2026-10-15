@@ -449,7 +449,7 @@ items:
       - deno check fails in a file you did not touch (report it; do not fix other code).
     done_when: "the web app offers 1 h, 8 h and 24 h and its kubeconfig response is no-store."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M2-CLIENT-CERT-FRONT
     milestone: M2
@@ -743,7 +743,7 @@ items:
       - The Cluster uid is not reachable where guard.go runs (report what is reachable).
     done_when: "after delete + create of the same name, every k3s CA differs and every old certificate is refused; a stale bundle can never be seeded; ACC15 check below passes."
     risks: ["A purge that runs while members still run could fail the teardown; purge only after Reap and store removal report done."]
-    status: todo
+    status: done
     evidence:
   - id: M3-PROD-EDGE
     milestone: M3
