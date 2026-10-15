@@ -8,7 +8,7 @@
  */
 
 // Workflow executor.
-export { WorkflowExecutor } from "./src/workflow.ts";
+export { EXPRESSION_DENIED, WorkflowExecutor } from "./src/workflow.ts";
 
 export { createApp } from "./src/server.ts";
 

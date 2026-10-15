@@ -24,6 +24,14 @@ import type {
 export type { PolicyRecord, PolicyResult, PolicyEvalCtx };
 export { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay/policy-common";
 
+export const SANDBOX_DENIED_POLICY_ID = "sandbox-denied";
+
+export function rejectionErrorOf(result: PolicyResult): string {
+  return result.violations.some((v) => v.policyId === SANDBOX_DENIED_POLICY_ID)
+    ? "policy sandbox denied"
+    : "policy rejected";
+}
+
 /**
  * Trust-only scope request for the hot path / checkScope.
  *

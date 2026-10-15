@@ -13,6 +13,7 @@
  */
 
 import type { PolicyEngineExecutor, ScopeInput } from "@publicdomainrelay/policy-engine-abc";
+import { SANDBOX_DENIED_POLICY_ID } from "@publicdomainrelay/policy-engine-abc";
 import {
   POLICY_GHA_LITE_NSID,
   splitAtUri,
@@ -25,6 +26,7 @@ import type {
 import { parse as parseYaml } from "@std/yaml";
 import {
   WorkflowExecutor,
+  EXPRESSION_DENIED,
   ExitStatusSuccess,
   StatusComplete,
   type Cache,
@@ -366,7 +368,10 @@ function statusToResult(status: PolicyEngineStatus): PolicyResult {
   ) {
     return verdictOf((detail as PolicyEngineComplete).outputs);
   }
-  return deny(describeStatus(status));
+  const message = describeStatus(status);
+  return message.startsWith(EXPRESSION_DENIED)
+    ? { allow: false, violations: [{ msg: message, policyId: SANDBOX_DENIED_POLICY_ID }] }
+    : deny(message);
 }
 
 export const NET_ONLY_REFUSED = "this evaluator runs gha-lite policies net-only and refuses";

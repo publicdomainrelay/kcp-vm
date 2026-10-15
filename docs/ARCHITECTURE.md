@@ -7647,6 +7647,53 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   com.publicdomainrelay.temp.market.bids.free`, arrived at 18:18:31.347, the winner `chosen` and the
   other `notChosen`, and `chosen: {reason: firstFree, considered: 2}`.
 
+- **Policies attached to an RFP run in a net-only policy engine DenoPod, not in the bidder or the
+  requester (plan 0009 M3-POLICY-ENGINE-POD, 2026-10-15).** The MarketBidder profiles (`prod-qr`,
+  `market-network`, `dev-local`) and the MarketRequester profiles (`market-network`, `default`) each
+  render a DenoPod `policy-engine` (`deploy/apps/market-bidder/policy-engine.values.yaml`,
+  `deploy/apps/market-requester/policy-engine.values.yaml`) of the entry `hono-policy-engine`
+  (`ts/policy-engine/hono-policy-engine`: one `Command`, `createLogger`, `createServe` on port 0, the
+  `createApp` of `policy-engine-server-gha-lite` forced `netOnly`). Its process has `--allow-net`,
+  `--allow-read` of the TypeScript root, its run directory and its own state directory, `--allow-write`
+  of the run directory and the state directory, `--allow-env` of `PORT`, `PORT_FILE`,
+  `LISTENERS_FILE`, `STATUS_FILE` and the kcpdns names, and `--ignore-env`; no `-A`, no
+  `--allow-all`, no `--allow-run`, no `--allow-ffi`, no `--allow-sys`. It has no ServiceAccount (so no
+  kcp token), no projected credential, no vault and no PDS session. The bidder and the requester
+  take `--policy-engine-url http://policy-engine.default.app.svc.kcp.local` and reach it by service name
+  through kcpdns. `policy-engine-client-http` implements the gha-lite executor's `workflowRunner`
+  over `POST /request/run` (the verdict in one hop, no poll) and `createRemoteEngineRegistry`; the
+  evaluator takes `attachedRegistry`, which `evaluatePolicies` (the policies of an RFP, at the bidder
+  and in the requester's re-check of a bid) uses while the hot-path `scope` lane keeps the in-process
+  registry, so a built-in scope policy stays in process. A `typescript` policy record needs a worker
+  in the caller and is refused when an engine URL is set. A policy expression that reaches for a file
+  or the environment fails the job with `the policy expression was denied: ...` (before, the
+  expression fell back to its literal text and the job went on); the executor maps it to the violation
+  policyId `sandbox-denied`, the bidder answers `policy sandbox denied`, and the loop counts the
+  decline as `policySandboxDenied`. The PolicyEngine kind's runner no longer starts the engine with
+  `--allow-all`: it passes the same net-only argv. Two decisions differ from the plan text.
+  The `policy-engine` DenoPod serves plain HTTP behind the kcpdns name (`tls: none`) because an
+  application's kcp holds no `OpenBao` PKI namespace, so no pod there can be issued a certificate; a
+  namespace object in the application workspace is the path to TLS. Net is `--allow-net` without a host
+  list because a policy action reads any PDS and the kcpdns shim rewrites a name to a loopback address.
+  The TaskManager of the engine keeps at most 1024 finished tasks. Not done: the Gateway application's
+  `requester` DenoPod (`deploy/apps/gateway/requester.<profile>.values.yaml`) still evaluates in
+  process. Readings (market network pe1, one bidder, guest as a VM unit of test-0001, UTC, 2026-10-15):
+  the engine DenoPod argv, read from `/proc/<pid>/cmdline`, held `--allow-net`, `--allow-env=PORT,...`,
+  `--ignore-env`, `--unstable-worker-options` and none of `-A`, `--allow-all`, `--allow-run`,
+  `--allow-ffi`. `run request --policy open`: the RFP was submitted 18:45:50, the receipt was in at
+  18:45:51, the guest was on the network at 18:46:11 (`bids: 1` in the MarketBidder status); the
+  engine log showed `task created`, `executing workflow` and `completed: status=SUCCESS` for that
+  RFP and the bidder logged `bidder_policy_engine_remote` at start. The bidder's own process logged one
+  in-process `executing workflow` after that run, the hot-path scope lane of its own `open` policy,
+  which stays in process; the attached policy started no Worker in the bidder. With the requester's `open` policy changed to read `/etc/hostname` in an
+  expression: `policy rejected bid` with violation `the policy expression was denied: Requires read
+  access to "/etc/hostname", run again with the --allow-read flag` (policyId `sandbox-denied`) at
+  18:49:59.9, the engine task `FAILURE`, no bid, the contract `Failed: no_bids` at 18:50:30, and the
+  MarketBidder status `declinedByReason: policySandboxDenied 1`. An expression that reads the
+  environment is denied the same way (`Requires env access (get), denied by the policy sandbox`), read
+  against the engine started alone with the same permissions. Latency of the local hop is read by plan
+  0009 M4-LATENCY-READINGS.
+
 ## 16. Vocabulary
 
 | | |

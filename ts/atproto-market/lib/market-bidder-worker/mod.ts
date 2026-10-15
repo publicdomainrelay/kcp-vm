@@ -16,6 +16,7 @@ import type {
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
 import { nsidFromUri } from "@publicdomainrelay/market-abc";
 import type { PolicyEvalCtx, PolicyResult } from "@publicdomainrelay/policy-engine-abc";
+import { rejectionErrorOf } from "@publicdomainrelay/policy-engine-abc";
 import type {
   ActiveContract,
   CallbackFactoryDeps,
@@ -112,7 +113,7 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
       });
       if (!result.allow) {
         cbLog("warn", "policy rejected bid", { violations: result.violations });
-        return { body: { ok: false, error: "policy rejected", violations: result.violations } };
+        return { body: { ok: false, error: rejectionErrorOf(result), violations: result.violations } };
       }
     }
 

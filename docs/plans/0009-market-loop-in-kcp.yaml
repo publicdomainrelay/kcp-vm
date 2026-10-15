@@ -176,7 +176,7 @@ items:
     files: ["internal/denokcp/policyengine", "internal/denokcp/provider/reconcile_engine.go", "ts/policy-engine/lib/policy-engine-server-gha-lite", "deploy/apps/market-bidder", "deploy/apps/market-requester"]
     done_when: "the PolicyEngine process argv has none of -A, --allow-all, --allow-run, --allow-ffi; an RFP with an attached policy is evaluated in the engine with the bidder process starting no Worker for it; a policy that tries to read a file or the environment is denied and the bid is declined with that reason."
     risks: ["A local hop per verdict miss; M4-LATENCY-READINGS compares it with the in-process Worker."]
-    status: todo
+    status: done
     evidence:
   - id: M3-REQUESTER-CONTROLLER
     milestone: M3

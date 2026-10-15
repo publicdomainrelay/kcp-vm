@@ -32,6 +32,8 @@ import { runActionInWorker } from "./action_worker.ts";
 import { resolveSandboxConfig, type SandboxConfig } from "./config.ts";
 import { type FsApiServer, startFsApiServer } from "./fs_api.ts";
 
+export const EXPRESSION_DENIED = "the policy expression was denied";
+
 const PERMISSION_DENIED = /Requires (read|write|env|net|run|ffi|sys|import)|NotCapable|PermissionDenied/;
 
 /** Parse a workflow from a string (YAML) or an object. */
@@ -633,7 +635,7 @@ export class WorkflowExecutor {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (PERMISSION_DENIED.test(message)) {
-        throw new Error(`the policy expression was denied: ${message}`);
+        throw new Error(`${EXPRESSION_DENIED}: ${message}`);
       }
       // Fall back to simple property-path resolution.
       const data: Record<string, unknown> = {
