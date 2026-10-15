@@ -70,7 +70,7 @@ items:
       - "6. Live check (take a live slot): `socialweb-computer dev up --instance cpf1 --profile market-network --bidders 1 --with-gateway --guest-image-source file:///var/lib/socialweb-computer/guest-image --vm-host-backend systemd-user` as test-0001; then read the gateway child's log: member placed/ready lines must overlap in time (postgres and front placed within 1 s of each other; ccm, eso webhook and apiserver-link placed within 1 s after k3s ready). Record createCluster->Ready for the bootstrap tenant (log line 'cluster provider: status' phase Ready minus first 'member placed'). dev down, release slot."
       - "7. Failure check: break one member on purpose (e.g. a bad kine path via the Step spec in a scratch commit you do not push) and confirm Spawn ends within a few seconds naming kine, and no other member is left placed (Reap / unit list empty for that cluster after dev down)."
     done_when: "Members start as a graph; the bootstrap tenant on a quiet market network (load under 30) is Ready in about 1:30 or less; a broken member fails the Spawn fast with its name; TestTenantClusterScalesFromZeroOnMarketVMsAndBack passes on the branch."
-    status: todo
+    status: done
   - id: M2b-CLUSTERS-AND-PHASES
     title: "Clusters start in parallel, Initializing is reported at once, NodeClaims reach Running"
     depends_on: [M1-DEPENDENCY-GRAPH]
@@ -93,7 +93,7 @@ items:
       - "4. subscribeClusters: no clusters -> empty snapshot, not ClusterNotFound (keep ClusterNotFound for an unknown ?name=)."
       - "5. Live check: create two clusters at once on a market network; both reach Ready about together; subscribe shows Initializing early and the claim reaching Running."
     done_when: "two clusters created together are Ready at about the same time; Initializing appears with the first member; NodeClaims reach Running; integration tests updated to require Running pass."
-    status: todo
+    status: done
   - id: M2-EVENT-DRIVEN-PLACEMENT
     title: "B - the HostProcess supervisor wakes on a kcp change; placement and readiness stop waiting on tickers"
     depends_on: [M1-DEPENDENCY-GRAPH]
@@ -115,7 +115,7 @@ items:
       - "5. Build as M1 step 5 plus `go vet ./internal/hostprocess`."
       - "6. Live check as M1 step 6. Expect 'member placed' -> 'placed' (supervisor) under 1 s per member. Record createCluster->Ready; target about 1 minute or less on a quiet host. Also record one VM placement (ComputeVM -> VM Running) and one DenoPod restart (dev restart <inst> <denopod>) before/after, since they use the same supervisor."
     done_when: "Placement latency under 1 s per member; bootstrap tenant Ready in about 1 minute on a quiet market network; supervisor survives a kcp restart (dev roll kcp) and keeps placing (watch re-established, logged once); integration tests below pass."
-    status: todo
+    status: done
   - id: M3-PROD-READING
     title: Release, deploy, and read the new timing on prod
     depends_on: [M1-DEPENDENCY-GRAPH, M2b-CLUSTERS-AND-PHASES, M2-EVENT-DRIVEN-PLACEMENT]

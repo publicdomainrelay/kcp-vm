@@ -206,7 +206,7 @@ items:
     files: [".gitlab-ci.yml", "scripts/deploy.sh", "internal/versions/versions.json"]
     done_when: a release job publishes one commit's binaries, images and SHA256SUMS; a bidder host fetches and verifies an image from the registry URL.
     risks: ["The guest image build needs debugfs and a kernel toolchain on the runner host; the runner account gets them, bidders still need none."]
-    status: doing
+    status: done
     evidence: []
   - id: G2-IT-HARNESS
     milestone: G2
