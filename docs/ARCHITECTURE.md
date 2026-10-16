@@ -8449,6 +8449,43 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   grant (`ClusterRoleBinding socialweb-owner`) was applied (Forbidden for the user with no group): the cluster
   answers `/readyz` before the grant, so the test waits for the binding.
 
+- **The web app sign-in is an integration test: the plugin sign-in, nodes by RFP, a web app restart that keeps the
+  cookie, and a downloaded certificate that revocation ends (plan 0014 M4-INTEGRATION-TESTS, first part, 2026-10-16).**
+  `TestWebAppSignInThroughThePluginKeepsTheCookieAcrossARestartAndIssuesACertificate` opens a loopback listener
+  first and passes `https://127.0.0.1:<its port>` as the gateway option `public-origin`, because the plugin
+  config and the client_id exist only when that option is set. After `dev up` (one gateway, one bidder) it
+  terminates TLS on that listener with the leaf (`tls.crt`, `tls.key`, SAN 127.0.0.1) of the alice PDS DenoPod,
+  found by the port its `listeners.json` reports, and forwards to the gateway's `web-app-front` listener, which
+  is a plain TCP front in front of the web app pod and keeps its address across a restart. The PDS fetches
+  the client metadata over that origin, so the leaf must chain to the CA that the PDS DenoPod trusts (its run
+  directory `ca.pem`); a leaf signed with the network's guest CA was refused (`invalid_client_metadata: could
+  not resolve client metadata`) because `ca.pem` holds the kcp-mesh-root PKI and not the guest CA, while
+  `network/ca-bundle.pem` holds both. The test then runs `scripts/oauth-signin.ts` as the test's own user with
+  `--sign-in-as <did>` (the network's handles have no DNS, so a handle sign-in fails at `login/start` with
+  "resolves to no DID"), `--chrome-arg=--ignore-certificate-errors` and
+  `--chrome-arg=--host-resolver-rules=MAP <PDS host name>:443 <PDS address>` (the authorization URL names the PDS
+  by `pds.default.alice.svc.kcp.local` on port 443). Readings (hat-8, three runs that passed, one gateway and
+  one bidder): sign-in 13.8 s, 14.0 s and 14.1 s; `GET /session` 200 with the DID and the cookie attributes
+  HttpOnly, Secure, SameSite Strict; the first pod (anti-affinity) Ready on a market node 36.7 to 39.4 s after it
+  was created with one NodeClaim Running and a receipt; `dev restart` of the web app DenoPod 1.9 to 2.9 s (pid
+  changed), the first request after it got EOF (the front had no backend yet) and the same cookie answered
+  `GET /session` 0.5 to 1.0 s after the restart returned and the cluster list worked; the second pod (anti-affinity)
+  Ready on a second market node 39.7 to 45.6 s after it was created with two NodeClaims Running; `POST
+  /api/clusters/kubeconfig` answered 200 with `Cache-Control: no-store` and a plain client certificate;
+  `kubectl get nodes` listed both nodes and `Nodes().List` worked; exactly one `ClusterClientCertificate` for the
+  DID existed and was not revoked; `DELETE /session` answered `{"revoked":true}` and the cookie then got 401;
+  `revokeIdentity` refused the certificate in 0.23 to 0.29 s and set the object `revoked`; no cookie token,
+  `"refresh_token"`, `dpopPrivate`, `PRIVATE KEY` or `client-key-data` was found in the gateway's logs, in its
+  DenoPod run directories, or in the DenoPod, MarketIdentity and NodeClaim objects of the gateway workspace and
+  the home workspace (24836, 1244 and 9733 bytes read). The run took 349.2 to 358.7 s (`dev up` 80 to 94 s,
+  `dev down` 116 to 118 s with two VMs). Not read: a restart of the core and `socialweb-computer upgrade`
+  with the same cookie, the scan of the unit journals, the DenoPod and HostProcess arguments and the records of the
+  PDS repositories. The host image store `/var/lib/socialweb-computer/guest-image` holds `image.json` sha256
+  f2f39859... and versions.json has pinned bddc484c... since the guest kernel commit of 2026-10-15, so the first
+  run of this test (and any test that rents a VM) failed with the bidder's `ComputeVM ... Failed: guestimage:
+  image.json ... the image is refused`; the runs above used `SOCIALWEB_IT_GUEST_IMAGE` pointing at a copy of the
+  pinned image.
+
 ## 16. Vocabulary
 
 | | |

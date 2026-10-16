@@ -31,19 +31,8 @@ func TestKubeconfigClientCertificateWithoutCredentialHelper(t *testing.T) {
 	t.Parallel()
 	n := StartNetwork(t, NetworkOptions{Bidders: 0, WithGateway: true, UpTimeout: 5 * time.Minute})
 	tn := n.Tenant(t, "tenant", tenantReady)
+	waitOwnerGrant(t, n, tn)
 	ctx := context.Background()
-	for deadline := time.Now().Add(tenantReady); ; time.Sleep(time.Second) {
-		_, err := tn.Kube.RbacV1().ClusterRoleBindings().Get(ctx, "socialweb-owner", metav1.GetOptions{})
-		if err == nil {
-			break
-		}
-		if herr := n.health(); herr != nil {
-			t.Fatalf("waiting for the tenant grant: %v", herr)
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the tenant grant (ClusterRoleBinding socialweb-owner) was not applied within %s: %v", tenantReady, err)
-		}
-	}
 	addr := n.xrpcAddress(t)
 	acct := n.OwnerAccount(t)
 	gw := &http.Client{Timeout: 30 * time.Second}
@@ -199,7 +188,26 @@ func TestKubeconfigClientCertificateWithoutCredentialHelper(t *testing.T) {
 
 	gwDir := n.GatewayDir()
 	r := n.h.As(ctx, "grep", "-rl", "-e", "PRIVATE KEY", "-e", "client-key-data", filepath.Join(gwDir, "logs"), filepath.Join(gwDir, "denokcp", "runs"))
+	if r.Code > 1 {
+		t.Fatalf("the leak scan failed: exit %d: %s", r.Code, r.Tail(3))
+	}
 	if strings.TrimSpace(r.Stdout) != "" {
 		t.Fatalf("a private key leaked into: %s", r.Stdout)
+	}
+}
+
+func waitOwnerGrant(t testing.TB, n *Network, tn *Tenant) {
+	t.Helper()
+	for deadline := time.Now().Add(tenantReady); ; time.Sleep(time.Second) {
+		_, err := tn.Kube.RbacV1().ClusterRoleBindings().Get(context.Background(), "socialweb-owner", metav1.GetOptions{})
+		if err == nil {
+			return
+		}
+		if herr := n.health(); herr != nil {
+			t.Fatalf("waiting for the tenant grant: %v", herr)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the tenant grant (ClusterRoleBinding socialweb-owner) was not applied within %s: %v", tenantReady, err)
+		}
 	}
 }

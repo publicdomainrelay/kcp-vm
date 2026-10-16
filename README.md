@@ -547,7 +547,10 @@ go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run Test
 go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run TestTenantClusterScalesFromZeroOnMarketVMsAndBack
 go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run TestClusterEventsStreamFromSubscribeClusters
 go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run TestKubeconfigClientCertificateWithoutCredentialHelper
+go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run TestWebAppSignInThroughThePluginKeepsTheCookieAcrossARestartAndIssuesACertificate
 ```
+
+The web app sign-in test needs `deno` and `/usr/bin/google-chrome` for the user that runs `go test`: it runs `scripts/oauth-signin.ts` against the network's gateway, which it fronts with a TLS listener of its own on a port it picks.
 
 Environment variables:
 

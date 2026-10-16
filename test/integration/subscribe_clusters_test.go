@@ -45,10 +45,12 @@ func (e streamEvent) String() string {
 }
 
 type pdsAccount struct {
-	pds    string
-	client *http.Client
-	access string
-	DID    string
+	pds        string
+	client     *http.Client
+	access     string
+	DID        string
+	identifier string
+	password   string
 }
 
 func (n *Network) xrpcAddress(t testing.TB) string {
@@ -129,7 +131,7 @@ func (n *Network) OwnerAccount(t testing.TB) *pdsAccount {
 	}
 	a := &pdsAccount{client: &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}}
 	for did, s := range sessions {
-		a.DID, a.pds = did, strings.TrimSuffix(s.Service, "/")
+		a.DID, a.pds, a.identifier, a.password = did, strings.TrimSuffix(s.Service, "/"), s.Identifier, s.Password
 		out, code, err := postJSON(a.client, a.pds+"/xrpc/com.atproto.server.createSession", "",
 			map[string]string{"identifier": s.Identifier, "password": s.Password})
 		if err != nil || code != http.StatusOK {

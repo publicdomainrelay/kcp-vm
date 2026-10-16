@@ -25,8 +25,9 @@ import (
 )
 
 var (
-	nodeClaimGVR = schema.GroupVersionResource{Group: "socialweb.computer", Version: "v1alpha1", Resource: "nodeclaims"}
-	computeVMGVR = schema.GroupVersionResource{Group: "socialweb.computer", Version: "v1alpha1", Resource: "computevms"}
+	nodeClaimGVR  = schema.GroupVersionResource{Group: "socialweb.computer", Version: "v1alpha1", Resource: "nodeclaims"}
+	computeVMGVR  = schema.GroupVersionResource{Group: "socialweb.computer", Version: "v1alpha1", Resource: "computevms"}
+	clientCertGVR = schema.GroupVersionResource{Group: "socialweb.computer", Version: "v1alpha1", Resource: "clusterclientcertificates"}
 )
 
 func (n *Network) BidderVMs(ctx context.Context) ([]v1alpha1.ComputeVM, error) {
@@ -77,6 +78,7 @@ type Tenant struct {
 	Address    string
 	Kube       *kubernetes.Clientset
 	claims     dynamic.ResourceInterface
+	certs      dynamic.ResourceInterface
 }
 
 func (n *Network) GatewayDir() string {
@@ -185,7 +187,7 @@ func (n *Network) openTenant(gw, name string) (*Tenant, error) {
 		return nil, err
 	}
 	return &Tenant{n: n, GatewayDir: gw, ClusterDir: dir, Home: home, Address: front.Address, Kube: kube,
-		claims: dyn.Resource(nodeClaimGVR)}, nil
+		claims: dyn.Resource(nodeClaimGVR), certs: dyn.Resource(clientCertGVR)}, nil
 }
 
 func (tn *Tenant) Claims(ctx context.Context) ([]v1alpha1.NodeClaim, error) {
@@ -202,6 +204,22 @@ func (tn *Tenant) Claims(ctx context.Context) ([]v1alpha1.NodeClaim, error) {
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (tn *Tenant) Certificates(ctx context.Context) ([]v1alpha1.ClusterClientCertificate, error) {
+	l, err := tn.certs.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]v1alpha1.ClusterClientCertificate, 0, len(l.Items))
+	for _, u := range l.Items {
+		var c v1alpha1.ClusterClientCertificate
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
 	return out, nil
 }
 
