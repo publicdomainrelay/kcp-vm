@@ -10,7 +10,6 @@ import (
 	"github.com/bluesky-social/indigo/atproto/identity"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/gateway"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/mint"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/plcsweep"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/xrpcserver"
@@ -28,22 +27,12 @@ type Deps struct {
 
 	Certs gateway.CertRevoker
 
-	MintStore mint.Store
-
 	Tenant gateway.TenantAPI
 
 	Sweep *plcsweep.Sweeper
 
 	SweepInterval time.Duration
 }
-
-var ErrNoMintStore = errors.New(
-	"no mint.Store was supplied, so neither /xrpc/* nor /v1/credential can be served. " +
-		"internal/tenantclient is the implementation and main.buildDeps builds it from " +
-		"SOCIALWEB_GATEWAY_DEVKEY_REGISTRY and SOCIALWEB_GATEWAY_MINT_KUBECONFIGS -- a " +
-		"directory of per-cluster kubeconfigs whose identity is that cluster's `gwmint` " +
-		"ServiceAccount (deploy/tenant-grant.yaml). A nil here means the composition root " +
-		"skipped that construction, not that something is missing from the repo")
 
 type Gateway struct {
 	handler       http.Handler
@@ -54,23 +43,17 @@ type Gateway struct {
 }
 
 func Build(cfg Config, d Deps, log *slog.Logger) (*Gateway, error) {
-	if d.MintStore == nil {
-		return nil, ErrNoMintStore
-	}
 	if log == nil {
 		log = slog.Default()
 	}
 
 	verbs := &gateway.Server{
 		Deny: d.Deny, Store: d.Store, Revoker: d.Revoker, Certs: d.Certs, Feed: d.Feed,
-		MaxDeviceKeyTTL: cfg.DeviceKeyMaxTTL,
-		Tenant:          d.Tenant,
+		Tenant: d.Tenant,
 	}
-	credentials := mint.New(d.MintStore, mint.Options{TTL: cfg.MintTTL, FailureHold: cfg.MintFailureHold})
 
 	surface, err := xrpcserver.New(xrpcserver.Options{
 		Gateway:   verbs,
-		Mint:      credentials,
 		Audiences: cfg.Audiences,
 		Directory: d.Directory,
 	})

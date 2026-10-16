@@ -216,12 +216,11 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Provider, error) {
 
 		NodeExpirySource: clusterprovider.NodeExpiryRollup,
 
-		TokenTimeout: cfg.TokenTimeout,
-		Interval:     cfg.Interval,
-		Log:          log,
+		Interval: cfg.Interval,
+		Log:      log,
 	}
 	if !cfg.ObserveOnly() {
-		opts.Tenant, opts.GrantPath, opts.MintDir = d.Tenant, cfg.GrantPath, cfg.MintKubeconfigs
+		opts.Tenant, opts.GrantPath = d.Tenant, cfg.GrantPath
 		opts.InstallTenant = d.InstallTenant
 	}
 	provider, err := clusterprovider.New(opts)
@@ -519,9 +518,6 @@ func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string
 			"phase", pass.Result.Phase, "url", pass.Result.URL, "instance", pass.Result.Instance,
 			"wrote", pass.Wrote, "alert", pass.Alert(),
 		}
-		if mints := p.provider.MintClusters(); len(mints) > 0 {
-			args = append(args, "mintCredential", p.cfg.MintKubeconfigs+"/"+key, "mints", mints)
-		}
 		p.log.Info("cluster provider: status", args...)
 		if pass.Result.Alert != "" {
 			p.log.Warn("cluster provider: the materialiser reported an alert",
@@ -612,7 +608,7 @@ func (p *Provider) report() {
 			"decides", "yes -- the phase machine is materialiser's",
 			"acts", "no -- Options.Host is nil, so no pass may spawn, reap or write",
 			"bootstraps", "not in this mode: the bootstrap is reached through a WRITE pass, and observe-only returns before it",
-			"consequence", "the tenant grant is not applied and no mint credential is obtained while this mode is set")
+			"consequence", "the tenant grant is not applied while this mode is set")
 		return
 	}
 	mode := "join"
@@ -630,7 +626,6 @@ func (p *Provider) report() {
 		"instance", "(derived: pdr-<key>)",
 		"datastore", p.storePlan(),
 		"datastoreHasRow", p.cfg.DatastoreHasRow,
-		"mintDir", p.cfg.MintKubeconfigs,
 		"mountContext", p.cfg.MountContext,
 		"mountChild", "written on every pass by a client built from that kcp context, because "+
 			"kcp accepts spec.URL only from a system privileged user and the identity that runs "+

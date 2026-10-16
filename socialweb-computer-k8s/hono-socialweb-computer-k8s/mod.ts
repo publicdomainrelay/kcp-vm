@@ -15,7 +15,6 @@ import { createXrpcClusterGateway } from "@publicdomainrelay/socialweb-computer-
 import {
   createClusterApiFactory,
   createPinnedDownloadsFactory,
-  type CredentialHelper,
 } from "@publicdomainrelay/hono-factory-socialweb-computer-k8s";
 import { loadPinnedDownloads } from "@publicdomainrelay/socialweb-computer-k8s-downloads-fs";
 import {
@@ -131,10 +130,6 @@ const gateway = createXrpcClusterGateway({
 const downloadsDir = (options.downloadsDir as string | undefined) ??
   `${webDir}/${(options.downloadsSubdir as string).replace(/^\/+|\/+$/g, "")}`;
 const pinned = await loadPinnedDownloads(downloadsDir);
-const helpers: CredentialHelper[] = pinned.list().flatMap((d) => {
-  const match = /^socialweb-credential-([a-z0-9]+)-([a-z0-9_]+)$/.exec(d.name);
-  return match ? [{ os: match[1], arch: match[2], path: `/downloads/${d.sha256}/${d.name}` }] : [];
-}).sort((a, b) => `${a.os}-${a.arch}`.localeCompare(`${b.os}-${b.arch}`));
 
 const testNodeDownloadHost = options.testNodeDownloadHost as string | undefined;
 const requiredDownloads = ((options.requiredDownloads as string | undefined) ?? "").split(",").map((n) => n.trim())
@@ -195,7 +190,6 @@ const api = createClusterApiFactory({
   },
   maxKubeconfigTtlSec: options.kubeconfigMaxTtlSec as number,
   kcpPublicHost: options.kcpPublicHost as string | undefined,
-  credentialHelpers: helpers,
   log,
 });
 
@@ -262,7 +256,6 @@ log("ready", {
   httpPort: options.httpPort,
   webDir,
   publicOrigin: publicOrigin ?? null,
-  credentialHelpers: helpers.length,
   pinnedDownloads: pinned.list(),
   meshd: meshd ?? null,
   downloadsDir,

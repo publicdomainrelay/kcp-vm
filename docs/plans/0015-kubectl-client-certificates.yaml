@@ -936,7 +936,7 @@ items:
       - Any timeout fires: say which failure was not detected (agent rules) and stop.
     done_when: "the test passes on hat-8 and in the CI integration job of plan 0010 G3."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M5-RETIRE-EXEC-PLUGIN
     milestone: M5
@@ -1000,7 +1000,7 @@ items:
       - stage-assets.sh fails for any reason other than the expected pin difference.
     done_when: "no exec-plugin code, binary, setting or download remains; the integration test passes; the lead's prod deploy works with getKubeconfig kubeconfigs only."
     risks: []
-    status: todo
+    status: doing
     evidence:
 not_doing:
   - "The plan 0014 OpenBao atproto auth plugin, bao-held sessions and the web app cookie sign-in."

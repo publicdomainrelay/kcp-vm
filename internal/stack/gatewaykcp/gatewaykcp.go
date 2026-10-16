@@ -466,8 +466,7 @@ func (g *gateway) members(ctx context.Context, rec devinstance.Record) error {
 		return err
 	}
 	vcfg := vaultmain.Config{KCPKubeconfig: rec.AdminKubeconfig, KCPRootDir: g.activeSlotRoot(), Workspace: appctl.DefaultWorkspace,
-		Server: vaultlayout.RootServerName, DeviceKeyAudience: env.get("SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE"),
-		DevkeyRegistry: env.get("SOCIALWEB_GATEWAY_DEVKEY_REGISTRY"), DeviceKeyExecEnvName: env.get("SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME"),
+		Server:  vaultlayout.RootServerName,
 		TLSCert: cert, TLSKey: key}
 	access, err := g.applyRoot(ctx, rec, vcfg)
 	if err != nil {

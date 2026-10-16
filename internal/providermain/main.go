@@ -186,7 +186,6 @@ func migrateOnly(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 	return migrateLegacyKeys(ctx, in.registry, legacyKeys{
 		StateDir: cfg.StateDir,
-		MintDir:  cfg.MintKubeconfigs,
 		Ports:    in.alloc,
 		Networks: in.networks,
 		Log:      log,
@@ -307,7 +306,6 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	if !cfg.ObserveOnly() {
 		if err := migrateLegacyKeys(ctx, registry, legacyKeys{
 			StateDir: cfg.StateDir,
-			MintDir:  cfg.MintKubeconfigs,
 			Ports:    alloc,
 			Networks: networks,
 			Log:      log,

@@ -101,7 +101,7 @@
     },
     "downloads-dir": {
       "type": "string",
-      "description": "Directory of the pinned downloads served at /downloads/<sha256>/<name>: each <name> beside a sha256sum-format <name>.sha256 (socialweb-meshd-<arch>, socialweb-credential-<os>-<arch>); the socialweb-computer binary passes its socialweb-computer-k8s-downloads asset",
+      "description": "Directory of the pinned downloads served at /downloads/<sha256>/<name>: each <name> beside a sha256sum-format <name>.sha256 (socialweb-meshd-<arch>); the socialweb-computer binary passes its socialweb-computer-k8s-downloads asset",
       "env": "DOWNLOADS_DIR"
     },
     "required-downloads": {

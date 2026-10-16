@@ -1073,22 +1073,12 @@ not an auth error. Setting `phase` to `Ready` alone, leaving the conditions stil
 is NOT sufficient for a user's `kubectl` to reach the apiserver, and a cluster whose phase is stuck is
 a cluster nobody can reach even while its apiserver answers.
 
-**The minted bearer crosses the mount, and it is deliberately powerless.** Measured end to end: the
-provider mints a `gwmint` ServiceAccount token in the tenant cluster (through the TokenRequest
-subresource, under the `socialweb-mint-identity` ValidatingAdmissionPolicy), writes it as a
-kubeconfig, and that token authenticates BOTH directly at the apiserver and through the mount -
-`auth whoami` answers `system:serviceaccount:users:gwmint` in both cases. Through the mount it is
-**Forbidden** for `nodes` and `namespaces`, and `get` on the one ServiceAccount it is scoped to
-returns NotFound rather than Forbidden - i.e. authorized for exactly its own name and nothing else.
-That is section 7's "the DID to ServiceAccount mapping is the tenancy boundary" observed rather than
-asserted: a mint identity has zero cluster read, so the mount is a path a user reaches their cluster
-through and not one that hands out the cluster.
-
-**The mint kubeconfig's own `server:` is loopback, not the mount.** It names the apiserver the
-provider minted the token against, which is correct for the provider and wrong for a user, who must
-reach the cluster through the mount. The gateway re-points it when it renders the user's kubeconfig,
-but the file under the mint directory LOOKS user-ready and is not - it works only from the host that
-wrote it. Nothing user-facing may read that file directly.
+**The gateway acts in a tenant cluster as its owner.** `kubectlApplyServerSide` and `getJob` need a
+credential for the cluster's owner. The gateway signs one per call from the cluster's own client CA
+under `<ClusterStateDir>/<key>/server/tls` (CN the owner's DID, O `socialweb.computer:cluster-owners`,
+10 minutes), dials the apiserver front whose address `front.json` reports, and the `socialweb-owner`
+ClusterRoleBinding of `deploy/tenant-grant.yaml` gives that group `cluster-admin`. No ServiceAccount
+token and no stored credential is involved, and the certificate is never written to disk.
 
 **A client certificate does not traverse the mount.** kcp terminates TLS, so only header credentials
 survive: a bearer works through the mount (verified with `auth whoami` returning
@@ -1124,13 +1114,9 @@ a request-header identity is forgeable.
 - **The DID to ServiceAccount mapping** is the tenancy boundary, and it has exactly ONE spelling: a
   DID's ServiceAccount is `did-` plus the lowercased unpadded base32 of the DID
   (`kcpclient.ServiceAccountName`), which is a valid DNS-1123 label because base32 emits only
-  `[a-z2-7]` and never a hyphen or a digit outside that range. Three live things depend on that one
-  spelling and none of them is a convention: the policy's third validation refuses a target that does
-  not match `^did-[a-z2-7]+$`; the mint Role is scoped by `resourceNames` to derived names rather
-  than a wildcard, because `create serviceaccounts/token` without `resourceNames` is TOTAL
-  impersonation of every ServiceAccount in the namespace; and `TestTheGrantIsScopedByResourceNames`
-  reads the deployed file and fails on a `*` or an underived name. The spelling also cannot be
-  changed later without a migration, because the deployed grant carries it in its `resourceNames`.
+  `[a-z2-7]` and never a hyphen or a digit outside that range. The deployed grant carries it as the
+  subject of the `socialweb-owner` ClusterRoleBinding, so the spelling cannot be changed later without
+  a migration.
 - **The grant is rendered for the cluster's OWNER, and the owner can act in it.** The name in those
   `resourceNames` is not a literal in the deployed file: `deploy/tenant-grant.yaml` carries
   `__SOCIALWEB_OWNER_SERVICE_ACCOUNT__` and the bootstrap substitutes `ServiceAccountName` of the
@@ -1152,25 +1138,18 @@ a request-header identity is forgeable.
 so the provider derives it: it reads `<DataDir>/server/tls/client-ca.{crt,key}` and signs a fresh
 ECDSA P-256 client certificate with CN `system:admin`, O `system:masters`. That is the identity k3s's
 own admin kubeconfig carries, and it is the arm of the grant's carve-out that writes Secrets -
-`deploy/tenant-grant.yaml`'s `socialweb-mint-identity` policy is a TERNARY on
-`request.resource.resource`, not a single condition: the `serviceaccounts/token` arm admits only
-`system:serviceaccount:users:gwmint`, and the Secrets arm admits only
-`request.userInfo.username == 'system:admin' && 'system:masters' in request.userInfo.groups`, or the
+`deploy/tenant-grant.yaml`'s `socialweb-mint-identity` policy admits a Secret create in the tenant
+namespace only for `request.userInfo.username == 'system:admin' && 'system:masters' in request.userInfo.groups`, or the
 External Secrets controller `system:socialweb:external-secrets` (the identity of the pair beside the
 control plane, section 5; the pair is not the in-tenant ServiceAccount
 `system:serviceaccount:default:external-secrets`, which a tenant who creates that ServiceAccount would
-inherit). The distinction is
-load-bearing rather than pedantic, because the two arms admit DIFFERENT subjects for different verbs
-on purpose: a ServiceAccount token is requested by the tenant's own mint, while writing a Secret in
-the tenant namespace is the provider's act -- through its own admin credential for the grant, and
-through the External Secrets controller for the vault-backed Secrets it materialises. No TENANT
-subject is admitted for either verb, so a credential with any lesser subject cannot apply the grant
-at all and cannot request a token either. `system:masters` is the apiserver's
+inherit). Writing a Secret in the tenant namespace is the provider's act, through its own admin
+credential for the grant and through the External Secrets controller for the vault-backed Secrets it
+materialises; no TENANT subject is admitted. `system:masters` is the apiserver's
 built-in superuser group for client certificates, so
 the credential is cluster-admin-equivalent on the tenant apiserver, and it is the **provider's**: the
-provider applies the tenant grant, requests ServiceAccount tokens through TokenRequest, reads the
-tenant cluster's Nodes and Pods for the scale observation, and deletes the tenant-side Node object on
-teardown.
+provider applies the tenant grant, reads the tenant cluster's Nodes and Pods for the scale observation,
+and deletes the tenant-side Node object on teardown.
 
 **Nothing k3s generated is read.** The rejected route was the k3s-written admin kubeconfig under the
 data dir: its server URL and SANs are unverified against the address a node dials, and
@@ -1197,14 +1176,11 @@ unprivileged user. A non-https URL is refused, because the URL's host is the nam
 certificate must carry. The rule holds ACROSS the two sources as well as within each: a cluster whose
 ClientCA cannot sign is refused with the reason, and the vault is not tried instead.
 
-**The credential never reaches a user.** It is a certificate credential, and the mint kubeconfig the
-gateway reads back carries a token only - `WriteMintKubeconfig` refuses a credential with no bearer
-token. The user's path renders an exec credential, and `kubeconfig.AssertClean` refuses any document
-carrying `client-certificate-data` or `client-key-data`. That is a test, not a convention: the minted
-credential is run through a faithful kubeconfig writer and `AssertClean` must refuse it, while the
-document `kubeconfig.Build` hands a device must pass. The user path of plan 0015 is the exception it
-names: the kubeconfig of getKubeconfig carries a client key made by the cluster's OpenBao PKI (role
-`kubeconfig-user`, at most 24 h). The provider's own credentials still never reach a user.
+**The provider's credential never reaches a user.** It is a certificate credential signed by the
+cluster's client CA with `system:masters`. The user path is the kubeconfig of `getKubeconfig`: a client
+key made by the cluster's OpenBao PKI (role `kubeconfig-user`, at most 24 h), CN the user's DID, O
+`socialweb.computer:cluster-owners`, which the client certificate front admits only while its
+`ClusterClientCertificate` exists and is not revoked.
 
 **A workspace ServiceAccount does not leave its workspace.** Its token carries
 `authentication.kcp.io/scopes: [cluster:<origin>]` and kcp refuses it in every other logical cluster
@@ -1221,7 +1197,7 @@ ServiceAccounts**. The cluster provider holds a credential kcp does not confine 
 admin kubeconfig the operator already installs - and the four ServiceAccounts exist for a future
 split into four identities per workspace, not for today's single client. That is a deliberate
 privileged gateway-side credential: it is never handed to a tenant, and the tenant's own path is the
-mount plus a minted, per-device token.
+client certificate front with a short-lived client certificate.
 
 RBAC cannot enforce the identity classes for a runtime that spans workspaces; the SCOPE does, and it
 enforces them by refusing the client rather than by shaping it.
@@ -2390,12 +2366,11 @@ marked "decided by Claude, user may veto".
    address at which a guest reaches this host's loopback through pasta). The downloads come from the
    socialweb-computer binary: its asset `socialweb-computer-k8s-downloads` (versions.json, built by
    `scripts/build-web-app-downloads.sh` in the release build and pinned by its tree sha256) holds both
-   meshd builds and the four `socialweb-credential-<os>-<arch>` builds, each with its sidecar, and the
+   meshd builds, each with its sidecar, and the
    gateway passes the extracted tree as `--downloads-dir` (and as a read path of the DenoPod). Both
-   gateway profiles pass `--required-downloads` with those six names, so a web app that would offer
-   no meshd or no credential helper refuses to start with `required_downloads_missing` (or
-   `node_download_origin_missing`) instead of logging `meshd_not_offered`. The credential helpers are
-   served from the same pinned route. The node images do not embed meshd yet; the install path that
+   gateway profiles pass `--required-downloads` with those two names, so a web app that would offer
+   no meshd refuses to start with `required_downloads_missing` (or
+   `node_download_origin_missing`) instead of logging `meshd_not_offered`. The node images do not embed meshd yet; the install path that
    keeps an embedded binary is ready for when they do.
 
 Not carried by the mesh: node addresses. Traffic to another node's InternalIP (NodePort on another
@@ -2675,7 +2650,7 @@ Execution is Linux only; darwin and windows are seams that compile, vet and refu
 M0-XOS-GATE made that true and keeps it so: `deploy/check.sh` builds and vets the tree for darwin/arm64,
 darwin/amd64, windows/amd64, windows/arm64 and linux/arm64 on every run (default tags, so no embedded
 blob is needed). The OS-neutral packages (`api/...`, `clusterprovider`, `cloudprovider`,
-`nodeprovider`, `nodemarket`, `materialiser`, `kcpclient`, `tenantclient`, `gateway`; the `vmruntime`
+`nodeprovider`, `nodemarket`, `materialiser`, `kcpclient`, `gateway`; the `vmruntime`
 and `hostsvc` interfaces, `kcpapply` and the ComputeVM controller core) import no go-systemd, netlink,
 firecracker SDK, `internal/nodefirecracker` or `internal/fcapi`. An untagged OS-specific file fails the
 cross-OS build on the commit that adds it.
@@ -3187,7 +3162,6 @@ confirm inline, unchanged.
 api/v1alpha1/          wire types only. No logic, no I/O
 internal/${concept}/   one package per concern; the interface declared where consumed
 internal/atprotoauth/  verifies an atproto service-auth token for one XRPC method: signature, audience, method, admitted DID methods and a 5-minute lifetime cap
-internal/execplugin/   the client-go exec credential plugin: mint, on-disk cache, refuse an empty or already-expired token
 internal/nodeprovider/ derives a node's DNS-1123 name from the (cluster label, node id) pair
 internal/vmruntime/    the Linux VM runtime: one-shot prep and one transient VM unit per guest (swc-userns-stage -> pasta -> socialweb-vmexec -> firecracker); `socialweb-computer internal vm start|inspect|stop|list` is its CLI, and the bidder's firecracker provider drives it
 internal/nodeimagemain/ the two Go steps of scripts/build-guest-image.sh, `socialweb-computer nodeimage guest-rootfs|guest-manifest`, compiled only into a dev build
@@ -3202,7 +3176,7 @@ internal/sweepkcp/     the kcp side of that sweep: build the account worklist fr
 internal/foldmain/     the Invocation a verb body runs with (args, env, stdio, the resolved bin/<sha>/ path, the verb words) and the re-exec argv it builds
 internal/${binary}main/ the body of a host verb (gatewaymain, providermain, vaultmain, checkhostmain, ccmmain, tenantcredentialmain) behind Main(ctx, Invocation) int; socialweb-computer dispatches its verb to it with the raw args, and the clusterprovider re-execs the CCM as `<bin/sha path> internal cloud-controller-manager` with the CCM's three-variable env rebuilt explicitly
 cmd/socialweb-computer/ the multi-call CLI; every host verb lives here
-cmd/${binary}/         standalone binaries only: socialweb-vmexec (VM-unit asset), socialweb-credential (download asset), socialweb-tsbundle and socialweb-apigen (build tools), openbao-plugin-auth-sshsig and openbao-plugin-auth-atproto (each its own module); socialweb-nodeboot, socialweb-nodeimage and socialweb-nodeinit no longer exist
+cmd/${binary}/         standalone binaries only: socialweb-vmexec (VM-unit asset), socialweb-tsbundle and socialweb-apigen (build tools), openbao-plugin-auth-sshsig and openbao-plugin-auth-atproto (each its own module); socialweb-nodeboot, socialweb-nodeimage and socialweb-nodeinit no longer exist
 deploy/                manifests and manifest sets, the audit policy, check.sh, ts-entries.yaml
 rust/                  a cargo workspace; rust/socialweb-meshd is the per-node pod mesh daemon that runs INSIDE a market guest (section 9), rust/build.sh its static musl build
 ```
@@ -3235,7 +3209,7 @@ names and starts from an empty state dir - and the cost of the node names changi
 recorded in section 15.
 
 Binaries: `socialweb-computer` (the gateway, the clusterprovider, the vault and check-host are its
-verbs), `socialweb-credential` and `socialweb-vmexec`; outside `cmd/`, `rust/build.sh` builds
+verbs) and `socialweb-vmexec`; outside `cmd/`, `rust/build.sh` builds
 `socialweb-meshd`, which runs inside a market guest beside the k3s agent. The one placement is
 `internal/nodemarket`, whose node is a claim rather than a process; the VM runtime
 (`internal/vmruntime`) is what the BIDDER runs.
@@ -3692,15 +3666,6 @@ because it bounds a mechanism the rest of this document leans on.
   `deploy/control-plane-container/validate.sh` does. Two runs inside ONE container see each other,
   because they share one `/var/tmp`. Two containers must share that path or be serialized, and nothing
   outside the test suite turns on which.
-- **Plan 0015, kubectl client certificates: open until the prod reading of M3-PROD-READING.** Caddy and
-  kcp's mount proxy both end TLS, so a client certificate never reaches k3s, and k3s checks no CRL; the
-  gateway therefore runs a client certificate front (`internal/clientcertfront`) that requires a TLS
-  client certificate, verifies it against the cluster's client CA, the PKI CRL and the deny record, and
-  reverse-proxies to the cluster's apiserver front with the proxy client pair and X-Remote-User and
-  X-Remote-Group headers that it alone writes. Certificates come from the role `kubeconfig-user` of the
-  cluster's own OpenBao PKI, issued with a gateway-only vault client that may issue and revoke nothing
-  else; a certificate with the organizational unit `socialweb.computer:no-expiry` may outlive 24 h and is
-  ended only by revocation, cluster delete or CA expiry.
 - **Every process has a memory limit and a breach restarts that process alone (plan 0013
   M3-DENOPOD-LIMITS; the installed-core reading is open until the prod deploy).** A DenoPod has
   `spec.resources.memory` (a quantity, at least 64 Mi; schema revision v1alpha1-7). The provider hands
@@ -8416,6 +8381,46 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the requester's PDS and the 443 `submitRfp` posts that one contract makes to the bidders it found; an
   RFP to every relay-discovered bidder stays 443 requests of bsky.social per contract, so a fan-out cap is
   the next lever and a market decision. Not read: the prod gateway, which the lead deploys.
+
+- **kubectl uses a client certificate and nothing else; the exec-plugin path is deleted (plans 0015 M3-DOCS,
+  M4-INTEGRATION-TEST, M5-RETIRE-EXEC-PLUGIN and 0014 M3-RETIRE-EXEC-PLUGIN, 2026-10-16).** Caddy and
+  kcp's mount proxy both end TLS, so a client certificate never reaches k3s, and k3s checks no CRL; the
+  gateway therefore runs a client certificate front (`internal/clientcertfront`) that requires a TLS
+  client certificate, verifies it against the cluster's client CA, the PKI CRL and the deny record, and
+  reverse-proxies to the cluster's apiserver front with the proxy client pair and X-Remote-User and
+  X-Remote-Group headers that it alone writes. Certificates come from the role `kubeconfig-user` of the
+  cluster's own OpenBao PKI, issued with a gateway-only vault client that may issue and revoke nothing
+  else; a certificate with the organizational unit `socialweb.computer:no-expiry` may outlive 24 h and is
+  ended only by revocation, cluster delete or CA expiry. Prod reading (the lead, build 61af89f9): plain
+  `kubectl` through `kcp.socialweb.computer` with the kubeconfig of `getKubeconfig` works, revoke refuses
+  the old certificate in 0.7 s, and a Job ran on a bobvmbuilder market node. Deleted: `cmd/socialweb-credential`,
+  `internal/execplugin`, `internal/devicekey`, `internal/mint`, `internal/tenantclient`, the `/v1/credential`
+  route, the device-key registry, the `gwmint` ServiceAccount, Role, RoleBinding and the `serviceaccounts/token`
+  arm of the `socialweb-mint-identity` policy, the mint kubeconfig directory and its `Secret`, the device-key
+  secret and policy of the root vault layout, the four `socialweb-credential-<os>-<arch>` downloads (the
+  `socialweb-computer-k8s-downloads` tree is now 17227819 bytes, tree sha256 01030c9a...), the helper list of
+  the web app and its help text. The gateway environment keys `SOCIALWEB_GATEWAY_MINT_TTL`,
+  `_MINT_FAILURE_HOLD`, `_MINT_KUBECONFIGS`, `_DEVKEY_REGISTRY`, `_DEVICE_KEY_AUDIENCE`, `_DEVICE_KEY_TTL`,
+  `_DEVICE_KEY_MAX_TTL`, `_DEVICE_KEY_EXEC_COMMAND`, `_DEVICE_KEY_EXEC_ENV_NAME`, `_PUBLIC_MINT_URL` and
+  `SOCIALWEB_CLUSTERPROVIDER_TOKEN_TIMEOUT` are no longer read; an unknown environment key is ignored, so an
+  env file that still sets them starts the gateway. One consumer was outside the exec path: `tenantapply`
+  (`kubectlApplyServerSide`, `getJob`) took its owner credential from `tenantclient.OwnerConfig`, a
+  `TokenRequest` for the owner ServiceAccount through the `gwmint` token. It now signs a 10 minute client
+  certificate (CN the owner's DID, O `socialweb.computer:cluster-owners`) per call from the cluster's client CA
+  in the cluster state dir (`gatewaymain/ownerconfig.go`) and dials the apiserver front that `front.json`
+  names, so the `socialweb-owner` ClusterRoleBinding of the group is the only authorization and no token is
+  minted. Readings (hat-8, `TestKubeconfigClientCertificateWithoutCredentialHelper`, one market network with a
+  gateway and no bidders, the dev build of the working tree): before the deletion 159.7 s (dev up 84.7 s, dev
+  down 24.2 s), after it 144.2 s (dev up 81.1 s, dev down 20.1 s). The test reads `owner-sessions.json`, does
+  `createSession` and `getServiceAuth` at the owner's PDS, calls `getKubeconfig` with a service JWT (200,
+  `Cache-Control: no-store`, a plain client certificate and key, CN the DID, O the owners group, 3600 s
+  lifetime; `ttlSeconds` 59 and 86401 are 400, a JWT for another lxm is 401), runs `kubectl get nodes` with a
+  PATH that holds no `socialweb-credential` and `Nodes().List` through client-go, applies a ConfigMap through
+  `kubectlApplyServerSide` (the new owner credential), calls `revokeIdentity` (the certificate was refused
+  0.43 s after it before the deletion, 0.18 s after it), and finds no `PRIVATE KEY` or `client-key-data` in the
+  gateway logs and DenoPod run directories. A first run failed because it asked kubectl before the tenant
+  grant (`ClusterRoleBinding socialweb-owner`) was applied (Forbidden for the user with no group): the cluster
+  answers `/readyz` before the grant, so the test waits for the binding.
 
 ## 16. Vocabulary
 

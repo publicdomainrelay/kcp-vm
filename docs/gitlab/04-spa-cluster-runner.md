@@ -23,87 +23,47 @@ the loopback runner shape, and [03](03-jobs.md) for the job side.
 | Web app | `https://k8s.socialweb.computer` |
 | kcp front | `https://kcp.socialweb.computer` |
 | cluster in a kubeconfig | `https://kcp.socialweb.computer/clusters/root:<accountHash>:<cluster>:clusters` |
-| credential helper | `/usr/local/bin/socialweb-credential` |
-| helper download | `https://k8s.socialweb.computer/downloads/<sha256>/socialweb-credential-<os>-<arch>` |
-| mint | `https://k8s.socialweb.computer/v1/credential` |
 
 `<accountHash>` is the first 8 characters of the base36 of `sha256(did)`
 (`internal/kcpclient/names.go`, `AccountHash`). The mount path is
 `root:<accountHash>:<cluster>:clusters` (`MountPath`).
 
-The kubeconfig's user is not a certificate and not a static token. It is an exec credential plugin:
+The kubeconfig's user is a client certificate and its key, made by the cluster's own OpenBao PKI for
+the user's DID and valid for the lifetime the user chose in the web app (at most 24 hours, or no
+expiry when the user asks for one):
 
 ```yaml
 users:
   - name: <cluster>
     user:
-      exec:
-        apiVersion: client.authentication.k8s.io/v1
-        command: /usr/local/bin/socialweb-credential
-        interactiveMode: Never
-        env:
-          - name: SOCIALWEB_DEVICE_KEY
-            value: <a service-auth JWT bound to the account>
+      client-certificate-data: <PEM>
+      client-key-data: <PEM>
 ```
 
-Every Kubernetes request costs one run of that helper: it POSTs the device JWT to the mint, gets a
-short-lived ServiceAccount token back, and prints it as an `ExecCredential`. The token is
-cluster-admin in that tenant cluster.
+Plain `kubectl` and client-go use it with nothing installed. The client certificate front at
+`kcp.socialweb.computer` admits the certificate while its `ClusterClientCertificate` exists and is not
+revoked, and the certificate is cluster-admin in that tenant cluster.
 
 ## Where the runner runs
 
 On the GitLab host (`ssh gitlab`).
 
 - It is off the kcp host, which is the point. Nothing about this shape needs the operator's host,
-  because nothing needs `127.0.0.1:<leased port>`: the kubeconfig carries the URL and the plugin
-  carries the credential.
+  because nothing needs `127.0.0.1:<leased port>`: the kubeconfig carries the URL and the
+  certificate.
 - GitLab is there, so the runner's HTTPS to GitLab is direct instead of a network hop.
 - A runner is already installed and registered there (see [the GitLab host](#the-gitlab-host)).
-- The mint is a public HTTPS name, so the runner host is the only host that has to reach it.
+- The cluster is a public HTTPS name, so the runner host is the only host that has to reach it.
 
 ## Prerequisites
 
-- The GitLab host resolves and reaches `k8s.socialweb.computer` (the mint) and
-  `kcp.socialweb.computer` (the cluster). Both must resolve from the GitLab host before anything
-  below can run.
+- The GitLab host resolves and reaches `kcp.socialweb.computer` (the cluster).
 - A user account, a cluster made in the web app, and the kubeconfig downloaded from it. The web app
-  offers the build matching the runner host's OS and architecture.
+  hands out a file that needs no helper on the runner host.
 - Outbound HTTPS from the GitLab host to the internet.
 - A GitLab project to run jobs in, and a runner registered to it.
 - The user is cluster-admin in their own cluster, so there is no RBAC for the operator to grant. See
   [what the user still applies](#what-the-user-still-applies).
-
-## Install socialweb-credential
-
-The kubeconfig names an absolute path. Put the build there and make it executable on the runner
-host, for the user the runner runs as:
-
-```bash
-sudo install -m 0755 socialweb-credential-linux-amd64 /usr/local/bin/socialweb-credential
-```
-
-The helper reads two variables. `SOCIALWEB_DEVICE_KEY` comes from the kubeconfig's own `exec.env`.
-`SOCIALWEB_MINT_URL` is read from the process environment and must be set on the runner, because the
-kubeconfig does not have to carry it:
-
-```bash
-SOCIALWEB_MINT_URL=https://k8s.socialweb.computer/v1/credential
-```
-
-If the deployed kubeconfig carries `SOCIALWEB_MINT_URL` in `exec.env`, that value wins for that
-invocation and the two should agree. They are the same URL; disagreeing means the kubeconfig is
-stale.
-
-Optional, and unset by default: `SOCIALWEB_CREDENTIAL_CACHE` (a file the helper caches the minted
-token in), `SOCIALWEB_MINT_TIMEOUT` (default `10s`).
-
-Two properties of the helper, both from `cmd/socialweb-credential/main.go`:
-
-- On failure it exits 3. That number reaches kubectl and client-go verbatim, so
-  `exec: executable socialweb-credential failed with exit code 3` is the helper's own error and its
-  message is on its stderr.
-- It refuses a credential the mint returns with an `expirationTimestamp` that has already passed. A
-  clock-skewed runner host presents as a mint that returns nothing.
 
 ## The kubeconfig
 
@@ -119,30 +79,27 @@ Check it before pointing a runner at it:
 
 ```bash
 export KUBECONFIG=/etc/gitlab-runner/tenant-ci/kubeconfig.yaml
-export SOCIALWEB_MINT_URL=https://k8s.socialweb.computer/v1/credential
-/usr/local/bin/socialweb-credential | head -c 200; echo
 kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'; echo
 kubectl auth can-i create pods --namespace gitlab-runner
 kubectl auth can-i create pods/exec --namespace gitlab-runner
 kubectl get nodes
 ```
 
-- The helper prints an `ExecCredential` with `status.token` and `status.expirationTimestamp`.
 - The server is the kcp mount URL, not an address.
 - Both `can-i` calls answer `yes`, and they answer `yes` for everything else too.
 - `get nodes` is the resting state: empty. A cluster with nothing in it has no nodes, and a node
   appears only when a Pod cannot be placed. `No resources found` is the correct answer here, not a
   broken cluster.
 
-### The device JWT expires, and that is the rotation
+### The certificate expires, and that is the rotation
 
-`SOCIALWEB_DEVICE_KEY` is a service-auth JWT with the lifetime the user chose in the web app. The web
-app offers lifetimes up to `kubeconfig-max-ttl-sec` (default 2592000 seconds, 30 days), capped by the
-gateway's `SOCIALWEB_GATEWAY_DEVICE_KEY_MAX_TTL`, and the gateway refuses anything under 60 seconds.
-Past the lifetime the mint answers 401 and every job fails at credential time. Rotation is
-downloading a new kubeconfig and overwriting the file. Nothing else in the runner config changes.
+The certificate has the lifetime the user chose in the web app, up to 24 hours (the gateway refuses
+anything under 60 seconds or over 24 hours), or no expiry when the user asks for a kubeconfig that
+never expires. Past the lifetime the client certificate front answers 401 and every job fails at
+authentication. Rotation is downloading a new kubeconfig and overwriting the file. Nothing else in the
+runner config changes. A revoked certificate is refused at the front within a second.
 
-A long-lived runner wants the longest lifetime the web app allows, and a calendar entry.
+A long-lived runner wants a kubeconfig with no expiry, and the user revokes it when the runner goes.
 
 ### KUBECONFIG is the process environment, not a config.toml key
 
@@ -185,12 +142,12 @@ description: "Pause pods, below job pods, so a job preempts one."
 
 ### The credential is cluster-admin
 
-The credential this shape uses is a bearer token the mint returns, not a client certificate.
+The credential this shape uses is the client certificate of the kubeconfig the web app hands out.
 
 | Shape from 01 | This shape |
 | --- | --- |
-| a client certificate from the ClientCA, CommonName and Organizations chosen by the operator | an exec plugin trading a device JWT for a minted ServiceAccount token |
-| the identity, and therefore every RBAC rule, under the operator's control | cluster-admin by construction; the web app's mint decides |
+| a client certificate from the ClientCA, CommonName and Organizations chosen by the operator | a client certificate from the cluster's OpenBao PKI, CommonName the user's DID, group `socialweb.computer:cluster-owners` |
+| the identity, and therefore every RBAC rule, under the operator's control | cluster-admin by construction; the owner group is bound to `cluster-admin` |
 | `kubectl auth can-i ... --as=gitlab-runner --as-group=gitlab-runner` to check it | `kubectl auth can-i '*' '*'` answers `yes` |
 
 Two consequences. The whole class of 403s in 02's failure table cannot happen. And a mistake that
@@ -222,8 +179,8 @@ check_interval = 3
   output_limit = 51200
 
   [runners.kubernetes]
-    # No host, no cert_file, no key_file, no ca_file. The kubeconfig and the exec plugin
-    # carry both of those, and setting host would defeat the plugin entirely.
+    # No host, no cert_file, no key_file, no ca_file. The kubeconfig carries all of those,
+    # and setting host would make the executor ignore the kubeconfig.
     namespace = "gitlab-runner"
     image_pull_policy = "if-not-present"
 
@@ -261,7 +218,7 @@ check_interval = 3
 | `pre_build_script` | pnpm guard | Runs after the clone, before the job's script. A string, not an array. The place the pnpm/corepack guard lives. |
 | `output_limit` | `51200` | Kilobytes of trace. 4096 is the runner's own cap, not GitLab's, and 4 MiB is too small for a Go test log. |
 | `host` | not set | Empty selects the kubeconfig path. Any non-empty `host` makes the executor take the out-of-cluster path and ignore the kubeconfig completely. |
-| `cert_file` / `key_file` / `ca_file` | not set | This shape uses a bearer token from the exec plugin, not a client certificate. |
+| `cert_file` / `key_file` / `ca_file` | not set | The kubeconfig carries the client certificate and the CA. |
 | `namespace` | `gitlab-runner` | Where job Pods go. Must exist. See [what the user still applies](#what-the-user-still-applies). |
 | `image_pull_policy` | `if-not-present` | The node image seeds some images; a rented node's seed list is the image's, not the operator's. |
 | `cpu_request` / `memory_request` | `100m` / `128Mi` | The scheduler places on these. A request that fits no rented node size is a Pod that waits forever and a market bill for a node that never gets used. |
@@ -321,7 +278,7 @@ file on this host, so a re-registration issues new ones.
 
 ## Run it
 
-The two variables are the runner process's, so they go in its environment. Under systemd:
+`KUBECONFIG` is the runner process's, so it goes in its environment. Under systemd:
 
 ```bash
 sudo systemctl edit gitlab-runner
@@ -330,14 +287,12 @@ sudo systemctl edit gitlab-runner
 ```ini
 [Service]
 Environment=KUBECONFIG=/etc/gitlab-runner/tenant-ci/kubeconfig.yaml
-Environment=SOCIALWEB_MINT_URL=https://k8s.socialweb.computer/v1/credential
 ```
 
 Or, for a foreground run under the operator's own shell:
 
 ```bash
 export KUBECONFIG=/etc/gitlab-runner/tenant-ci/kubeconfig.yaml
-export SOCIALWEB_MINT_URL=https://k8s.socialweb.computer/v1/credential
 gitlab-runner run --config ~/.gitlab-runner/config.toml --working-directory /var/lib/gitlab-runner
 ```
 
@@ -356,11 +311,10 @@ FATAL: Service run failed  error=decoding configuration file: toml: line 9
 
 Any `FATAL` at startup means the process is gone, and GitLab will still show the runner online.
 
-**2. The kubeconfig and the plugin answer outside the runner.**
+**2. The kubeconfig answers outside the runner.**
 
 ```bash
 export KUBECONFIG=/etc/gitlab-runner/tenant-ci/kubeconfig.yaml
-export SOCIALWEB_MINT_URL=https://k8s.socialweb.computer/v1/credential
 kubectl get nodes                 # No resources found
 kubectl get ns gitlab-runner      # the namespace the user applied
 ```
@@ -408,7 +362,7 @@ these are the ones this shape adds or sharpens.
 | Symptom | Cause |
 | --- | --- |
 | `invalid configuration: no configuration has been provided` at runner startup | `KUBECONFIG` is not in the runner process's environment. `[[runners]] environment = [...]` does not reach it. |
-| `exec: executable socialweb-credential failed with exit code 3` | The helper's own failure. Its stderr says which: `SOCIALWEB_MINT_URL is not set`, `mint returned 401` (device JWT expired, or the account no longer owns the cluster), or a DNS failure reaching the web app. |
+| `the server has asked for the client to provide credentials` or `Unauthorized` | The certificate expired or was revoked, or the account no longer owns the cluster. Download a new kubeconfig. |
 | The runner talks to the wrong cluster, or to a cluster on its own host | `host` is still set somewhere in `[runners.kubernetes]`, or the process has `KUBERNETES_SERVICE_HOST` set because the runner is itself running inside a cluster. With `host` empty the executor tries in-cluster config first and only then the kubeconfig. |
 | Job hangs at "Preparing the environment" | The SPDY upgrade to `pods/exec` did not survive the kcp mount. See [the exec path](#the-exec-path-through-the-kcp-mount). |
 | `namespaces "gitlab-runner" not found` | The namespace was never applied. The runner does not create it. |
@@ -419,7 +373,7 @@ these are the ones this shape adds or sharpens.
 | Job fails at the clone with `Could not resolve host` | The node's own CoreDNS is not answering on `169.254.20.10`. `kubectl -n kube-system get pods -l app.kubernetes.io/name=socialweb-node-dns -o wide` shows whether the node runs one; none means the node lacks the `socialweb.computer/node-local-dns=true` label (it joined with an older user_data) or the DaemonSet was never applied (the provider's add-on pass logs `applied the node network add-ons`). See [03](03-jobs.md#pods-on-different-nodes-and-dns-on-every-node). |
 | Job fails at the clone with `unable to access '...'` where the DNS did resolve | `CI_REPOSITORY_URL` names a GitLab the rented node cannot reach. A rented node's egress is the provider's, so `gitlab.dorper-matrix.ts.net` is reachable only because it is a public Funnel. Either publish GitLab on a name the public internet resolves, or give the job `GIT_STRATEGY: none`. |
 | The cluster never returns to zero | Something is Pending that is not a job Pod. Pause pods are the usual answer; see below. |
-| A job's first request is `Forbidden`, ever | It should not be. The token is cluster-admin. If this appears, the mint changed and the runner is no longer the thing that broke. |
+| A job's first request is `Forbidden`, ever | It should not be. The certificate is cluster-admin. If this appears, the owner group binding changed and the runner is no longer the thing that broke. |
 
 ## Pause pods
 
@@ -452,8 +406,9 @@ upgrade, `POST /api/v1/namespaces/<ns>/pods/<pod>/exec` with `Connection: Upgrad
 `kcp.socialweb.computer`, through Caddy, into kcp, and out to the tenant apiserver.
 
 The kcp mount is a reverse proxy, and [README.md](README.md#reachability-the-single-operational-fact)
-records that only a bearer credential survives it. The credential side is answered here: the exec
-plugin mints a bearer token. The upgrade side is answered by the kcp vhost. `scripts/deploy.sh`
+records that a client certificate does not survive it. The credential side is answered by the client
+certificate front, which Caddy sends requests with a client certificate to. The upgrade side is
+answered by the kcp vhost. `scripts/deploy.sh`
 writes that vhost with `flush_interval -1` and a `transport http` block carrying `versions 1.1`, so
 Caddy speaks HTTP/1.1 to kcp and the SPDY upgrade survives. Without `versions 1.1` the upgrade dies
 at Caddy with `502 Bad Gateway`.
@@ -486,8 +441,3 @@ Three facts follow:
   key.
 - `InClusterConfig()` is tried before the kubeconfig and wins if it succeeds. On the GitLab host it
   fails, because there is no `KUBERNETES_SERVICE_HOST`. Inside a Pod it would not.
-
-The exec plugin is honoured because `clientcmd` carries it into the REST config
-(`tools/clientcmd/client_config.go`, `DirectClientConfig.ClientConfig()` sets
-`mergedConfig.ExecProvider = configAuthInfo.Exec`), and `restclient.Config` uses that to produce the
-bearer token, including re-running the helper before `expirationTimestamp`.

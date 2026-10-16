@@ -17,17 +17,13 @@ import (
 )
 
 const (
-	DefaultAudience         = "did:web:socialweb.local"
-	DefaultPLC              = "https://plc.directory"
-	DefaultDevkeyRegistry   = "root:socialweb-provider"
-	DefaultDeviceKeyTTL     = "24h"
-	DefaultDeviceKeyExec    = "socialweb-credential"
-	DefaultDeviceKeyExecEnv = "SOCIALWEB_DEVICE_KEY"
-	DefaultJoin             = "*"
-	DeployDir               = "deploy"
-	tenantGrantFile         = "tenant-grant.yaml"
-	auditPolicyFile         = "audit-policy.yaml"
-	esoDir                  = "eso"
+	DefaultAudience = "did:web:socialweb.local"
+	DefaultPLC      = "https://plc.directory"
+	DefaultJoin     = "*"
+	DeployDir       = "deploy"
+	tenantGrantFile = "tenant-grant.yaml"
+	auditPolicyFile = "audit-policy.yaml"
+	esoDir          = "eso"
 )
 
 type env struct{ m map[string]string }
@@ -92,24 +88,15 @@ func materialize(dir string) (string, string, string, error) {
 
 func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) error {
 	state := g.c.StateDir
-	mint := filepath.Join(state, "mint")
-	os.MkdirAll(mint, 0o700)
 	e.set("SOCIALWEB_KCP_HOST", rec.KcpURL)
 	e.set("SOCIALWEB_KCP_KUBECONFIG", g.memberKubeconfig())
-	e.set("SOCIALWEB_GATEWAY_MINT_KUBECONFIGS", mint)
 	e.set("SOCIALWEB_GATEWAY_NODECLAIM_AGENT", appctl.WebAppAccountRef())
 	e.dflt("SOCIALWEB_GATEWAY_ADDR", DefaultAddress)
 	e.dflt("SOCIALWEB_GATEWAY_AUDIENCES", DefaultAudience)
-	first, _, _ := strings.Cut(e.get("SOCIALWEB_GATEWAY_AUDIENCES"), ",")
-	e.dflt("SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE", strings.TrimSpace(first))
 	if n := g.c.Spec.Network; n != nil && n.PlcDirectoryUrl != "" {
 		e.dflt("SOCIALWEB_GATEWAY_PLC_URL", n.PlcDirectoryUrl)
 	}
 	e.dflt("SOCIALWEB_GATEWAY_PLC_URL", DefaultPLC)
-	e.dflt("SOCIALWEB_GATEWAY_DEVKEY_REGISTRY", DefaultDevkeyRegistry)
-	e.dflt("SOCIALWEB_GATEWAY_DEVICE_KEY_TTL", DefaultDeviceKeyTTL)
-	e.dflt("SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_COMMAND", DefaultDeviceKeyExec)
-	e.dflt("SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME", DefaultDeviceKeyExecEnv)
 	e.set("SOCIALWEB_CLUSTERPROVIDER_UNIT_PREFIX", g.l.Names().HostProcessPrefix())
 	e.set("SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE", hostprocess.DefaultWorkspace)
 	e.set("SOCIALWEB_CLUSTERPROVIDER_MOUNT_CONTEXT", kcpclient.ShardAdminContext)

@@ -8,12 +8,6 @@ import {
   ttlChoicesUpTo,
 } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
-export interface CredentialHelper {
-  os: string;
-  arch: string;
-  path: string;
-}
-
 export interface ClusterApiRequest {
   method: string;
   header(name: string): string | undefined;
@@ -24,7 +18,6 @@ export interface ClusterApiFactoryOptions {
   caller: (request: ClusterApiRequest) => Promise<ClusterCaller | null>;
   maxKubeconfigTtlSec: number;
   kcpPublicHost?: string;
-  credentialHelpers?: CredentialHelper[];
   maxBodyBytes?: number;
   log?: (event: string, data?: Record<string, unknown>) => void;
 }
@@ -113,7 +106,6 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
           ttlChoicesSec: ttlChoices,
           maxKubeconfigTtlSec: opts.maxKubeconfigTtlSec,
           kcpPublicHost: opts.kcpPublicHost ?? null,
-          credentialHelpers: opts.credentialHelpers ?? [],
         }));
 
       app.post("/api/clusters/list", async (c) => {

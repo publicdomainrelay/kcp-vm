@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/bluesky-social/indigo/atproto/identity"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clientcert"
@@ -27,7 +26,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/plcsweep"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/sweepkcp"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantapply"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/xrpcserver"
 )
 
@@ -64,7 +62,6 @@ func run(ctx context.Context, inv foldmain.Invocation) error {
 		"kcp", cfg.KCPHost,
 		"audiences", cfg.Audiences,
 		"xrpc", xrpcserver.XRPCPrefix,
-		"mint", xrpcserver.MintPath,
 	)
 	return serve(ctx, cfg, g, log, inv)
 }
@@ -80,46 +77,18 @@ func buildDeps(cfg Config) (Deps, error) {
 		return Deps{}, fmt.Errorf("reading %s: %w", envKCPKubeconfig, err)
 	}
 	kcpserver.FollowTokenFile(kcpRestConfig)
-	if fi, err := os.Stat(cfg.MintKubeconfigs); err != nil {
-		return Deps{}, fmt.Errorf("%s: %w", envMintKubeconfigs, err)
-	} else if !fi.IsDir() {
-		return Deps{}, fmt.Errorf("%s: %s is not a directory", envMintKubeconfigs, cfg.MintKubeconfigs)
-	}
-	registryConfig := rest.CopyConfig(kcpRestConfig)
-	registryConfig.Host = strings.TrimSuffix(cfg.KCPHost, "/")
-	if len(cfg.Audiences) == 0 {
-		return Deps{}, fmt.Errorf("%s is not set: without an audience there is nothing for a "+
-			"device credential to be signed for", envAudiences)
-	}
-	mintStore, err := tenantclient.New(tenantclient.Options{
-		Registry:          registryConfig,
-		RegistryWorkspace: cfg.DevkeyRegistry,
-		RegistryNamespace: DevkeyRegistryNamespace,
-		Audience:          cfg.Audiences[0],
-		MintConfig:        mintCredentials(cfg.MintKubeconfigs),
-	})
-	if err != nil {
-		return Deps{}, fmt.Errorf("the mint store: %w", err)
-	}
-
-	tenantAPI, err := tenantapply.New(mintStore.OwnerConfig)
+	tenantAPI, err := tenantapply.New(ownerCredentials(cfg.ClusterStateDir))
 	if err != nil {
 		return Deps{}, err
 	}
 
-	if cfg.DeviceKeyAudience != cfg.Audiences[0] {
-		return Deps{}, fmt.Errorf("%s is %q and %s is %q: the device credential is signed for "+
-			"the first and the mint verifies it against the second, so every kubeconfig this "+
-			"gateway handed out would mint nothing and be refused as Unauthorized",
-			envDeviceKeyAudience, cfg.DeviceKeyAudience, envAudiences, cfg.Audiences[0])
-	}
 	certs := &clientcert.Issuer{StateDir: cfg.ClusterStateDir, CAFile: cfg.KCPPublicCAFile, Log: slog.Default()}
 
 	client, err := kcpclient.New(kcpclient.Options{
 		Host:           cfg.KCPHost,
 		PublicHost:     cfg.KCPPublicHost,
 		RestConfig:     kcpRestConfig,
-		DeviceKeys:     certs,
+		Kubeconfigs:    certs,
 		NodeClaimAgent: cfg.NodeClaimAgent,
 		NodeClaimQuota: cfg.NodeClaimQuota,
 
@@ -154,8 +123,6 @@ func buildDeps(cfg Config) (Deps, error) {
 		Revoker: client,
 
 		Certs: certs,
-
-		MintStore: mintStore,
 
 		Tenant: tenantAPI,
 

@@ -24,8 +24,6 @@ const (
 
 	envMountContext = "SOCIALWEB_CLUSTERPROVIDER_MOUNT_CONTEXT"
 
-	envMintKubeconfigs = "SOCIALWEB_GATEWAY_MINT_KUBECONFIGS"
-
 	envGrant = "SOCIALWEB_CLUSTERPROVIDER_GRANT"
 
 	envLeasePath = "SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH"
@@ -68,8 +66,7 @@ const (
 
 	envDumbpipe = "SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE"
 
-	envTokenTimeout = "SOCIALWEB_CLUSTERPROVIDER_TOKEN_TIMEOUT"
-	envLogLevel     = "SOCIALWEB_CLUSTERPROVIDER_LOG_LEVEL"
+	envLogLevel = "SOCIALWEB_CLUSTERPROVIDER_LOG_LEVEL"
 
 	envESOManifestDir = "SOCIALWEB_CLUSTERPROVIDER_ESO_MANIFEST_DIR"
 
@@ -104,8 +101,6 @@ type Config struct {
 	KCPKubeconfig string
 
 	MountContext string
-
-	MintKubeconfigs string
 
 	GrantPath string
 
@@ -173,8 +168,6 @@ type Config struct {
 
 	ScalePodsPerNode int
 
-	TokenTimeout time.Duration
-
 	Interval time.Duration
 
 	LogLevel slog.Level
@@ -189,7 +182,6 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 		KCPHost:                strings.TrimSpace(get(envKCPHost)),
 		KCPKubeconfig:          strings.TrimSpace(get(envKCPKubeconfig)),
 		MountContext:           strings.TrimSpace(get(envMountContext)),
-		MintKubeconfigs:        strings.TrimSpace(get(envMintKubeconfigs)),
 		LeasePath:              strings.TrimSpace(get(envLeasePath)),
 		Join:                   strings.TrimSpace(get(envJoin)),
 		Datastore:              strings.TrimSpace(get(envDatastore)),
@@ -321,12 +313,6 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 	}
 
 	if cfg.Join != "" {
-		if cfg.MintKubeconfigs == "" {
-			return Config{}, fmt.Errorf(
-				"%s is not set, so a join would bootstrap a tenant cluster and write no mint "+
-					"credential: the gateway reads that directory and would fail every mint",
-				envMintKubeconfigs)
-		}
 		raw := strings.TrimSpace(get(envDatastoreHasRow))
 		if raw == "" {
 			return Config{}, fmt.Errorf(
@@ -397,9 +383,6 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 	}
 
 	var err error
-	if cfg.TokenTimeout, err = optionalDuration(get, envTokenTimeout); err != nil {
-		return Config{}, err
-	}
 	if cfg.MarketReleaseTimeout, err = optionalDuration(get, envMarketReleaseTimeout); err != nil {
 		return Config{}, err
 	}

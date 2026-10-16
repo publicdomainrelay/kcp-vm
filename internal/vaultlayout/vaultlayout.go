@@ -33,7 +33,6 @@ const (
 	PathKCPAdmin           = "secret/data/socialweb/kcp/admin"
 	PathKCPAdminTokenStore = "secret/data/socialweb/kcp/admin-token-store"
 	PathKCPClientCA        = "secret/data/socialweb/kcp/client-ca"
-	PathDeviceKey          = "secret/data/socialweb/devicekey"
 	PathContainerTLS       = "secret/data/socialweb/container/tls"
 
 	PathClusterIdentity      = "secret/data/k3s/identity"
@@ -60,7 +59,6 @@ const (
 	PolicyKCPRuntime         = "kcp-runtime"
 	PolicyKCPAdminTokenStore = "kcp-admin-token-store"
 	PolicyKCPCA              = "kcp-ca"
-	PolicyDeviceKey          = "devicekey"
 	PolicyContainerTLS       = "container-tls"
 	PolicyKCPClientIssue     = "kcp-client-issue"
 	PolicyIdentityBundle     = "identity-bundle"
@@ -85,7 +83,6 @@ const (
 	ClassKCPAdminKubeconfig SecretClassName = "kcp-admin-kubeconfig"
 	ClassKCPAdminTokenStore SecretClassName = "kcp-admin-token-store"
 	ClassKCPClientCA        SecretClassName = "kcp-client-ca"
-	ClassDeviceKeyMaterial  SecretClassName = "device-key-material"
 	ClassContainerTLS       SecretClassName = "container-tls-certificate"
 	ClassIdentityBundle     SecretClassName = "identity-bundle"
 	ClassInstanceToken      SecretClassName = "instance-token"
@@ -183,7 +180,6 @@ func Default() Layout {
 			{Vault: Root, Name: PolicyKCPRuntime, HCL: readPolicy(PathKCPAdmin)},
 			{Vault: Root, Name: PolicyKCPAdminTokenStore, HCL: readPolicy(PathKCPAdminTokenStore)},
 			{Vault: Root, Name: PolicyKCPCA, HCL: readPolicy(PathKCPClientCA)},
-			{Vault: Root, Name: PolicyDeviceKey, HCL: readPolicy(PathDeviceKey)},
 			{Vault: Root, Name: PolicyContainerTLS, HCL: readPolicy(PathContainerTLS)},
 			{Vault: Root, Name: PolicyKCPClientIssue, HCL: issuePolicy(MountPKIRoot + "issue/" + RoleKCPClient)},
 
@@ -196,7 +192,7 @@ func Default() Layout {
 			{
 				Vault:       Root,
 				Name:        RoleGateway,
-				Policies:    []string{PolicyKCPRuntime, PolicyDeviceKey, PolicyKCPClientIssue},
+				Policies:    []string{PolicyKCPRuntime, PolicyKCPClientIssue},
 				TokenTTL:    time.Hour,
 				TokenMaxTTL: 4 * time.Hour,
 				SecretIDTTL: 30 * time.Minute,
@@ -286,13 +282,6 @@ func Default() Layout {
 			},
 			{
 				Vault:    Root,
-				Path:     PathDeviceKey,
-				Class:    ClassDeviceKeyMaterial,
-				Consumer: RoleGateway,
-				Keys:     []string{"audience", "registry", "exec-env-name"},
-			},
-			{
-				Vault:    Root,
 				Path:     PathContainerTLS,
 				Class:    ClassContainerTLS,
 				Consumer: RoleContainerTLS,
@@ -331,7 +320,6 @@ func Default() Layout {
 			{Name: ClassKCPAdminKubeconfig, Vault: Root},
 			{Name: ClassKCPAdminTokenStore, Vault: Root},
 			{Name: ClassKCPClientCA, Vault: Root},
-			{Name: ClassDeviceKeyMaterial, Vault: Root},
 			{Name: ClassContainerTLS, Vault: Root},
 			{Name: ClassIdentityBundle, Vault: Cluster},
 			{Name: ClassInstanceToken, Vault: Cluster},

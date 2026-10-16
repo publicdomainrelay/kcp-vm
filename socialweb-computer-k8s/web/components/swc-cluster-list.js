@@ -37,7 +37,7 @@ export class SwcClusterList extends HTMLElement {
   start({ onExpired } = {}) {
     this._onExpired = onExpired || (() => {});
     this._clusters = [];
-    this._config = { ttlChoicesSec: [28800], credentialHelpers: [], kcpPublicHost: null };
+    this._config = { ttlChoicesSec: [28800], kcpPublicHost: null };
     this._busy = new Set();
     this._error = '';
     this._render();
@@ -117,10 +117,6 @@ export class SwcClusterList extends HTMLElement {
         </li>`;
     }).join('');
 
-    const helpers = (this._config.credentialHelpers || [])
-      .map((h) => `<a class="btn btn-outline btn-sm" href="${esc(h.path)}" download>${esc(h.os)}/${esc(h.arch)}</a>`)
-      .join(' ');
-
     this.innerHTML = `
       <div class="card mt-3">
         <h3>Clusters</h3>
@@ -140,9 +136,8 @@ export class SwcClusterList extends HTMLElement {
       </div>
       <div class="card mt-3">
         <h3>Use a kubeconfig</h3>
-        <p class="help mt-3">A kubeconfig authenticates through <code>socialweb-credential</code>, which
-        must be on your <code>PATH</code> at <code>/usr/local/bin/socialweb-credential</code>.</p>
-        ${helpers ? `<div class="mt-3">${helpers}</div>` : ''}
+        <p class="help mt-3">A kubeconfig holds a short-lived client certificate and its key, so plain
+        <code>kubectl</code> works with it and nothing else needs installing.</p>
         <div class="key-code mt-3">KUBECONFIG=./my-cluster.kubeconfig.yaml kubectl get pods -A</div>
         ${this._config.kcpPublicHost
           ? `<p class="help mt-3">Every kubeconfig points at <code>${esc(this._config.kcpPublicHost)}</code>.</p>`

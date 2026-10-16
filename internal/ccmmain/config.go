@@ -12,7 +12,6 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/cloudprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/kubeconfig"
 )
 
 const (
@@ -140,10 +139,7 @@ func checkTenantKubeconfig(path string) error {
 	}
 
 	lower := strings.ToLower(string(raw))
-	for _, forbidden := range kubeconfig.Forbidden {
-		if strings.HasPrefix(forbidden, "client-") {
-			continue
-		}
+	for _, forbidden := range forbiddenInTenantKubeconfig {
 		if strings.Contains(lower, strings.ToLower(forbidden)) {
 			return fmt.Errorf(
 				"%s is %q and its document contains %q. The tenant credential is a minted client "+
@@ -154,3 +150,5 @@ func checkTenantKubeconfig(path string) error {
 	}
 	return nil
 }
+
+var forbiddenInTenantKubeconfig = []string{"bearer_token", "token:", "admin.kubeconfig"}

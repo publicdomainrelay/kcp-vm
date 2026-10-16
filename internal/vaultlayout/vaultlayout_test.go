@@ -57,7 +57,7 @@ func TestValidatorRejectsInconsistentLayouts(t *testing.T) {
 		{
 			name: "consumer has no role",
 			mutate: func(l *Layout) {
-				i := findSecret(*l, Root, ClassDeviceKeyMaterial)
+				i := findSecret(*l, Root, ClassKCPClientCA)
 				l.Secrets[i].Consumer = "ghost"
 			},
 		},

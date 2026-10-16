@@ -22,14 +22,11 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/atprotoauth"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/gateway"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/mint"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
 )
 
 const (
 	XRPCPrefix = "/xrpc/"
-
-	MintPath = "/v1/credential"
 
 	NSIDPrefix = "com.publicdomainrelay.temp.cluster."
 
@@ -60,8 +57,6 @@ var retryable = map[string]bool{gateway.ErrClusterInitializing.Name: true}
 type Options struct {
 	Gateway *gateway.Server
 
-	Mint *mint.Mint
-
 	Audiences []string
 
 	Directory identity.Directory
@@ -90,7 +85,6 @@ type route struct {
 
 type Server struct {
 	gateway *gateway.Server
-	mint    http.Handler
 	opts    Options
 	routes  []route
 	catalog *lexicon.BaseCatalog
@@ -102,9 +96,6 @@ type Server struct {
 func New(opts Options) (*Server, error) {
 	if opts.Gateway == nil {
 		return nil, errors.New("xrpcserver: no gateway")
-	}
-	if opts.Mint == nil {
-		return nil, errors.New("xrpcserver: no mint")
 	}
 	if len(opts.Audiences) == 0 {
 		return nil, errors.New("xrpcserver: no audiences; every token would be refused as Unauthorized")
@@ -129,7 +120,6 @@ func New(opts Options) (*Server, error) {
 
 	s := &Server{
 		gateway: opts.Gateway,
-		mint:    mintHandler{m: opts.Mint},
 		opts:    opts,
 		catalog: cat,
 		inputs:  map[string]lexicon.SchemaObject{},
@@ -230,7 +220,6 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle(method+" "+XRPCPrefix+r.nsid, s.xrpc(r))
 	}
 	mux.HandleFunc(XRPCPrefix+nsidSubscribeClusters, s.subscribeClusters)
-	mux.Handle(http.MethodPost+" "+MintPath, s.mint)
 	return mux
 }
 
@@ -528,44 +517,4 @@ func bearer(h string) (string, bool) {
 	}
 	tok := strings.TrimSpace(h[len(prefix):])
 	return tok, tok != ""
-}
-
-type mintHandler struct {
-	m *mint.Mint
-}
-
-func (h mintHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	token, ok := bearer(req.Header.Get("Authorization"))
-	if !ok {
-		writeError(w, MintPath, 0, gateway.ErrUnauthorized)
-		return
-	}
-
-	cred, err := h.m.Issue(req.Context(), mint.DeviceCredential{Token: token}, time.Now())
-	if err != nil {
-		writeMintError(w, h.m, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, cred)
-}
-
-func writeMintError(w http.ResponseWriter, m *mint.Mint, err error) {
-	switch {
-	case errors.Is(err, mint.ErrBindingUnknown):
-		writeError(w, MintPath, 0, gateway.ErrUnauthorized)
-	case errors.Is(err, mint.ErrServiceAccountGone):
-		writeError(w, MintPath, 0, gateway.ErrIdentityRevoked)
-	case errors.Is(err, mint.ErrHeld):
-		hold := m.Opts.FailureHold
-		if hold <= 0 {
-			hold = mint.DefaultFailureHold
-		}
-		w.Header().Set("Retry-After", strconv.Itoa(int(hold.Seconds())))
-		writeJSON(w, http.StatusTooManyRequests, errorBody{
-			Error:   "TooManyRequests",
-			Message: "this credential failed recently and is in its failure hold",
-		})
-	default:
-		writeError(w, MintPath, 0, err)
-	}
 }

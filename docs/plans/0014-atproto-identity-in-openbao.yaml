@@ -232,7 +232,7 @@ items:
     files: ["cmd/socialweb-credential (deleted)", "internal/mint (deleted)", "internal/devicekey (deleted)", "internal/execplugin (deleted)", "internal/xrpcserver", "internal/kubeconfig", "internal/stack/gatewaykcp/env.go", "socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts", "scripts/build-socialweb-computer.sh"]
     done_when: "the release closure has no socialweb-credential binary and no mint path; on the prod gateway a downloaded kubeconfig and an XRPC kubeconfig both work."
     risks: []
-    status: todo
+    status: doing
     evidence:
   - id: M4-INTEGRATION-TESTS
     milestone: M4

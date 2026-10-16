@@ -17,7 +17,6 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/gateway"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/kubeconfig"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
 )
 
@@ -251,9 +250,9 @@ func newTestClient(t *testing.T, f *fakeKCP) *Client {
 	return newTestClientWith(t, f, nil)
 }
 
-func newTestClientWith(t *testing.T, f *fakeKCP, keys DeviceKeyGranter) *Client {
+func newTestClientWith(t *testing.T, f *fakeKCP, keys KubeconfigGranter) *Client {
 	t.Helper()
-	c, err := New(Options{Host: testHost, Transport: f, DeviceKeys: keys})
+	c, err := New(Options{Host: testHost, Transport: f, Kubeconfigs: keys})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -889,27 +888,6 @@ func TestTheMountChildIsWrittenByItsOwnWriter(t *testing.T) {
 		if n := mountChildPosts(t, f); n != 0 {
 			t.Fatalf("a child was created for an empty URL (%d POST(s)): %+v", n, f.seen())
 		}
-	})
-}
-
-type recordingGranter struct {
-	got   GrantInput
-	calls int
-	err   error
-}
-
-func (g *recordingGranter) Grant(_ context.Context, in GrantInput) (string, error) {
-	g.got = in
-	g.calls++
-	if g.err != nil {
-		return "", g.err
-	}
-	return kubeconfig.Build(kubeconfig.Input{
-		ClusterName:      in.Cluster,
-		Server:           in.Server,
-		ExecCommand:      "/usr/local/bin/socialweb-credential",
-		DeviceCredential: "device-credential",
-		DeviceKeyEnvName: "SOCIALWEB_DEVICE_KEY",
 	})
 }
 

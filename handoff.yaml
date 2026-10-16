@@ -205,15 +205,6 @@ live_environment:
 
 open_work:
   operator_actions_not_repo_work:
-    - what: The gateway now REFUSES TO START without four device-key settings.
-      where: docs/ARCHITECTURE.md:1766
-      vars: [SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE, SOCIALWEB_GATEWAY_DEVICE_KEY_TTL, SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_COMMAND, SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME]
-      note: >
-        deploy/socialweb-gateway.service needs no edit (it reads EnvironmentFile). The env file is
-        NOT in the repo and is NOT documented anywhere -- only the variable names are.
-        UPDATE 2026-09-24: deploy/socialweb-gateway.env.example now lists every setting (DEV-3), and
-        the unit supplies SOCIALWEB_KCP_KUBECONFIG as a LoadCredential; the env file must NOT set
-        that one key or it overrides the unit.
     - what: nodeimage.json gained -buildvcs=false; the next build produces a NEW fingerprint once.
       where: docs/ARCHITECTURE.md:1991 and :1995
   recorded_in_memory:
@@ -331,7 +322,7 @@ orientation:
     cmd/${binary}/         the CLI layer; nothing else builds a binary
     deploy/                install scripts, manifests, audit policy, the control-plane container
   dependencies: "api <- internal <- cmd, one way. A new substrate or transport is a NEW PACKAGE, not a branch inside an existing one."
-  binaries: [socialweb-computer, socialweb-credential, socialweb-vmexec, socialweb-clusterprovider, socialweb-gateway, socialweb-vault, socialweb-computer-kcp-check-host]
+  binaries: [socialweb-computer, socialweb-vmexec, socialweb-clusterprovider, socialweb-gateway, socialweb-vault, socialweb-computer-kcp-check-host]
   key_packages:
     internal/vmruntime: the Linux VM runtime a bidder boots each firecracker guest with (socialweb-computer internal vm); internal/nodefirecracker keeps only the old image store check-host reads
     internal/nodemarket: the one node path, a NodeClaim the door fulfils under the owner's atproto session

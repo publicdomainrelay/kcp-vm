@@ -10,7 +10,6 @@ usage: $0 --out DIR
 Builds the pinned downloads the socialweb-computer-k8s web app serves at /downloads/<sha256>/<name>
 (the socialweb-computer-k8s-downloads asset of internal/versions/versions.json) into DIR:
   socialweb-meshd-x86_64, socialweb-meshd-aarch64       rust/build.sh (static musl)
-  socialweb-credential-<os>-<arch>                      cmd/socialweb-credential, for linux and darwin, amd64 and arm64
 each with a sha256sum-format <name>.sha256 sidecar. Every file is rebuilt from this checkout.
 EOF
   exit 2
@@ -35,17 +34,6 @@ out="$(cd "$out" && pwd -P)"
 pids=()
 MESHD_DIST="$out" "$root/rust/build.sh" x86_64 aarch64 >&2 &
 pids+=("$!")
-for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-  (
-    name="socialweb-credential-${target%/*}-${target#*/}"
-    cd "$root"
-    CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -trimpath -buildvcs=false \
-      -ldflags='-s -w -buildid=' -o "$out/$name" ./cmd/socialweb-credential
-    chmod 0755 "$out/$name"
-    cd "$out" && sha256sum "$name" >"$name.sha256"
-  ) &
-  pids+=("$!")
-done
 for _ in "${pids[@]}"; do
   if ! wait -n; then
     for p in "${pids[@]}"; do

@@ -17,7 +17,6 @@ import (
 
 type legacyKeys struct {
 	StateDir string
-	MintDir  string
 	Ports    *portallocator.Allocator
 	Networks *subnetallocator.Allocator
 	Log      *slog.Logger
@@ -86,7 +85,6 @@ func migrateOne(d legacyKeys, name, key string) error {
 	for _, move := range []struct{ parent, from, to string }{
 		{d.StateDir, instance, instanceKey},
 		{d.StateDir, name, key},
-		{d.MintDir, name, key},
 	} {
 		if move.parent == "" || move.from == move.to {
 			continue

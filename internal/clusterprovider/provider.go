@@ -36,8 +36,6 @@ const DefaultInterval = 2 * time.Second
 
 var ErrNoDecider = errors.New("clusterprovider: Decider is required: the phase machine is internal/materialiser's, not this package's")
 
-var ErrNoMintConfig = errors.New("clusterprovider: no mint credential for this cluster; refusing rather than falling back to a wider one")
-
 type Clusters interface {
 	Refs(ctx context.Context) ([]Ref, error)
 
@@ -114,10 +112,6 @@ type Options struct {
 
 	GrantPath string
 
-	MintDir string
-
-	TokenTimeout time.Duration
-
 	Probe func(ctx context.Context, url string) (int, bool)
 
 	Interval time.Duration
@@ -130,8 +124,7 @@ type Options struct {
 type Provider struct {
 	opts Options
 
-	mu    sync.Mutex
-	mints map[string]*rest.Config
+	mu sync.Mutex
 
 	readySatisfied map[string]bool
 
@@ -239,53 +232,14 @@ func New(opts Options) (*Provider, error) {
 	if opts.Log == nil {
 		opts.Log = slog.Default()
 	}
-	if opts.TokenTimeout == 0 {
-		opts.TokenTimeout = DefaultTokenTimeout
-	}
-	tenant := 0
-	for _, set := range []bool{opts.Tenant != nil, opts.GrantPath != "", opts.MintDir != ""} {
-		if set {
-			tenant++
-		}
-	}
-	if tenant != 0 && tenant != 3 {
+	if (opts.Tenant != nil) != (opts.GrantPath != "") {
 		return nil, ErrNoBootstrap
 	}
-	p := &Provider{opts: opts, mints: map[string]*rest.Config{}, readySatisfied: map[string]bool{}}
-	if tenant == 3 && opts.OnReady == nil {
+	p := &Provider{opts: opts, readySatisfied: map[string]bool{}}
+	if opts.Tenant != nil && opts.OnReady == nil {
 		p.opts.OnReady = p.Bootstrap
 	}
 	return p, nil
-}
-
-func (p *Provider) MintConfig(cluster string) (*rest.Config, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	cfg, ok := p.mints[cluster]
-	if !ok || cfg == nil {
-		return nil, fmt.Errorf("%w: %q", ErrNoMintConfig, cluster)
-	}
-	return rest.CopyConfig(cfg), nil
-}
-
-func (p *Provider) SetMintConfig(cluster string, cfg *rest.Config) error {
-	if cluster == "" || cfg == nil {
-		return errors.New("clusterprovider: SetMintConfig needs a cluster name and a config")
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.mints[cluster] = rest.CopyConfig(cfg)
-	return nil
-}
-
-func (p *Provider) MintClusters() []string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	out := make([]string, 0, len(p.mints))
-	for name := range p.mints {
-		out = append(out, name)
-	}
-	return out
 }
 
 type Established struct {

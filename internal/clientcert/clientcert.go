@@ -69,7 +69,7 @@ func (i *Issuer) Grant(ctx context.Context, in kcpclient.GrantInput) (string, er
 		if in.TTL != 0 {
 			return "", errors.New("clientcert: a lifetime and no expiry are exclusive")
 		}
-	} else if ttl < gateway.MinDeviceKeyTTL || ttl > gateway.MaxClientCertTTL {
+	} else if ttl < gateway.MinClientCertTTL || ttl > gateway.MaxClientCertTTL {
 		return "", errors.New("clientcert: the lifetime is outside the allowed window")
 	}
 	dir, err := DataDir(i.StateDir, string(in.Caller), in.Cluster)

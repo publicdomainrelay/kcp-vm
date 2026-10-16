@@ -282,11 +282,6 @@
       "description": "Deploy directory (manifests, policies)",
       "env": "SOCIALWEB_DEPLOY_DIR"
     },
-    "device-key": {
-      "type": "string",
-      "description": "Device key handed to the credential exec plugin",
-      "env": "SOCIALWEB_DEVICE_KEY"
-    },
     "gateway-addr": {
       "type": "string",
       "description": "Gateway listen address",
@@ -302,36 +297,6 @@
       "description": "Directory of the cluster data dirs the gateway reads to issue and check kubeconfig client certificates",
       "env": "SOCIALWEB_GATEWAY_CLUSTER_STATE_DIR"
     },
-    "gateway-device-key-audience": {
-      "type": "string",
-      "description": "Audience of device-key tokens",
-      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE"
-    },
-    "gateway-device-key-exec-command": {
-      "type": "string",
-      "description": "Credential exec plugin command",
-      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_COMMAND"
-    },
-    "gateway-device-key-exec-env-name": {
-      "type": "string",
-      "description": "Env name the exec plugin reads the device key from",
-      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME"
-    },
-    "gateway-device-key-max-ttl": {
-      "type": "string",
-      "description": "Upper bound of a device-key credential TTL",
-      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_MAX_TTL"
-    },
-    "gateway-device-key-ttl": {
-      "type": "string",
-      "description": "Device-key credential TTL",
-      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_TTL"
-    },
-    "gateway-devkey-registry": {
-      "type": "string",
-      "description": "Workspace of the device-key registry",
-      "env": "SOCIALWEB_GATEWAY_DEVKEY_REGISTRY"
-    },
     "gateway-kcp-public-host": {
       "type": "string",
       "description": "Public host name of kcp",
@@ -342,20 +307,10 @@
       "description": "PEM file of the CA the kubeconfig carries for its public server (unset when the server has a public certificate)",
       "env": "SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE"
     },
-    "gateway-mint-kubeconfigs": {
-      "type": "string",
-      "description": "Directory of minted kubeconfigs",
-      "env": "SOCIALWEB_GATEWAY_MINT_KUBECONFIGS"
-    },
     "gateway-plc-url": {
       "type": "string",
       "description": "PLC directory URL",
       "env": "SOCIALWEB_GATEWAY_PLC_URL"
-    },
-    "gateway-public-mint-url": {
-      "type": "string",
-      "description": "Public URL of the credential mint",
-      "env": "SOCIALWEB_GATEWAY_PUBLIC_MINT_URL"
     },
     "kcp-audit-log": {
       "type": "string",

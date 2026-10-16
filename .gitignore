@@ -21,7 +21,6 @@ deno.lock
 
 /socialweb-computer-kcp
 /socialweb-gateway
-/socialweb-credential
 *.test
 /socialweb-nodeimage
 /kata-containers/

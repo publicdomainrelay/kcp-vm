@@ -24,7 +24,7 @@ const HELPER = new TextEncoder().encode("credential helper, no sidecar");
 
 Deno.test("the door serves a pinned download's exact bytes at /downloads/<sha256>/<name>", async () => {
   const dir = await shipped(
-    { "socialweb-meshd-x86_64": X86, "socialweb-meshd-aarch64": ARM, "socialweb-credential-linux-amd64": HELPER },
+    { "socialweb-meshd-x86_64": X86, "socialweb-meshd-aarch64": ARM, "socialweb-fixture-linux-amd64": HELPER },
     (name, sha) => name.startsWith("socialweb-meshd") ? `${sha}  ${name}\n` : null,
   );
   try {
@@ -45,7 +45,7 @@ Deno.test("the door serves a pinned download's exact bytes at /downloads/<sha256
 
     assertEquals((await app.request(`/downloads/${pin}/socialweb-meshd-aarch64`)).status, 404);
     assertEquals((await app.request(`/downloads/${"0".repeat(64)}/socialweb-meshd-x86_64`)).status, 404);
-    assertEquals((await app.request(`/downloads/${await sha256Hex(HELPER)}/socialweb-credential-linux-amd64`)).status, 404);
+    assertEquals((await app.request(`/downloads/${await sha256Hex(HELPER)}/socialweb-fixture-linux-amd64`)).status, 404);
     assertEquals((await app.request(`/downloads/${pin.toUpperCase()}/socialweb-meshd-x86_64`)).status, 404);
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -80,7 +80,7 @@ Deno.test("the meshd pin is the shipped pair's sha256 at the door's public origi
   const both = [
     { name: "socialweb-meshd-x86_64", sha256: "1".repeat(64), size: 1 },
     { name: "socialweb-meshd-aarch64", sha256: "2".repeat(64), size: 1 },
-    { name: "socialweb-credential-linux-amd64", sha256: "3".repeat(64), size: 1 },
+    { name: "socialweb-fixture-linux-amd64", sha256: "3".repeat(64), size: 1 },
   ];
   assertEquals(meshdPinOf(both, "https://socialweb.computer"), {
     downloadBase: "https://socialweb.computer",

@@ -198,19 +198,6 @@ func planRootSecrets(ctx context.Context, c *openbao.Client, cfg Config) []sourc
 				continue
 			}
 			out = append(out, sourcedSecret{Path: s.Path, Data: map[string]any{"ca.crt": strings.TrimSpace(pem)}})
-		case vaultlayout.ClassDeviceKeyMaterial:
-			if cfg.DeviceKeyAudience == "" {
-				out = append(out, sourcedSecret{Path: s.Path, Reason: envDeviceKeyAudience + " is not set"})
-				continue
-			}
-			data := map[string]any{"audience": cfg.DeviceKeyAudience}
-			if cfg.DevkeyRegistry != "" {
-				data["registry"] = cfg.DevkeyRegistry
-			}
-			if cfg.DeviceKeyExecEnvName != "" {
-				data["exec-env-name"] = cfg.DeviceKeyExecEnvName
-			}
-			out = append(out, sourcedSecret{Path: s.Path, Data: data})
 		case vaultlayout.ClassContainerTLS:
 			if cfg.TLSCert == "" || cfg.TLSKey == "" {
 				out = append(out, sourcedSecret{Path: s.Path, Reason: "the TLS front names no certificate"})

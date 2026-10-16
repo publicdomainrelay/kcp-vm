@@ -159,6 +159,21 @@ func TestKubeconfigClientCertificateWithoutCredentialHelper(t *testing.T) {
 		t.Fatalf("client-go Nodes().List with the certificate kubeconfig: %v", err)
 	}
 
+	applyBody := map[string]any{
+		"cluster": "tenant", "namespace": "default", "name": "it-owner-credential", "fieldManager": "kubectl", "force": false,
+		"manifest": map[string]any{
+			"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]any{"name": "it-owner-credential", "namespace": "default"},
+			"data":     map[string]any{"from": "kubectlApplyServerSide"},
+		},
+	}
+	if out, code, err := postJSON(gw, "http://"+addr+"/xrpc/"+k8sNSID+"kubectlApplyServerSide", acct.TokenFor(t, k8sNSID+"kubectlApplyServerSide"), applyBody); err != nil || code != http.StatusOK {
+		t.Fatalf("kubectlApplyServerSide: %d %v %v", code, out, err)
+	}
+	if cm, err := tn.Kube.CoreV1().ConfigMaps("default").Get(ctx, "it-owner-credential", metav1.GetOptions{}); err != nil || cm.Data["from"] != "kubectlApplyServerSide" {
+		t.Fatalf("the ConfigMap applied through the gateway is not in the tenant cluster: %v %v", cm, err)
+	}
+
 	revoked := time.Now()
 	if code, _, raw := post("revokeIdentity", acct.Token(t, "revokeIdentity"), `{"name":"tenant"}`); code != http.StatusOK {
 		t.Fatalf("revokeIdentity: %d %.200s", code, raw)

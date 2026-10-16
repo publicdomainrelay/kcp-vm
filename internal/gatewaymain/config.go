@@ -17,36 +17,21 @@ const (
 	envAudiences       = "SOCIALWEB_GATEWAY_AUDIENCES"
 	envKCPHost         = "SOCIALWEB_KCP_HOST"
 	envKCPKubeconfig   = "SOCIALWEB_KCP_KUBECONFIG"
-	envMintTTL         = "SOCIALWEB_GATEWAY_MINT_TTL"
-	envMintFailureHold = "SOCIALWEB_GATEWAY_MINT_FAILURE_HOLD"
 	envDirectoryTTL    = "SOCIALWEB_GATEWAY_DIRECTORY_CACHE_TTL"
 	envShutdownTimeout = "SOCIALWEB_GATEWAY_SHUTDOWN_TIMEOUT"
 	envLogLevel        = "SOCIALWEB_GATEWAY_LOG_LEVEL"
 
 	envPLCURL = "SOCIALWEB_GATEWAY_PLC_URL"
 
-	envMintKubeconfigs = "SOCIALWEB_GATEWAY_MINT_KUBECONFIGS"
-
-	envDevkeyRegistry = "SOCIALWEB_GATEWAY_DEVKEY_REGISTRY"
-
-	envDeviceKeyAudience    = "SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE"
-	envDeviceKeyTTL         = "SOCIALWEB_GATEWAY_DEVICE_KEY_TTL"
-	envDeviceKeyMaxTTL      = "SOCIALWEB_GATEWAY_DEVICE_KEY_MAX_TTL"
-	envDeviceKeyExecCommand = "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_COMMAND"
-	envDeviceKeyExecEnvName = "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME"
-
 	envKCPPublicHost   = "SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST"
 	envKCPPublicCAFile = "SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE"
 	envClusterStateDir = "SOCIALWEB_GATEWAY_CLUSTER_STATE_DIR"
-	envPublicMintURL   = "SOCIALWEB_GATEWAY_PUBLIC_MINT_URL"
 
 	envNodeClaimAgent = "SOCIALWEB_GATEWAY_NODECLAIM_AGENT"
 	envNodeClaimQuota = "SOCIALWEB_GATEWAY_NODECLAIM_QUOTA"
 
 	envHostProcessWorkspace = "SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE"
 )
-
-const DevkeyRegistryNamespace = "default"
 
 const DefaultDirectoryCacheTTL = 60 * time.Second
 
@@ -61,34 +46,17 @@ type Config struct {
 
 	KCPKubeconfig string
 
-	MintTTL         time.Duration
-	MintFailureHold time.Duration
-
 	DirectoryCacheTTL time.Duration
 
 	PLCURL string
 
 	ShutdownTimeout time.Duration
 
-	MintKubeconfigs string
-
-	DevkeyRegistry string
-
-	DeviceKeyAudience string
-
-	DeviceKeyTTL    time.Duration
-	DeviceKeyMaxTTL time.Duration
-
-	DeviceKeyExecCommand string
-	DeviceKeyExecEnvName string
-
 	KCPPublicHost string
 
 	KCPPublicCAFile string
 
 	ClusterStateDir string
-
-	PublicMintURL string
 
 	NodeClaimAgent *kcpclient.ServiceAccountRef
 
@@ -101,19 +69,13 @@ type Config struct {
 
 func load(get func(string) string) (Config, error) {
 	cfg := Config{
-		Addr:            strings.TrimSpace(get(envAddr)),
-		KCPHost:         strings.TrimSpace(get(envKCPHost)),
-		KCPKubeconfig:   strings.TrimSpace(get(envKCPKubeconfig)),
-		PLCURL:          strings.TrimSpace(get(envPLCURL)),
-		MintKubeconfigs: strings.TrimSpace(get(envMintKubeconfigs)),
-		DevkeyRegistry:  strings.TrimSpace(get(envDevkeyRegistry)),
+		Addr:          strings.TrimSpace(get(envAddr)),
+		KCPHost:       strings.TrimSpace(get(envKCPHost)),
+		KCPKubeconfig: strings.TrimSpace(get(envKCPKubeconfig)),
+		PLCURL:        strings.TrimSpace(get(envPLCURL)),
 
 		KCPPublicCAFile: strings.TrimSpace(get(envKCPPublicCAFile)),
 		ClusterStateDir: strings.TrimSpace(get(envClusterStateDir)),
-
-		DeviceKeyAudience:    strings.TrimSpace(get(envDeviceKeyAudience)),
-		DeviceKeyExecCommand: strings.TrimSpace(get(envDeviceKeyExecCommand)),
-		DeviceKeyExecEnvName: strings.TrimSpace(get(envDeviceKeyExecEnvName)),
 
 		DirectoryCacheTTL: DefaultDirectoryCacheTTL,
 		ShutdownTimeout:   DefaultShutdownTimeout,
@@ -128,12 +90,7 @@ func load(get func(string) string) (Config, error) {
 		{envKCPHost, cfg.KCPHost},
 		{envKCPKubeconfig, cfg.KCPKubeconfig},
 		{envPLCURL, cfg.PLCURL},
-		{envMintKubeconfigs, cfg.MintKubeconfigs},
-		{envDevkeyRegistry, cfg.DevkeyRegistry},
 		{envClusterStateDir, cfg.ClusterStateDir},
-		{envDeviceKeyAudience, cfg.DeviceKeyAudience},
-		{envDeviceKeyExecCommand, cfg.DeviceKeyExecCommand},
-		{envDeviceKeyExecEnvName, cfg.DeviceKeyExecEnvName},
 	} {
 		if req.value == "" {
 			return Config{}, fmt.Errorf("%s is not set", req.name)
@@ -150,19 +107,7 @@ func load(get func(string) string) (Config, error) {
 	}
 
 	var err error
-	if cfg.DeviceKeyTTL, err = requiredDuration(get, envDeviceKeyTTL); err != nil {
-		return Config{}, err
-	}
-	if cfg.DeviceKeyMaxTTL, err = optionalDuration(get, envDeviceKeyMaxTTL); err != nil {
-		return Config{}, err
-	}
-	if cfg.DeviceKeyMaxTTL == 0 {
-		cfg.DeviceKeyMaxTTL = cfg.DeviceKeyTTL
-	}
 	if cfg.KCPPublicHost, err = optionalHTTPSURL(get, envKCPPublicHost); err != nil {
-		return Config{}, err
-	}
-	if cfg.PublicMintURL, err = optionalHTTPSURL(get, envPublicMintURL); err != nil {
 		return Config{}, err
 	}
 	if cfg.NodeClaimAgent, err = kcpclient.ParseServiceAccountRef(get(envNodeClaimAgent)); err != nil {
@@ -173,12 +118,6 @@ func load(get func(string) string) (Config, error) {
 		if cfg.NodeClaimQuota, err = strconv.ParseInt(v, 10, 64); err != nil {
 			return Config{}, fmt.Errorf("%s: %w", envNodeClaimQuota, err)
 		}
-	}
-	if cfg.MintTTL, err = optionalDuration(get, envMintTTL); err != nil {
-		return Config{}, err
-	}
-	if cfg.MintFailureHold, err = optionalDuration(get, envMintFailureHold); err != nil {
-		return Config{}, err
 	}
 	if cfg.DirectoryCacheTTL, err = duration(get, envDirectoryTTL, DefaultDirectoryCacheTTL); err != nil {
 		return Config{}, err
@@ -234,14 +173,6 @@ func duration(get func(string) string, name string, fallback time.Duration) (tim
 	return d, nil
 }
 
-func requiredDuration(get func(string) string, name string) (time.Duration, error) {
-	if strings.TrimSpace(get(name)) == "" {
-		return 0, fmt.Errorf("%s is not set: how long a device credential lives is a policy "+
-			"decision, not a default, so this gateway will not choose one", name)
-	}
-	return duration(get, name, 0)
-}
-
 func optionalHTTPSURL(get func(string) string, name string) (string, error) {
 	raw := strings.TrimSpace(get(name))
 	if raw == "" {
@@ -253,26 +184,11 @@ func optionalHTTPSURL(get func(string) string, name string) (string, error) {
 	}
 	if u.Scheme != "https" || u.Host == "" {
 		return "", fmt.Errorf("%s: %q must be an absolute https URL. This value is rendered "+
-			"into a kubeconfig a user holds, and client-go silently drops the exec credential "+
-			"plugin for a server that is not https, so an http one would hand out a document "+
+			"into a kubeconfig a user holds, and client-go silently drops the user identity "+
+			"block for a server that is not https, so an http one would hand out a document "+
 			"that authenticates nothing", name, raw)
 	}
 	return strings.TrimSuffix(raw, "/"), nil
-}
-
-func optionalDuration(get func(string) string, name string) (time.Duration, error) {
-	raw := strings.TrimSpace(get(name))
-	if raw == "" {
-		return 0, nil
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %q is not a duration", name, raw)
-	}
-	if d <= 0 {
-		return 0, fmt.Errorf("%s: %q must be positive", name, raw)
-	}
-	return d, nil
 }
 
 func level(raw string) (slog.Level, error) {

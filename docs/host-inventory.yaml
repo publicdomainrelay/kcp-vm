@@ -381,13 +381,6 @@ entries:
     why: a Windows OS component read by internal/hostos proc_windows.go; compiled only for GOOS=windows
     from:
       - "internal/hostos/proc_windows.go"
-  - name: socialweb-credential
-    kind: executable
-    fate: download-asset
-    owner: 0006 M1-ASSETS
-    why: four cross-builds the door serves as pinned downloads; the gateway itself never runs it
-    from:
-      - "versions.json asset socialweb-computer-k8s-downloads (scripts/build-web-app-downloads.sh)"
   - name: socialweb-meshd
     kind: executable
     fate: download-asset

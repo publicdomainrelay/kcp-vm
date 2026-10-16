@@ -23,7 +23,6 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/atprotoauth"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/gateway"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/mint"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
 )
 
@@ -180,29 +179,11 @@ func (f *fakeRevoker) FanOut(_ context.Context, did string) ([]revocation.Cluste
 	return f.clusters, nil
 }
 
-type fakeMintStore struct {
-	binding mint.Binding
-	issued  int
-}
-
-func (f *fakeMintStore) Resolve(_ context.Context, c mint.DeviceCredential) (mint.Binding, error) {
-	if c.Token == "" {
-		return mint.Binding{}, mint.ErrBindingUnknown
-	}
-	return f.binding, nil
-}
-
-func (f *fakeMintStore) Issue(_ context.Context, _ mint.Binding, ttl time.Duration) (string, time.Time, error) {
-	f.issued++
-	return "sa-token", time.Now().Add(ttl), nil
-}
-
 type rig struct {
 	t     *testing.T
 	srv   *Server
 	h     http.Handler
 	store *fakeStore
-	mints *fakeMintStore
 	rev   *fakeRevoker
 	priv  atcrypto.PrivateKey
 }
@@ -220,22 +201,17 @@ func newRig(t *testing.T) *rig {
 
 	store := newStore()
 	rev := &fakeRevoker{}
-	ms := &fakeMintStore{binding: mint.Binding{
-		DID: callerDID, Cluster: "c", SA: "sa", SAExists: true, Instance: "1",
-	}}
 	srv, err := New(Options{
 		Gateway: &gateway.Server{
 			Deny: granted(), Store: store, Revoker: rev,
-			MaxDeviceKeyTTL: time.Hour,
 		},
-		Mint:      mint.New(ms, mint.Options{}),
 		Audiences: audiences(),
 		Directory: &fakeDirectory{keys: map[string]atcrypto.PublicKey{callerDID: pub}},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return &rig{t: t, srv: srv, h: srv.Handler(), store: store, mints: ms, rev: rev, priv: priv}
+	return &rig{t: t, srv: srv, h: srv.Handler(), store: store, rev: rev, priv: priv}
 }
 
 func (r *rig) token(aud string, ttl time.Duration, lxm *syntax.NSID) string {
@@ -496,85 +472,6 @@ func TestAnUnmappedErrorBecomesAGenericFiveHundred(t *testing.T) {
 	}
 }
 
-func TestTheMintIsNotUnderXrpc(t *testing.T) {
-	r := newRig(t)
-
-	if strings.HasPrefix(MintPath, XRPCPrefix) {
-		t.Fatalf("%s must not be under %s", MintPath, XRPCPrefix)
-	}
-	if got := r.do(http.MethodPost, XRPCPrefix+NSIDPrefix+"credential", "x").Code; got != 404 {
-		t.Fatalf("an XRPC-shaped path reached the mint: status = %d, want 404", got)
-	}
-	if got := r.do(http.MethodPost, MintPath, "").Code; got != 401 {
-		t.Fatalf("the mint without a credential: status = %d, want 401", got)
-	}
-
-	r.mints.binding = mint.Binding{DID: callerDID, Cluster: "c", SA: "sa", SAExists: true, Instance: "1"}
-	w := r.do(http.MethodPost, MintPath, "device-credential")
-	if w.Code != 200 {
-		t.Fatalf("the mint: status = %d, want 200: %s", w.Code, w.Body.String())
-	}
-	got := decode(t, w)
-	if got["apiVersion"] != mint.APIVersion || got["kind"] != mint.Kind {
-		t.Fatalf("the mint must return the ExecCredential VERBATIM: %v", got)
-	}
-	status, _ := got["status"].(map[string]any)
-	if status["expirationTimestamp"] == nil || status["expirationTimestamp"] == "" {
-		t.Fatalf("the ExecCredential carries no expirationTimestamp, so client-go never renews: %v", got)
-	}
-
-	if r.store.wakes != 0 {
-		t.Fatalf("the mint woke the control plane %d time(s)", r.store.wakes)
-	}
-	if len(r.store.callers) != 0 {
-		t.Fatalf("the mint reached a cluster verb: %v", r.store.callers)
-	}
-}
-
-func TestTheMintDoesNotRequireALxm(t *testing.T) {
-	r := newRig(t)
-	w := r.do(http.MethodPost, MintPath, r.token(audiences()[0], atprotoauth.MaxServiceAuthLifetime, nil))
-	if w.Code != 200 {
-		t.Fatalf("status = %d, want 200: the mint has no lxm to check: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestTheMintRefusesWhatTheStoreRefuses(t *testing.T) {
-	r := newRig(t)
-
-	r.mints.binding.SAExists = false
-	w := r.do(http.MethodPost, MintPath, "device-credential")
-	if w.Code != 403 {
-		t.Fatalf("a deleted ServiceAccount: status = %d, want 403 (the revocation signal): %s", w.Code, w.Body.String())
-	}
-	if got := decode(t, w)["error"]; got != "IdentityRevoked" {
-		t.Fatalf("error = %v, want IdentityRevoked", got)
-	}
-
-	r.mints.binding.SAExists = true
-	r.mints.binding.Instance = ""
-	w = r.do(http.MethodPost, MintPath, "another-device-credential")
-	if w.Code != 401 {
-		t.Fatalf("an unbound credential: status = %d, want 401: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestTheMintHoldsAFailingCredential(t *testing.T) {
-	r := newRig(t)
-	r.mints.binding.SAExists = false
-
-	if w := r.do(http.MethodPost, MintPath, "device-credential"); w.Code != 403 {
-		t.Fatalf("first call: status = %d, want 403", w.Code)
-	}
-	w := r.do(http.MethodPost, MintPath, "device-credential")
-	if w.Code != 429 {
-		t.Fatalf("held call: status = %d, want 429: %s", w.Code, w.Body.String())
-	}
-	if w.Header().Get("Retry-After") == "" {
-		t.Fatal("a hold without Retry-After is a bare refusal")
-	}
-}
-
 func TestEveryProcedureRefusesTheWrongMethod(t *testing.T) {
 	r := newRig(t)
 	tok := r.token(audiences()[0], atprotoauth.MaxServiceAuthLifetime, nsid(t, nsidGetKubeconfig))
@@ -600,14 +497,12 @@ func TestConstructionRefusesAnUncheckableSurface(t *testing.T) {
 	base := func() Options {
 		return Options{
 			Gateway:   &gateway.Server{Deny: granted(), Store: newStore()},
-			Mint:      mint.New(&fakeMintStore{}, mint.Options{}),
 			Audiences: audiences(),
 			Directory: &fakeDirectory{keys: map[string]atcrypto.PublicKey{}},
 		}
 	}
 	for name, mutate := range map[string]func(*Options){
 		"no gateway":   func(o *Options) { o.Gateway = nil },
-		"no mint":      func(o *Options) { o.Mint = nil },
 		"no audiences": func(o *Options) { o.Audiences = nil },
 		"no directory": func(o *Options) { o.Directory = nil },
 	} {

@@ -52,7 +52,7 @@ type GrantInput struct {
 	NoExpiry bool
 }
 
-type DeviceKeyGranter interface {
+type KubeconfigGranter interface {
 	Grant(ctx context.Context, in GrantInput) (string, error)
 }
 
@@ -61,7 +61,7 @@ type Options struct {
 
 	PublicHost string
 
-	DeviceKeys DeviceKeyGranter
+	Kubeconfigs KubeconfigGranter
 
 	NodeClaimAgent *ServiceAccountRef
 
@@ -75,13 +75,13 @@ type Options struct {
 }
 
 type Client struct {
-	cfg        *rest.Config
-	http       *http.Client
-	codecs     runtime.NegotiatedSerializer
-	host       string
-	publicHost string
-	deviceKeys DeviceKeyGranter
-	agent      *agent
+	cfg         *rest.Config
+	http        *http.Client
+	codecs      runtime.NegotiatedSerializer
+	host        string
+	publicHost  string
+	kubeconfigs KubeconfigGranter
+	agent       *agent
 
 	hostProcessWorkspace string
 
@@ -91,9 +91,9 @@ type Client struct {
 	certWatches map[string]*certWatch
 }
 
-var ErrNoDeviceKey = errors.New(
-	"kcpclient: no device-key granter: getKubeconfig cannot hand out a kubeconfig whose " +
-		"exec.env carries a key bound to nothing, so it hands out nothing")
+var ErrNoKubeconfigGranter = errors.New(
+	"kcpclient: no kubeconfig granter: getKubeconfig has no issuer for the client certificate it" +
+		" hands back, so it hands out nothing")
 
 const ShardAdminContext = "system:admin"
 
@@ -139,8 +139,8 @@ func New(opts Options) (*Client, error) {
 	codecs := serializer.NewCodecFactory(scheme).WithoutConversion()
 	c := &Client{
 		cfg: cfg, http: httpClient, codecs: codecs, host: cfg.Host,
-		publicHost: strings.TrimSuffix(opts.PublicHost, "/"),
-		deviceKeys: opts.DeviceKeys,
+		publicHost:  strings.TrimSuffix(opts.PublicHost, "/"),
+		kubeconfigs: opts.Kubeconfigs,
 
 		hostProcessWorkspace: opts.HostProcessWorkspace,
 		nodeClaimQuota:       opts.NodeClaimQuota,
@@ -546,14 +546,14 @@ func (c *Client) Kubeconfig(ctx context.Context, caller gateway.Caller, name str
 	if _, err := c.homePath(caller, name); err != nil {
 		return "", err
 	}
-	if c.deviceKeys == nil {
-		return "", ErrNoDeviceKey
+	if c.kubeconfigs == nil {
+		return "", ErrNoKubeconfigGranter
 	}
 	host := c.host
 	if c.publicHost != "" {
 		host = c.publicHost
 	}
-	return c.deviceKeys.Grant(ctx, GrantInput{
+	return c.kubeconfigs.Grant(ctx, GrantInput{
 		Caller:   caller,
 		Cluster:  name,
 		Server:   host + "/clusters/" + MountPath(string(caller), name),

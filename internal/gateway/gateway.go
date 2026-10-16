@@ -11,7 +11,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
 )
 
-const MinDeviceKeyTTL = 60 * time.Second
+const MinClientCertTTL = 60 * time.Second
 
 const (
 	DefaultClientCertTTL = 8 * time.Hour
@@ -138,8 +138,6 @@ type Server struct {
 
 	Feed Feed
 
-	MaxDeviceKeyTTL time.Duration
-
 	Tenant TenantAPI
 }
 
@@ -215,7 +213,7 @@ func clientCertTTL(seconds *int64) (time.Duration, error) {
 	if seconds == nil {
 		return DefaultClientCertTTL, nil
 	}
-	if *seconds < int64(MinDeviceKeyTTL/time.Second) || *seconds > int64(MaxClientCertTTL/time.Second) {
+	if *seconds < int64(MinClientCertTTL/time.Second) || *seconds > int64(MaxClientCertTTL/time.Second) {
 		return 0, ErrInvalidRequest
 	}
 	return time.Duration(*seconds) * time.Second, nil
