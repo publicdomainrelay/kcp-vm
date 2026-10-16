@@ -122,7 +122,7 @@ acceptance:
         In a market network with two bidders, one killed mid-contract: the requester re-requests the
         node, the other bidder wins it, it joins, the job still passes, and the dead bidder's ComputeVM
         is released when it comes back.
-      status: todo
+      status: done
       evidence: []
 decided:
   - "Decided by Claude 2026-10-12 from the R0 recommendations, under the user's standing rule to decide in line with earlier answers; the user may veto any line."
