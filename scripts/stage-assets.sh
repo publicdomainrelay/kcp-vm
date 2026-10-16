@@ -220,6 +220,22 @@ stage_go() {
 
 deb_arch() { case "$1" in linux/amd64) echo amd64 ;; linux/arm64) echo arm64 ;; *) die "no deb arch for $1" ;; esac; }
 
+fetch_index() {
+  local dir="$1" name="$2" sum="$3" pf
+  if [ -f "$cache/$sum" ] && [ "$(sha_of "$cache/$sum")" = "$sum" ]; then
+    say "index $name: cached by sha256 $sum"
+    echo "$cache/$sum"
+    return
+  fi
+  say "index $name: fetching by-hash ${dir}by-hash/SHA256/$sum"
+  if pf="$(fetch_pinned "${dir}by-hash/SHA256/$sum" "$sum")"; then
+    echo "$pf"
+    return
+  fi
+  say "index $name: by-hash path unavailable, fetching ${dir}$name"
+  fetch_pinned "${dir}$name" "$sum"
+}
+
 repo_index() {
   local asset="$1" repo="$2" plat="$3" x="$4" arch base comp fpr ring suite idx
   arch="$(deb_arch "$plat")"
@@ -237,7 +253,7 @@ repo_index() {
         idx="$comp/binary-$arch/Packages.$ext"
         sum="$(awk -v f="$idx" '/^SHA256:/{s=1;next} /^[^ ]/{s=0} s && $3==f {print $1}' "$x/$suite.Release" | head -1)"
         [ -n "$sum" ] || continue
-        if pf="$(fetch_pinned "${base}dists/$suite/$idx" "$sum")"; then
+        if pf="$(fetch_index "${base}dists/$suite/$comp/binary-$arch/" "${idx##*/}" "$sum")"; then
           case "$ext" in xz) xz -dc "$pf" >>"$x/$repo.packages" ;; gz) gzip -dc "$pf" >>"$x/$repo.packages" ;; esac
           echo >>"$x/$repo.packages"
           found=1
