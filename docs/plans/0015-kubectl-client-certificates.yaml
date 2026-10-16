@@ -890,7 +890,7 @@ items:
       - Any key text in the journal.
     done_when: "plain kubectl works on prod through kcp.socialweb.computer with the getKubeconfig kubeconfig, and revoke ends it within 2 s."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M4-INTEGRATION-TEST
     milestone: M4

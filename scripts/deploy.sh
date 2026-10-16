@@ -188,7 +188,6 @@ ${KCP_ORIGIN} {
   @clientcert expression {tls_client_certificate_der_base64} != ""
   handle @clientcert {
     reverse_proxy https://127.0.0.1:${CERT_FRONT_PORT} {
-      header_up -X-Socialweb-Client-Certificate
       header_up X-Socialweb-Client-Certificate {tls_client_certificate_der_base64}
       flush_interval -1
       transport http {
