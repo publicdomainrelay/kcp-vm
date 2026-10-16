@@ -413,12 +413,19 @@ func (h *UnitsHost) DeleteStore(ctx context.Context, key string) error {
 	return nil
 }
 
-func (h *UnitsHost) StoreGone(ctx context.Context, key string) (bool, error) {
-	_, err := h.pgs.Get(ctx, StoreName(key), metav1.GetOptions{})
+func (h *UnitsHost) StoreRemoval(ctx context.Context, key string) (bool, string, error) {
+	u, err := h.pgs.Get(ctx, StoreName(key), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return true, nil
+		return true, "", nil
 	}
-	return false, err
+	if err != nil {
+		return false, "", err
+	}
+	o, err := decodeObj[v1alpha1.Postgres](u)
+	if err != nil {
+		return false, "", err
+	}
+	return false, fmt.Sprintf("the Postgres object %s is %s: %s", StoreName(key), o.Status.Phase, o.Status.Message), nil
 }
 
 func (h *UnitsHost) PurgeData(key string) error {

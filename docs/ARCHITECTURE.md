@@ -3905,6 +3905,31 @@ refutation.
   unknown authority" (the new vault holds no revoked serial, so the CA path alone refused it) while a
   kubeconfig of the new creation authenticated; a bundle copied back from the deleted creation made the
   restart fail before k3s with the bind refusal.
+- **A deleted cluster completes after a core restart, and a failing delete step backs off, on
+  2026-10-15 (plan 0015 M3-PROD-READING).** On prod, `deleteCluster` of clusters created before the last
+  gateway upgrade was accepted and never finished: the Cluster stayed, its Postgres and OpenBao units stayed
+  active, and the pass repeated "removed the ClusterLinks" and "deleted the Postgres object" every pass
+  forever. Cause: the HostProcess supervisor stops the unit of a deleted HostProcess in its orphan sweep
+  (`internal/hostprocess/supervisor.go` `Pass`), and the sweep only stops units this supervisor placed. A
+  unit adopted after a core restart (same InvocationID, `Identify` false) was never marked placed, so the
+  Postgres child HostProcess and the vault HostProcess, which carry no finalizer and vanish at once on
+  delete, left their units running; the Postgres controller then waited for the server to stop forever and
+  the Cluster finalizer never cleared. Now `markAdopted` marks every active unit of a supervisor-placed
+  HostProcess as placed on each reconcile, a failed stop is logged, and the first pass of a new core still
+  stops every unit that has no object (which also recovers a gateway already stuck). The deleting pass
+  moved to `internal/providermain/teardown.go`: it logs the old "deleted" lines only when the step
+  completed, reports the Postgres object's phase and message while the store is still there, retries
+  freely for 6 passes, then backs off from 4 s doubling to 5 m, and writes Cluster condition
+  `TeardownBlocked` (reason `TeardownStepFailing`) with the step, the attempt count, the next attempt time
+  and the error. Readings (market network `cd1`, one gateway, test-0001, 2026-10-15): with the build before
+  the fix, the bootstrap Cluster `tenant` Ready, the gateway core killed and restarted (all 10 member and
+  Postgres units adopted with the same pids), `kubectl delete cluster tenant`: after 45 s the Postgres and
+  OpenBao units were still active, `tenant` was still listed, and the journal showed the two lines every
+  2 s. The fixed binary then replaced the core: its first pass logged "the HostProcess of a placed unit is
+  gone; stopping the unit" for both, all units went inactive and the data dirs were removed, and the
+  finalizer cleared 4 s later. Second cycle on the fixed binary: `create` Cluster `tenant` running, Ready
+  in under 60 s with 10 units, core restart (10 units adopted), delete: units, data dirs and the Cluster
+  were all gone 40 s after the request (finalizer cleared 22 s after it).
 - **The bidder carries one compute provider, the kcp provider, and keeps its tombstones on the Bid, on
   2026-10-15 (plan 0009 M4-LEGACY-BIDDER-CUT).** `hono-factory-market-bidder-app` and `hono-bidder` no
   longer import `compute-provider-digitalocean`, `compute-provider-firecracker`,

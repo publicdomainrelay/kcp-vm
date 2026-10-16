@@ -89,6 +89,7 @@ type Provider struct {
 
 	busyMu  sync.Mutex
 	busy    map[string]bool
+	deletes map[string]*deleteBackoff
 	workers sync.WaitGroup
 	bringUp chan struct{}
 }
@@ -108,35 +109,33 @@ func (p *Provider) Shutdown() error {
 	return p.reapNodeHosts(ctx)
 }
 
-func (p *Provider) removeStore(ctx context.Context, key string) {
+func (p *Provider) removeStore(ctx context.Context, key string) error {
 	if p.units == nil {
-		return
+		return nil
 	}
+	var errs []error
 	if err := p.units.DeleteStore(ctx, key); err != nil {
-		p.log.Warn("cluster provider: deleting the Postgres object of a deleted cluster did not complete",
-			"key", key, "error", err.Error())
-	} else {
-		p.log.Info("cluster provider: deleted the Postgres object of a deleted cluster; its data is removed with it", "key", key)
+		errs = append(errs, fmt.Errorf("deleting the Postgres object: %w", err))
 	}
 	if err := p.units.PurgeData(key); err != nil {
-		p.log.Warn("cluster provider: purging the data directory of a deleted cluster did not complete",
-			"key", key, "error", err.Error())
+		errs = append(errs, fmt.Errorf("purging the data directory: %w", err))
 	}
 	if p.tokens != nil {
 		p.tokens.forget(key)
 	}
+	return errors.Join(errs...)
 }
 
 func (p *Provider) finishDelete(ctx context.Context, ref clusterprovider.Ref, key string) error {
 	if p.units == nil {
 		return nil
 	}
-	gone, err := p.units.StoreGone(ctx, key)
+	gone, detail, err := p.units.StoreRemoval(ctx, key)
 	if err != nil {
 		return err
 	}
 	if !gone {
-		return nil
+		return fmt.Errorf("waiting for the store of the cluster to go: %s", detail)
 	}
 	if err := p.alloc.Release(key); err != nil {
 		return err
@@ -440,19 +439,13 @@ func (p *Provider) one(ctx context.Context, ref clusterprovider.Ref) error {
 		return fmt.Errorf("clusterprovider: reading the Cluster CR of %s out of %s: %w",
 			ref.Name, ref.Home, err)
 	}
-	if !cl.Spec.Running || cl.DeletionTimestamp != nil {
+	if cl.DeletionTimestamp != nil {
+		return p.teardown(ctx, ref, key, cl)
+	}
+	if !cl.Spec.Running {
 		p.log.Info("cluster provider: this cluster is not running, so its group is reaped and "+
-			"nothing is brought up for it", "cluster", ref.Name, "key", key, "home", ref.Home,
-			"running", cl.Spec.Running, "deleting", cl.DeletionTimestamp != nil)
-		if err := p.reapOne(ctx, key); err != nil {
-			return err
-		}
-		if cl.DeletionTimestamp != nil {
-			p.removeLinks(ctx, ref, key)
-			p.removeStore(ctx, key)
-			return p.finishDelete(ctx, ref, key)
-		}
-		return nil
+			"nothing is brought up for it", "cluster", ref.Name, "key", key, "home", ref.Home)
+		return p.reapOne(ctx, key)
 	}
 	if _, err := p.store(ctx, key); err != nil {
 		return err
@@ -537,7 +530,10 @@ func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string
 	}
 	if pass.Unfinalized {
 		p.removeLinks(ctx, ref, key)
-		p.removeStore(ctx, key)
+		if err := p.removeStore(ctx, key); err != nil {
+			p.log.Warn("cluster provider: removing the store of an unfinalized cluster did not complete",
+				"cluster", ref.Name, "key", key, "error", err.Error())
+		}
 	}
 	if err != nil {
 		p.log.Error("cluster provider: the pass failed", "cluster", ref.Name, "key", key,
