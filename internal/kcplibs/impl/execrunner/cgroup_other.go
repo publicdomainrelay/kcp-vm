@@ -19,3 +19,5 @@ func (*limiter) started() {}
 func (*limiter) oomKilled() bool { return false }
 
 func (*limiter) release() {}
+
+func ReleaseCgroups() {}

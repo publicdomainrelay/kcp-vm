@@ -25,11 +25,16 @@ const (
 	subtreeAttempts = 20
 
 	subtreeRetryDelay = 50 * time.Millisecond
+
+	removeAttempts = 40
+
+	removeRetryDelay = 25 * time.Millisecond
 )
 
 type cgroupBase struct {
 	mu   sync.Mutex
 	path string
+	leaf string
 }
 
 var podBase cgroupBase
@@ -59,12 +64,28 @@ func podCgroupBase() (string, error) {
 	if podBase.path != "" {
 		return podBase.path, nil
 	}
-	path, err := prepareBase()
+	path, leaf, err := prepareBase()
 	if err != nil {
 		return "", fmt.Errorf("execrunner: a pod memory limit needs a cgroup this process may subdivide (run the core under a unit with Delegate=yes): %w", err)
 	}
 	podBase.path = path
+	podBase.leaf = leaf
 	return path, nil
+}
+
+func ReleaseCgroups() {
+	podBase.mu.Lock()
+	defer podBase.mu.Unlock()
+	base, leaf := podBase.path, podBase.leaf
+	if base == "" {
+		return
+	}
+	podBase.path, podBase.leaf = "", ""
+	removePodCgroups(base)
+	_ = os.WriteFile(filepath.Join(base, "cgroup.subtree_control"), []byte("-memory"), 0o644)
+	_ = os.WriteFile(filepath.Join(base, "cgroup.procs"), []byte(strconv.Itoa(os.Getpid())), 0o644)
+	_ = movePids(leaf, base)
+	_ = os.Remove(leaf)
 }
 
 func movePids(from, to string) error {
@@ -80,36 +101,36 @@ func movePids(from, to string) error {
 	return nil
 }
 
-func prepareBase() (string, error) {
+func prepareBase() (string, string, error) {
 	dir, err := ownCgroupDir()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	leaf := filepath.Join(dir, supervisorLeaf)
+	base, leaf := dir, filepath.Join(dir, supervisorLeaf)
 	if err := os.Mkdir(leaf, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", err
+		return "", "", err
 	}
 	if err := os.WriteFile(filepath.Join(leaf, "cgroup.procs"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
-		return "", err
+		return "", "", err
 	}
 	for attempt := 0; ; attempt++ {
-		if err := movePids(dir, leaf); err != nil {
-			return "", err
+		if err := movePids(base, leaf); err != nil {
+			return "", "", err
 		}
-		err := os.WriteFile(filepath.Join(dir, "cgroup.subtree_control"), []byte("+memory"), 0o644)
+		err := os.WriteFile(filepath.Join(base, "cgroup.subtree_control"), []byte("+memory"), 0o644)
 		if err == nil {
 			break
 		}
 		if !errors.Is(err, syscall.EBUSY) || attempt >= subtreeAttempts {
-			return "", err
+			return "", "", err
 		}
 		time.Sleep(subtreeRetryDelay)
 	}
-	removeStalePodCgroups(dir)
-	return dir, nil
+	removePodCgroups(base)
+	return base, leaf, nil
 }
 
-func removeStalePodCgroups(base string) {
+func removePodCgroups(base string) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return
@@ -117,8 +138,13 @@ func removeStalePodCgroups(base string) {
 	for _, e := range entries {
 		if e.IsDir() && strings.HasPrefix(e.Name(), podCgroupPrefix) {
 			dir := filepath.Join(base, e.Name())
-			_ = os.WriteFile(filepath.Join(dir, "cgroup.kill"), []byte("1"), 0o644)
-			_ = os.Remove(dir)
+			for attempt := 0; attempt < removeAttempts; attempt++ {
+				_ = os.WriteFile(filepath.Join(dir, "cgroup.kill"), []byte("1"), 0o644)
+				if err := os.Remove(dir); err == nil || errors.Is(err, os.ErrNotExist) {
+					break
+				}
+				time.Sleep(removeRetryDelay)
+			}
 		}
 	}
 }

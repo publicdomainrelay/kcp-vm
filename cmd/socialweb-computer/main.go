@@ -24,6 +24,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/gatewaymain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/impl/execrunner"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/providermain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantcredentialmain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
@@ -131,6 +132,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], clicfg.OSEnv{}, os.Stdout, os.Stderr, runtime.GOOS, runtime.GOARCH)
 	stop()
+	execrunner.ReleaseCgroups()
 	os.Exit(code)
 }
 

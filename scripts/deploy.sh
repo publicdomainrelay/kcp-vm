@@ -105,9 +105,29 @@ else
   copy="$STATE_DIR/incoming-$SHA256"
   install -o "$ACCOUNT" -g "$ACCOUNT" -m 0755 "$INCOMING" "$copy"
   say "upgrade to $SHA256 as $ACCOUNT"
+  upgrade_ok=1
   runuser -u "$ACCOUNT" -- env XDG_RUNTIME_DIR="/run/user/$uid" CONFIG_PATH_SOCIALWEB_COMPUTER="$STATE_DIR/config.json" \
-    "$copy" upgrade --binary "$copy" --sha256 "$SHA256" || { rm -f "$copy"; exit 1; }
+    "$copy" upgrade --binary "$copy" --sha256 "$SHA256" || upgrade_ok=0
   rm -f "$copy"
+  if [ "$upgrade_ok" != "1" ]; then
+    # The first start after a restart can fail (systemd 255 exit 219/CGROUP) and Restart=always starts it again.
+    say "upgrade reported a failed job; waiting up to 60 s for the core unit to become active"
+    recovered=0
+    for _ in $(seq 1 60); do
+      state="$(systemctl --user -M "$ACCOUNT@" show -p ActiveState -p SubState --value socialweb-computer-gateway.service | paste -sd' ')"
+      case "$state" in
+        "active "*) recovered=1; break ;;
+        "activating start"*|"activating start-pre"*) recovered=1; break ;;
+      esac
+      sleep 1
+    done
+    if [ "$recovered" != "1" ]; then
+      say "the core unit never became active (state: $state); last log lines:"
+      journalctl --user -M "${ACCOUNT}@" -u socialweb-computer-gateway.service -n 40 --no-pager 2>&1 || true
+      exit 1
+    fi
+    say "the core unit is $state; continuing"
+  fi
   say "install gateway again with bin/current (renders the unit files, restarts a core whose unit changed)"
   "$STATE_DIR/bin/current/socialweb-computer" install gateway --account "$ACCOUNT" --state-dir "$STATE_DIR" "${spec_args[@]}"
 fi

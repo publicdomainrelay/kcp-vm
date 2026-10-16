@@ -26,6 +26,8 @@ import (
 const (
 	managerSocketWait = 30 * time.Second
 	jobTimeout        = 2 * time.Minute
+	restartRecovery   = 60 * time.Second
+	restartPollEvery  = 500 * time.Millisecond
 	hostPath          = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
 
@@ -249,14 +251,57 @@ func (u *liveUser) Reload(ctx context.Context) error { return u.conn.ReloadConte
 
 func (u *liveUser) Restart(ctx context.Context, units []string) error {
 	for _, unit := range units {
-		if err := waitJob(ctx, unit, func(ch chan<- string) error {
+		err := waitJob(ctx, unit, func(ch chan<- string) error {
 			_, err := u.conn.RestartUnitContext(ctx, unit, "replace", ch)
 			return err
-		}); err != nil {
+		})
+		var ended *jobEndedError
+		if errors.As(err, &ended) && ended.result == "failed" {
+			err = u.awaitRestartRecovery(ctx, unit, err)
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type jobEndedError struct {
+	unit   string
+	result string
+}
+
+func (e *jobEndedError) Error() string {
+	return fmt.Sprintf("%s: the job ended %q", e.unit, e.result)
+}
+
+func restartedOK(ctx context.Context, conn *sd.Conn, unit string) bool {
+	state, err := conn.GetUnitPropertyContext(ctx, unit, "ActiveState")
+	if err != nil {
+		return false
+	}
+	sub, err := conn.GetUnitPropertyContext(ctx, unit, "SubState")
+	if err != nil {
+		return false
+	}
+	active, _ := state.Value.Value().(string)
+	substate, _ := sub.Value.Value().(string)
+	return active == string(hostsvc.Active) || (active == string(hostsvc.Activating) && substate != "auto-restart")
+}
+
+func (u *liveUser) awaitRestartRecovery(ctx context.Context, unit string, failure error) error {
+	ctx, cancel := context.WithTimeout(ctx, restartRecovery)
+	defer cancel()
+	for {
+		if restartedOK(ctx, u.conn, unit) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return failure
+		case <-time.After(restartPollEvery):
+		}
+	}
 }
 
 func waitJob(ctx context.Context, unit string, start func(chan<- string) error) error {
@@ -272,7 +317,7 @@ func waitJob(ctx context.Context, unit string, start func(chan<- string) error) 
 	select {
 	case r := <-ch:
 		if r != "done" {
-			return fmt.Errorf("%s: the job ended %q", unit, r)
+			return &jobEndedError{unit: unit, result: r}
 		}
 		return nil
 	case <-ctx.Done():

@@ -3714,7 +3714,27 @@ because it bounds a mechanism the rest of this document leans on.
   earlier) into a `supervisor` leaf, and only then enables the memory controller for the unit's subtree
   (no-internal-process rule: the enable write returns EBUSY while any process is left in the unit cgroup,
   so it is retried after another move). A failure is not remembered: the next pod start tries again.
-  systemd removes the stopped unit's cgroup tree, so a restarted core starts with the controller off. A pod that cannot get its
+  A core that ends by a signal it handles (`main` calls `execrunner.ReleaseCgroups` after the verb
+  returns) kills and removes every `pod-*` cgroup, writes `-memory` to the unit cgroup's
+  `cgroup.subtree_control`, moves itself back into the unit cgroup and removes the `supervisor` leaf, so
+  the unit cgroup is empty and has no controller enabled when the unit goes inactive. Reason: systemd
+  cannot start a main process in a cgroup whose `cgroup.subtree_control` is non-empty (the attach is
+  EBUSY: exit 219/CGROUP on systemd 255, "Failed to spawn executor: Device or resource busy" on 259), and
+  DelegateSubgroup= does not help (read on 259 with injected residue: the executor is spawned into the
+  unit cgroup before it moves to the subgroup), and an ExecStartPre or ExecStopPost is spawned into the
+  same cgroup, so no unit setting can clear the residue. systemd itself clears the controller and
+  removes the tree when it stops a unit (read on systemd 259 on the dev host and on systemd 255.4 with
+  Ubuntu kernel 6.8.0-147 in a qemu VM: 3 restarts and 3 `kill -9` cycles of a Delegate=yes unit running
+  the pod limiter came back on the first start with `memory.max` set on both pods), but the prod
+  gateway and the hat-10 bidder logged `Failed to kill control group ..., ignoring: Invalid argument`
+  and then 219/CGROUP on the first start after an upgrade, which no harness reproduced; the cleanup in
+  the core means a stopped unit no longer depends on systemd getting it right. A core that dies without
+  running it (SIGKILL, a crash) leaves the residue to systemd, and `Restart=always` starts the unit
+  again; `internal/install` (`liveUser.Restart`) and `scripts/deploy.sh` treat a restart job that ended
+  `failed` as done when the unit is active (or activating, not auto-restart) within 60 s. Reading
+  (systemd 259, real user unit, harness running `execrunner.Pod` with two pods): the old core at SIGTERM
+  exit has `subtree_control=[memory] children=[pod-... pod-... supervisor]`; the core with
+  `ReleaseCgroups` has `subtree_control=[] children=[]`. A pod that cannot get its
   cgroup under an enforcing host does not start. The `dev` backend (devsup, `proc`) enforces no limit by
   design (the same as for units), so a pod there runs with the V8 heap flag alone. The breach is
   classified at exit and written into `status.restartReasons` (a count per reason): `OOMKilled` (the
