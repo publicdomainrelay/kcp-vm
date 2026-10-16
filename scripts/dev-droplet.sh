@@ -67,6 +67,10 @@ systemctl daemon-reload
 loginctl enable-linger test-0001
 sleep 2
 systemctl restart "user@$(id -u test-0001).service"
+mkdir -p /etc/rancher/node
+test -s /etc/rancher/node/password || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' >/etc/rancher/node/password
+chown test-0001:test-0001 /etc/rancher/node/password
+chmod 600 /etc/rancher/node/password
 mkdir -p /var/lib/socialweb-computer /var/tmp/swcit /var/tmp/it-art
 chmod 1777 /var/tmp/swcit
 chown test-0001:test-0001 /var/tmp/it-art
@@ -99,7 +103,7 @@ EOF
     uid="$(rssh "$name" id -u test-0001)"
     rssh "$name" runuser -u test-0001 -- env HOME=/home/test-0001 XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
       SOCIALWEB_IT_SKIP_BUILD=1 SOCIALWEB_IT_PUBLISH="$publish" SOCIALWEB_IT_LIVE_SLOT=none SOCIALWEB_IT_RUN_ROOT=/var/tmp/swcit SOCIALWEB_IT_ARTIFACTS=/var/tmp/it-art/run \
-      /var/tmp/it.test -test.v -test.timeout 40m -test.run "$pattern"
+      /var/tmp/it.test -test.v -test.timeout "${SOCIALWEB_IT_TIMEOUT:-40m}" -test.run "$pattern"
     ;;
   ssh)
     name="${1:-dev-work-0001}"
