@@ -1,0 +1,97 @@
+plan: "0017"
+title: The market protocol is refined: stale bidders leave the index and an RFP goes to a bounded set of bidders
+status: todo
+queued: >
+  Opened by the lead 2026-10-16 at the user's request. The user said to start this plan with a note that
+  some market protocol stuff needs refining. The market protocol (RFP, bid, accept, cloud-init records and
+  their lexicons) is the user's to decide, not the lead's: the lead writes down what it measured and
+  proposes, and changes no record shape or lexicon until the user has refined it here.
+note: >
+  We need to refine some market protocol stuff. Two things are known now. First, bidder records for
+  bidders that are not online must be disposed of from indexing, so a requester does not discover and
+  address them. Second, an RFP goes to a capped number of bidders, 100 or so to start. How the requester
+  chooses which bidders get the RFP will be decided through the policy engine in a future plan, not
+  here: this plan only puts a cap in place, with a fixed and documented order, so that the future plan
+  replaces the order with a policy decision and changes nothing else.
+source: >
+  Prod reading 2026-10-16 (gateway socialweb.computer, build 4543fba0, requester DenoPod, Alice's
+  contract nodeclaim-06f2c7733a5ad20b78a8): relay discovery listed 443 offering repos (bsky.network 3,
+  relay.mini-cloud-0002 443), bidder_discovery total 448 (relay 446, watch 296, vouched 3, extra 1,
+  denied 0), scope_prewarm candidates 448. The requester then posted the RFP to every one of them
+  (submitting_rfp per bidder, one getServiceAuth request to the requester's PDS and one submitRfp post
+  per bidder: about 890 requests per contract) and held about 470 outbound HTTPS connections while the
+  contract was live. Only the vouched bidders can win under the tangled-vouch policy, so most of those
+  443 posts reach a bidder that cannot be chosen, and many of those bidders are not online at all
+  (a stale offering record stays in the relay index after its bidder is gone). bsky.social answered
+  the requester's createRecord with 429 (3000 requests per 300 s per IP) when contracts repeated; the
+  429 retry, the claim back-off and a 180 s relay discovery cache already landed in 8d3c43b5, 1accd8e8
+  and 4543fba0, and the scope prewarm is already limited to vouched and extra bidders (66d9e9ff). The
+  fan-out itself is unchanged.
+principle: >
+  The relay is the registry and the protocol stays one flow: requester posts a compute.vm record and a
+  signed market.rfp, bidders bid, the requester accepts, the winner provisions from cloud-init user_data.
+  This plan adds no second path. A bidder that is not online must cost the requester nothing. A cap is a
+  setting with a documented order, so the policy engine can take it over later.
+state_rules:
+  - Do not change a record shape, a lexicon or an NSID in this plan before the user has refined the item that changes it. Write the proposal in the item, mark the item blocked on the user, and stop there.
+  - Read AGENTS.md first. status is one of todo, doing, done, blocked.
+items:
+  - id: M0-USER-REFINES-THE-PROTOCOL
+    title: "The user refines the market protocol points below"
+    depends_on: []
+    decision: >
+      Open. The user decides, for each point, the exact rule before any code changes: (1) what makes a
+      bidder online (a signed heartbeat record with a TTL in its own repo, the keepalive ping route
+      com.publicdomainrelay.temp.keepalive.ping answering within a deadline, or the relay dropping a
+      repo that is gone from the firehose), and how long a record may outlive its bidder; (2) whether the
+      cap is per RFP or per requester account, its default (100 proposed), and whether it is an option on
+      the requester; (3) the order in which a capped set is filled until the policy engine takes over
+      (proposed: vouched bidders, then explicitly listed extra bidders, then online bidders by most
+      recent liveness, then a stable random choice so the same bidders are not always first).
+    files: ["docs/plans/0017-market-protocol-refinement.yaml", "docs/ARCHITECTURE.md"]
+    done_when: "the user has answered the three points and the answers are written into M1 and M2 as their decision."
+    risks: ["The lead decides nothing here: a wrong protocol rule is expensive to undo once bidders publish it."]
+    status: todo
+    evidence:
+  - id: M1-STALE-BIDDER-RECORDS
+    title: "Bidder records for bidders that are not online are disposed of from indexing"
+    depends_on: [M0-USER-REFINES-THE-PROTOCOL]
+    decision: >
+      Not decided; set by M0. Intent: a requester's bidder discovery (relay listReposByCollection of
+      com.publicdomainrelay.temp.market.offering, the offering watch, and the cached lists in
+      ts/atproto-market/lib/compute-request-xrpc) keeps only bidders with current liveness evidence, and
+      the offering records of bidders that are gone are removed from what the requester indexes, and
+      from the relay index where this repository operates the relay (relay.mini-cloud-0002). The
+      discovery cost per contract (443 DID documents and 443 offering lists on a cold cache) falls to
+      the number of live bidders.
+    files: ["ts/atproto-market/lib/compute-request-xrpc", "ts/atproto-market/lib/market-bidder", "lexicons"]
+    done_when: "on prod, the requester's bidder_discovery count equals the number of bidders that answer, and a bidder that is stopped leaves the requester's discovery within the TTL M0 sets."
+    risks: ["A bidder behind a slow link is dropped as offline; the deadline is M0's decision."]
+    status: todo
+    evidence:
+  - id: M2-RFP-RECIPIENT-CAP
+    title: "An RFP goes to at most 100 bidders, filled in a fixed documented order"
+    depends_on: [M0-USER-REFINES-THE-PROTOCOL]
+    decision: >
+      Not decided; set by M0. Intent: the requester posts the RFP to at most N bidders (100 to start, an
+      option of the requester with that default), filled in the order M0 sets. The order is one function
+      with one input list and one output list, so a future plan replaces it with a policy-engine decision
+      about which bidders to go to (the policy engine pod exists, plan 0009 M3-POLICY-ENGINE-POD) and
+      touches nothing else. The contract status records how many bidders were found, how many were
+      addressed and why the rest were not.
+    files: ["ts/atproto-market/lib/compute-request-xrpc", "api/v1alpha1/types_computecontract.go"]
+    done_when: "with 443 discovered bidders a contract posts the RFP to exactly the cap, the requests per contract fall by the same factor, and the contract still finds its vouched bidder."
+    risks: ["The capped set misses the only bidder able to serve the request; the order puts vouched and listed bidders first for that reason."]
+    status: todo
+    evidence:
+acceptance:
+  checks:
+    - id: ACC17-BOUNDED-FANOUT
+      text: >
+        On prod, one contract makes at most a few hundred PDS and bidder requests instead of about 890,
+        holds at most the cap in outbound bidder connections, and a stopped bidder is gone from the
+        requester's discovery within the TTL.
+      status: todo
+      evidence: []
+decided:
+  - "Opened by the lead at the user's request 2026-10-16. The cap of 100 is the user's number ('100 or something'); the policy engine choosing which bidders get the RFP is a future plan."
