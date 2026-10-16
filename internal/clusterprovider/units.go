@@ -434,6 +434,9 @@ func (h *UnitsHost) PurgeData(key string) error {
 		return err
 	}
 	dirs := []string{dir}
+	if key != "" && filepath.Base(key) == key && key != "." && key != ".." {
+		dirs = append(dirs, filepath.Join(h.c.StateDir, key))
+	}
 	if h.c.VaultStateDir != "" {
 		dirs = append(dirs, openbaoctl.ServerDir(h.c.VaultStateDir, h.VaultServerName(key)))
 	}

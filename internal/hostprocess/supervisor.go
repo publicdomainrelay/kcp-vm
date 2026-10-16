@@ -81,6 +81,7 @@ type Supervisor struct {
 	mu       sync.Mutex
 	locks    sync.Map
 	placedAt map[string]time.Time
+	slices   map[string]bool
 }
 
 func (s *Supervisor) setPlaced(unit string, on bool) {
@@ -439,9 +440,11 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 		return err
 	}
 	seen := map[string]bool{}
+	var liveSlices []string
 	for i := range list.Items {
 		if o, ok := s.reconcileObject(ctx, &list.Items[i]); ok {
 			seen[o.Spec.Unit] = true
+			liveSlices = append(liveSlices, o.Spec.Slice)
 		}
 	}
 	for _, prefix := range s.c.prefixes() {
@@ -451,6 +454,15 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 		units, err := s.c.Manager.List(ctx, prefix)
 		if err == nil {
 			for _, u := range units {
+				if !seen[u.Name] && u.State == hostsvc.Failed && !s.placedAfter(u.Name, listedAt) {
+					s.c.log().Info("the HostProcess of a failed unit is gone; resetting the unit", "unit", u.Name)
+					if err := s.c.Manager.ResetFailed(ctx, u.Name); err != nil {
+						s.c.log().Warn("resetting the failed unit of a gone HostProcess failed; the next pass retries", "unit", u.Name, "err", err.Error())
+					} else {
+						s.setPlaced(u.Name, false)
+					}
+					continue
+				}
 				if !s.isPlaced(u.Name) && s.listed {
 					continue
 				}
@@ -469,7 +481,60 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 		}
 	}
 	s.listed = true
+	if !s.c.KeepOrphans {
+		s.sweepSlices(ctx, liveSlices)
+	}
 	return nil
+}
+
+const ClusterSlicePart = "cluster-"
+
+func (s *Supervisor) sweepable(slice string) bool {
+	if hostsvc.ValidateSlice(slice) != nil {
+		return false
+	}
+	for _, p := range s.c.prefixes() {
+		if strings.HasPrefix(slice, p+ClusterSlicePart) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Supervisor) sweepSlices(ctx context.Context, live []string) {
+	s.mu.Lock()
+	if s.slices == nil {
+		s.slices = map[string]bool{}
+	}
+	for _, sl := range live {
+		if s.sweepable(sl) {
+			s.slices[sl] = true
+		}
+	}
+	var empty []string
+	for sl := range s.slices {
+		held := false
+		for _, l := range live {
+			if hostsvc.SliceContains(sl, l) {
+				held = true
+				break
+			}
+		}
+		if !held {
+			empty = append(empty, sl)
+		}
+	}
+	s.mu.Unlock()
+	for _, sl := range empty {
+		if err := s.c.Manager.StopSlice(ctx, sl); err != nil {
+			s.c.log().Warn("stopping the empty slice of gone HostProcesses failed; the next pass retries", "slice", sl, "err", err.Error())
+			continue
+		}
+		s.mu.Lock()
+		delete(s.slices, sl)
+		s.mu.Unlock()
+		s.c.log().Info("every HostProcess of the slice is gone; the empty slice is stopped", "slice", sl)
+	}
 }
 
 func (s *Supervisor) capOutput(o v1alpha1.HostProcess) {
