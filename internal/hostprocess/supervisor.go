@@ -118,6 +118,15 @@ func (s *Supervisor) lockObject(name string) func() {
 	return m.Unlock
 }
 
+func (s *Supervisor) markAdopted(o v1alpha1.HostProcess, obs Observed) {
+	if o.Spec.Placement == v1alpha1.HostProcessPlacementBootstrap || obs.Inspect != nil || s.isPlaced(o.Spec.Unit) {
+		return
+	}
+	if obs.Unit.State == hostsvc.Active || obs.Unit.State == hostsvc.Activating {
+		s.setPlaced(o.Spec.Unit, true)
+	}
+}
+
 func (s *Supervisor) reconcileObject(ctx context.Context, cur *unstructured.Unstructured) (v1alpha1.HostProcess, bool) {
 	unlock := s.lockObject(cur.GetName())
 	defer unlock()
@@ -127,7 +136,9 @@ func (s *Supervisor) reconcileObject(ctx context.Context, cur *unstructured.Unst
 		return o, false
 	}
 	s.capOutput(o)
-	next := s.apply(ctx, o, Reconcile(s.observe(ctx, o)))
+	obs := s.observe(ctx, o)
+	s.markAdopted(o, obs)
+	next := s.apply(ctx, o, Reconcile(obs))
 	if err := s.writeStatus(ctx, cur, next); err != nil && !apierrors.IsConflict(err) {
 		s.c.log().Warn("writing status", "name", o.Name, "err", err.Error())
 	}
@@ -448,7 +459,9 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 				}
 				if !seen[u.Name] && (u.State == hostsvc.Active || u.State == hostsvc.Activating) {
 					s.c.log().Info("the HostProcess of a placed unit is gone; stopping the unit", "unit", u.Name)
-					if err := s.c.Manager.Stop(ctx, u.Name); err == nil {
+					if err := s.c.Manager.Stop(ctx, u.Name); err != nil {
+						s.c.log().Warn("stopping the unit of a gone HostProcess failed; the next pass retries", "unit", u.Name, "err", err.Error())
+					} else {
 						s.setPlaced(u.Name, false)
 					}
 				}
