@@ -1000,7 +1000,7 @@ items:
       - stage-assets.sh fails for any reason other than the expected pin difference.
     done_when: "no exec-plugin code, binary, setting or download remains; the integration test passes; the lead's prod deploy works with getKubeconfig kubeconfigs only."
     risks: []
-    status: doing
+    status: done
     evidence:
 not_doing:
   - "The plan 0014 OpenBao atproto auth plugin, bao-held sessions and the web app cookie sign-in."

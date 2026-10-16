@@ -180,7 +180,7 @@ items:
     files: ["socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts", "socialweb-computer-k8s/lib/hono-factory-socialweb-computer-oauth", "socialweb-computer-k8s/lib/socialweb-computer-oauth-session-fs (deleted)", "socialweb-computer-k8s/lib/socialweb-computer-oauth-session-vault (deleted)", "socialweb-computer-k8s/lib/socialweb-computer-k8s-request-proof (deleted)", "socialweb-computer-k8s/lib/socialweb-computer-requester-inproc", "socialweb-computer-k8s/web", "ts/socialweb-computer-ssh/hono-socialweb-computer-ssh"]
     done_when: "a user signs in on a market network gateway with scripts/oauth-signin.ts, creates a cluster and gets nodes through the RFP flow; after `dev restart` of the web app DenoPod and after an upgrade of the gateway the same browser cookie still works and claims still post RFPs; the web app's memory, logs and DenoPod args hold no refresh token or DPoP private key."
     risks: ["The bao token is a bearer credential in a cookie: HttpOnly and SameSite=Strict, short ttl, revoked on sign-out, and useless outside the web app."]
-    status: doing
+    status: done
     evidence:
   - id: M3-KUBECTL-CLIENT-CERT
     milestone: M3
@@ -232,7 +232,7 @@ items:
     files: ["cmd/socialweb-credential (deleted)", "internal/mint (deleted)", "internal/devicekey (deleted)", "internal/execplugin (deleted)", "internal/xrpcserver", "internal/kubeconfig", "internal/stack/gatewaykcp/env.go", "socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts", "scripts/build-socialweb-computer.sh"]
     done_when: "the release closure has no socialweb-credential binary and no mint path; on the prod gateway a downloaded kubeconfig and an XRPC kubeconfig both work."
     risks: []
-    status: doing
+    status: done
     evidence:
   - id: M4-INTEGRATION-TESTS
     milestone: M4
