@@ -131,7 +131,7 @@ items:
     files: ["cmd/openbao-plugin-auth-atproto/", "ts/atproto-market/lib/abc/atproto-session-custody", "ts/atproto-market/lib/atproto-session-custody-openbao", "deno.json", "deno.lock"]
     done_when: "a market network gateway requester posts an RFP with an agent whose only credential is proofs from bao; the requester process memory and its vault reads show no refresh token or DPoP private key; two callers that refresh at the same time give one refresh at the authorization server."
     risks: ["One local bao call per PDS request: the done_when run also reads the p95 of a proof call (budget 20 ms; the client keeps one warm TLS connection to bao). Over budget is a bug report, not a reason to move the key out."]
-    status: doing
+    status: done
     evidence:
   - id: M2-GATEWAY-SCOPE
     milestone: M2
