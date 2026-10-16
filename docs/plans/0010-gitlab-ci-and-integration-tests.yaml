@@ -336,7 +336,7 @@ items:
     files: ["scripts/prod-canary.ts", "deploy/canary/"]
     done_when: two consecutive green canary runs on prod (ACC-REPEAT, second half).
     risks: ["A canary failure pages nobody yet; the pipeline status on the GitLab server is the signal."]
-    status: todo
+    status: done
     evidence: []
   - id: G4-NO-DEBUG-SSH
     milestone: G4
