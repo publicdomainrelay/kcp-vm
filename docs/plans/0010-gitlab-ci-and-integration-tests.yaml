@@ -112,7 +112,7 @@ acceptance:
     - id: ACC-REPEAT
       text: >
         The G2 integration suite runs in GitLab CI on main (G3-CI-INTEGRATION), each test in its own
-        market network, and is green twice in a row; the prod canary pipeline (G3-PROD-CANARY) scales
+        market network, and is green twice in a row; the prod canary timer run (G3-PROD-CANARY) scales
         a prod tenant cluster from zero on a market RFP VM from the hat-8 bidder, runs its job, and
         scales back to zero, green twice in a row.
       status: todo
@@ -313,9 +313,15 @@ items:
     evidence: []
   - id: G3-PROD-CANARY
     milestone: G3
-    title: A scheduled GitLab pipeline whose job runs on a prod tenant cluster that scales from zero
+    title: A nightly canary, a user systemd timer on hat-8, that runs a Job on a prod tenant cluster that scales from zero
     depends_on: ["0006:M5-FRESH-DEPLOY", "G1-CI-GATE"]
     decision: >
+      Decided by the lead 2026-10-15 (the user may veto): the canary is a user systemd timer on hat-8, run as
+      johnandersen777 (scripts/prod-canary.ts and deploy/canary/), not a GitLab pipeline; the credential files
+      stay on that host and no secret goes to GitHub or GitLab. Each run creates canary-YYYYMMDD, applies a
+      Job, waits for Succeeded, deletes the cluster and checks it is unlisted and the bidder's ComputeVM is
+      gone, through the gateway's XRPC only. The pipeline, runner and long-lived cluster below are the
+      superseded first proposal.
       Proposed by Claude (Q6, Q7; was G1-RUNNER and the prod half of G1-ACCEPT-SCRIPT): one long-lived
       canary tenant cluster on the prod gateway, created through the web app as the canary identity
       (headless sign-in from the credential file on the deploy host, never printed). A gitlab-runner with
@@ -327,8 +333,8 @@ items:
       scales back to 0 with the control plane Ready. The job writes its readings (UTC times of claim,
       join, job, scale-in) as a pipeline artifact. This is the only part of this plan that touches prod,
       and only through the product's own front door.
-    files: [".gitlab-ci.yml (canary schedule)", "deploy/canary/"]
-    done_when: two consecutive green canary pipelines on prod (ACC-REPEAT, second half).
+    files: ["scripts/prod-canary.ts", "deploy/canary/"]
+    done_when: two consecutive green canary runs on prod (ACC-REPEAT, second half).
     risks: ["A canary failure pages nobody yet; the pipeline status on the GitLab server is the signal."]
     status: todo
     evidence: []

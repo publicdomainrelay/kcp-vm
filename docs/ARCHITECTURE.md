@@ -3756,6 +3756,33 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **A deleted cluster leaves no slice, no state directory and no failed unit, and the prod canary is a user
+  timer on hat-8, on 2026-10-15 (plan 0010 G3-PROD-CANARY).** After the delete fix a deleted cluster
+  still left an empty `socialweb-hp-gw-cluster-<key>.slice` (loaded, active, no process), its state
+  directory `clusterprovider/<key>` with the `nodes` subtree (the per-node data dirs of
+  `NodeDataDir` live under the bare key, while `ClusterDataDir` is `pdr-<key>`, so `PurgeData` never
+  reached them), and, when the Postgres unit had crash-looped, a failed unit with no HostProcess. Three
+  changes: `UnitsHost.PurgeData` also removes `<state>/<key>` (the key must be one path element); the
+  HostProcess supervisor's orphan sweep resets a failed unit of its prefix whose HostProcess is gone; and
+  after each pass the supervisor stops a slice named `<prefix>cluster-*` that it saw hold a HostProcess
+  and that no listed HostProcess is in or under any more (`StopSlice`; no such unit is a success, so a
+  slice systemd already dropped costs nothing, and a failed stop is retried on the next pass). The sweep
+  is limited to the cluster slices on purpose: the bootstrap, core and VM slices hold units that are not
+  HostProcesses, and stopping one of them stops those too. A slice the supervisor never saw (left by an
+  earlier provider process) is not swept. Read on the dev market network (proc backend, which has no
+  systemd slices, so the slice stop is read from the code path and not run against systemd): the
+  `canary-dry` cluster's `<key>` directory and `pdr-<key>` directory were present while it ran and both
+  gone once it was unlisted; the supervisor logged the empty-slice stop once for each of the three clusters
+the run made (canary-dry, the leaked canary-to and canary-dry2) and never again, so the sweep does not loop.
+  The canary of G3-PROD-CANARY is `scripts/prod-canary.ts` run by the user timer in `deploy/canary/` on
+  hat-8 (the lead's decision, the user may veto): the credential files stay on that host and no secret goes
+  to GitHub or GitLab, so there is no scheduled pipeline, runner or long-lived canary cluster. Each run
+  makes `canary-YYYYMMDD` through the gateway's XRPC, applies a Job, deletes the cluster and checks it is
+  unlisted and the bidder's ComputeVM is gone. Dry run on the market network's gateway (one bidder, one
+  firecracker guest): preflight 0.2 s, cluster Ready 72 s, Job Succeeded 42 s after apply, unlisted 24 s
+  after the delete, 140 s in all; a wrong audience exits 1 with the 401 in the result line, and a 20 s
+  total timeout exits 1 after a best-effort delete.
+
 - **The requester's RBAC records are the source of the guest's identity grants, on 2026-10-15 (plan 0009
   M3-RBAC-TO-OPENBAO).** For each live guest the bidder reads the `com.fedproxy.rbac` records of its
   requester's repo (the DID resolved through the PLC directory, `listRecords`) when it accepts, on every

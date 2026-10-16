@@ -1,0 +1,10 @@
+[Unit]
+Description=socialweb-computer prod canary: create a tenant cluster, run a Job, delete the cluster
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=4500
+Nice=10
+ExecStart=%h/.deno/bin/deno run --no-lock --node-modules-dir=none --allow-net --allow-read=%h --allow-write=%h/.local/state/swc-prod-canary --allow-env=HOME --allow-run=kubectl,sudo %h/.local/share/swc-prod-canary/prod-canary.ts
