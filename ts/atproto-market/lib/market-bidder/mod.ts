@@ -192,21 +192,22 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const contractStore = config.contractStore;
   const loop = config.loop;
   config.writeBudget?.trackContracts(() => activeContracts.size);
-  const listOwnBidRecords = async (cursor: string | undefined) => {
+  const listOwnRecords = async (collection: string, cursor: string | undefined) => {
     const pdsUrl = await resolvePds(atproto.idResolver, atproto.did);
     const url = new URL(`${pdsUrl}/xrpc/com.atproto.repo.listRecords`);
     url.searchParams.set("repo", atproto.did);
-    url.searchParams.set("collection", BID_NSID);
+    url.searchParams.set("collection", collection);
     url.searchParams.set("limit", "100");
     if (cursor) url.searchParams.set("cursor", cursor);
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) {
       await res.body?.cancel();
-      throw new Error(`listRecords ${BID_NSID}: ${res.status}`);
+      throw new Error(`listRecords ${collection}: ${res.status}`);
     }
     const page = await res.json() as { records?: Array<{ uri: string; cid: string; value: Record<string, unknown> }>; cursor?: string };
     return { records: page.records ?? [], cursor: page.records?.length ? page.cursor : undefined };
   };
+  const listOwnBidRecords = (cursor: string | undefined) => listOwnRecords(BID_NSID, cursor);
   const bidLoop = createBidLoop({
     selfDid: atproto.did,
     claimant: `pid-${Deno.pid}-${crypto.randomUUID().slice(0, 8)}`,
@@ -220,6 +221,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       sharedUris: atproto.sharedRecordUris,
       deleteRecord: atproto.deleteRecord,
       listOwnBidRecords,
+      listOwnRecords,
     },
     listOwnBids: async () => {
       const out: Array<{ uri: string; cid: string; rfpUri?: string }> = [];

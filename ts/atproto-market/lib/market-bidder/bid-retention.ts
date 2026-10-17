@@ -13,6 +13,9 @@ export interface OwnBidRecordPage {
   cursor?: string;
 }
 
+export const RECEIPT_COLLECTION = "com.publicdomainrelay.temp.market.receipt";
+export const EVENT_COLLECTION = "com.publicdomainrelay.temp.market.event";
+
 export interface BidRetentionOptions {
   bids: BidLedger;
   selfDid: string;
@@ -21,6 +24,7 @@ export interface BidRetentionOptions {
   maxPages?: number;
   maxDeletes?: number;
   listOwnBidRecords(cursor: string | undefined): Promise<OwnBidRecordPage>;
+  listOwnRecords?(collection: string, cursor: string | undefined): Promise<OwnBidRecordPage>;
   deleteRecord(collection: string, rkey: string): Promise<void>;
   keepBidUri?(uri: string): boolean;
   sharedUris?(): ReadonlySet<string>;
@@ -32,6 +36,7 @@ export interface BidRetentionReport {
   scanned: number;
   deleted: number;
   dependents: number;
+  trail: number;
   kept: number;
   halted?: boolean;
 }
@@ -84,8 +89,68 @@ export function createBidRetention(opts: BidRetentionOptions): BidRetention {
     for (const uri of [refOf(record.value.payload), refOf(record.value.bidConfig)]) if (uri) into.add(uri);
   }
 
+  async function listAll(list: NonNullable<BidRetentionOptions["listOwnRecords"]>, collection: string): Promise<OwnBidRecordPage["records"] | undefined> {
+    const out: OwnBidRecordPage["records"] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < maxPages; page++) {
+      const got = await list(collection, cursor);
+      out.push(...got.records);
+      cursor = got.cursor;
+      if (!cursor) return out;
+    }
+    return undefined;
+  }
+
+  async function sweepTrail(
+    list: NonNullable<BidRetentionOptions["listOwnRecords"]>,
+    liveBids: Set<string>,
+    report: BidRetentionReport,
+  ): Promise<boolean> {
+    const receipts = await listAll(list, RECEIPT_COLLECTION);
+    const events = await listAll(list, EVENT_COLLECTION);
+    if (!receipts || !events) return false;
+    const liveReceipts = new Set<string>();
+    const goneReceipts: string[] = [];
+    for (const r of receipts) {
+      const bidUri = refOf(r.value.bid);
+      const created = Date.parse(String(r.value.createdAt ?? ""));
+      const old = !Number.isFinite(created) || now() - created >= ttlMs;
+      if (bidUri && !liveBids.has(bidUri) && old) goneReceipts.push(r.uri);
+      else liveReceipts.add(r.uri);
+    }
+    const shared = opts.sharedUris?.() ?? new Set<string>();
+    let trailDeletes = 0;
+    for (const e of events) {
+      const receiptUri = refOf(e.value.receipt);
+      if (!receiptUri || liveReceipts.has(receiptUri)) continue;
+      if (trailDeletes >= maxDeletes * 4) return false;
+      try {
+        await removeOwn(e.uri);
+        const payload = refOf(e.value.payload);
+        if (payload && !shared.has(payload)) await removeOwn(payload);
+        report.trail++;
+        trailDeletes++;
+      } catch (err) {
+        opts.logger.warn("bid_record_retention_failed", { uri: e.uri, error: String(err), halted: isRateLimitError(err) });
+        if (isRateLimitError(err)) return true;
+      }
+    }
+    for (const uri of goneReceipts) {
+      if (trailDeletes >= maxDeletes * 4) return false;
+      try {
+        await removeOwn(uri);
+        report.trail++;
+        trailDeletes++;
+      } catch (err) {
+        opts.logger.warn("bid_record_retention_failed", { uri, error: String(err), halted: isRateLimitError(err) });
+        if (isRateLimitError(err)) return true;
+      }
+    }
+    return false;
+  }
+
   async function run(): Promise<BidRetentionReport> {
-    const report: BidRetentionReport = { scanned: 0, deleted: 0, kept: 0, dependents: 0 };
+    const report: BidRetentionReport = { scanned: 0, deleted: 0, kept: 0, dependents: 0, trail: 0 };
     const byRfp = new Map<string, BidEntry>();
     for (const e of await opts.bids.list()) byRfp.set(e.rfp.uri, e);
     const records: OwnBidRecordPage["records"] = [];
@@ -96,6 +161,8 @@ export function createBidRetention(opts: BidRetentionOptions): BidRetention {
       cursor = out.cursor;
       if (!cursor) break;
     }
+    const scanComplete = cursor === undefined;
+    const liveBids = new Set<string>();
     const live = new Set<string>();
     const dueRecords: OwnBidRecordPage["records"] = [];
     for (const record of records) {
@@ -104,6 +171,7 @@ export function createBidRetention(opts: BidRetentionOptions): BidRetention {
       const entry = rfpUri ? byRfp.get(rfpUri) : undefined;
       if (opts.keepBidUri?.(record.uri) || !due(record, entry)) {
         report.kept++;
+        liveBids.add(record.uri);
         addDependents(live, record);
       } else {
         dueRecords.push(record);
@@ -113,6 +181,7 @@ export function createBidRetention(opts: BidRetentionOptions): BidRetention {
     let halted = false;
     for (const record of dueRecords) {
       if (halted || report.deleted >= maxDeletes) {
+        liveBids.add(record.uri);
         addDependents(live, record);
         continue;
       }
@@ -122,6 +191,7 @@ export function createBidRetention(opts: BidRetentionOptions): BidRetention {
         addDependents(orphaned, record);
       } catch (err) {
         report.kept++;
+        liveBids.add(record.uri);
         addDependents(live, record);
         halted = isRateLimitError(err);
         opts.logger.warn("bid_record_retention_failed", { bidUri: record.uri, error: String(err), halted });
@@ -139,8 +209,9 @@ export function createBidRetention(opts: BidRetentionOptions): BidRetention {
         opts.logger.warn("bid_record_retention_failed", { uri, error: String(err), halted });
       }
     }
+    if (!halted && scanComplete && opts.listOwnRecords) halted = await sweepTrail(opts.listOwnRecords, liveBids, report);
     if (halted) report.halted = true;
-    if (report.deleted > 0 || report.dependents > 0) opts.logger.info("bid_records_removed", { ...report, ttlMs });
+    if (report.deleted > 0 || report.dependents > 0 || report.trail > 0) opts.logger.info("bid_records_removed", { ...report, ttlMs });
     return report;
   }
 

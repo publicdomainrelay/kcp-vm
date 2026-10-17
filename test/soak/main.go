@@ -387,6 +387,8 @@ func main() {
 		os.Exit(runLoad(os.Args[2:]))
 	case "sample":
 		os.Exit(runSample(os.Args[2:]))
+	case "tidy":
+		os.Exit(runTidy(os.Args[2:]))
 	case "inspect":
 		os.Exit(runInspect(os.Args[2:]))
 	}
