@@ -180,8 +180,7 @@ export class PdsWriteBudget {
   }
 
   #remainingOf(state: PdsLimitState, now: number): number | undefined {
-    if (state.resetAtMs !== undefined && now >= state.resetAtMs) return state.limit;
-    return state.remaining;
+    return state.resetAtMs !== undefined && now >= state.resetAtMs ? undefined : state.remaining;
   }
 
   gate(writeClass: WriteClass, points: number): WriteBlock | undefined {
