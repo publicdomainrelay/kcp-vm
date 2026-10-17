@@ -2,6 +2,8 @@ import { EventBus } from "@publicdomainrelay/event-bus";
 
 export interface BacklogSequencerOptions<TIn, TFrame extends { seq: number }> {
   maxBacklog: number;
+  maxBytes?: number;
+  sizeOf?: (frame: TFrame) => number;
   build: (seq: number, evt: TIn) => TFrame;
 }
 
@@ -16,16 +18,26 @@ export function createBacklogSequencer<TIn, TFrame extends { seq: number }>(
   opts: BacklogSequencerOptions<TIn, TFrame>,
 ): BacklogSequencer<TIn, TFrame> {
   const { maxBacklog: max, build } = opts;
+  const maxBytes = opts.maxBytes ?? Infinity;
+  const sizeOf = opts.sizeOf ?? (() => 0);
   let seq = 0;
+  let bytes = 0;
   const backlog: TFrame[] = [];
+  const sizes: number[] = [];
   const bus = new EventBus<TFrame>();
 
   return {
     append(evt: TIn): TFrame {
       seq++;
       const frame = build(seq, evt);
+      const size = sizeOf(frame);
       backlog.push(frame);
-      if (backlog.length > max) backlog.shift();
+      sizes.push(size);
+      bytes += size;
+      while (backlog.length > max || (bytes > maxBytes && backlog.length > 1)) {
+        backlog.shift();
+        bytes -= sizes.shift()!;
+      }
       bus.publish(frame);
       return frame;
     },

@@ -13,10 +13,13 @@ import type {
 } from "@publicdomainrelay/atproto-relay-abc";
 
 const MAX_BACKLOG = 50000;
+const MAX_BACKLOG_BYTES = 64 * 1024 * 1024;
 
 export function createRelaySequencer(maxBacklog?: number): RelaySequencer {
   return createBacklogSequencer<SubscribeReposFrame, SubscribeReposFrame>({
     maxBacklog: maxBacklog ?? MAX_BACKLOG,
+    maxBytes: MAX_BACKLOG_BYTES,
+    sizeOf: (frame) => ((frame as { blocks?: Uint8Array }).blocks?.byteLength ?? 0) + 512,
     build: (seq, frame) => ({ ...frame, seq, time: now() }),
   });
 }

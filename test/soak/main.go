@@ -138,6 +138,7 @@ func runLoad(args []string) int {
 	tenantEvery := fs.Duration("tenant-every", 0, "interval between tenant cluster scale-out and scale-in cycles (0: off)")
 	tenantName := fs.String("tenant-name", "tenant", "tenant cluster name")
 	tenantLanes := fs.Int("tenant-lanes", 0, "parallel lanes that each create a tenant cluster, scale a node out and in, and delete the cluster")
+	laneBase := fs.Int("lane-base", 0, "number added to the tenant lane numbers, so two processes never share a cluster name")
 	tenantHold := fs.Duration("tenant-hold", 20*time.Second, "how long the tenant pod runs before it is deleted")
 	fs.Parse(args)
 
@@ -331,7 +332,7 @@ func runLoad(args []string) int {
 			fmt.Fprintln(os.Stderr, "the gateway record:", err)
 			return 1
 		}
-		for lane := 1; lane <= *tenantLanes; lane++ {
+		for lane := *laneBase + 1; lane <= *laneBase+*tenantLanes; lane++ {
 			wg.Add(1)
 			go func(lane int) {
 				defer wg.Done()

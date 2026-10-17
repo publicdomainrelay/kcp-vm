@@ -2,6 +2,7 @@ import type { CommitEvent, Sequencer, SequencedFrame } from "@publicdomainrelay/
 import { EventBus } from "@publicdomainrelay/event-bus";
 
 const MAX_BACKLOG = 10000;
+const MAX_BACKLOG_BYTES = 64 * 1024 * 1024;
 
 function now(): string {
   return new Date().toISOString();
@@ -9,6 +10,8 @@ function now(): string {
 
 export class FirehoseSequencer implements Sequencer {
   #backlog: SequencedFrame[] = [];
+  #sizes: number[] = [];
+  #bytes = 0;
   #seq = 0;
   #bus = new EventBus<SequencedFrame>();
 
@@ -32,9 +35,13 @@ export class FirehoseSequencer implements Sequencer {
       prevData: evt.prevData ? { $link: evt.prevData } : null,
       time: now(),
     };
+    const size = (evt.blocks?.byteLength ?? 0) + 512;
     this.#backlog.push(frame);
-    if (this.#backlog.length > MAX_BACKLOG) {
+    this.#sizes.push(size);
+    this.#bytes += size;
+    while (this.#backlog.length > MAX_BACKLOG || (this.#bytes > MAX_BACKLOG_BYTES && this.#backlog.length > 1)) {
       this.#backlog.shift();
+      this.#bytes -= this.#sizes.shift()!;
     }
     this.#bus.publish(frame);
     return frame;
@@ -49,7 +56,12 @@ export class FirehoseSequencer implements Sequencer {
       handle: handle ?? null,
     };
     this.#backlog.push(frame);
-    if (this.#backlog.length > MAX_BACKLOG) this.#backlog.shift();
+    this.#sizes.push(512);
+    this.#bytes += 512;
+    if (this.#backlog.length > MAX_BACKLOG) {
+      this.#backlog.shift();
+      this.#bytes -= this.#sizes.shift()!;
+    }
     this.#bus.publish(frame);
     return frame;
   }
@@ -64,7 +76,12 @@ export class FirehoseSequencer implements Sequencer {
       status: status ?? (active ? "active" : "deactivated"),
     };
     this.#backlog.push(frame);
-    if (this.#backlog.length > MAX_BACKLOG) this.#backlog.shift();
+    this.#sizes.push(512);
+    this.#bytes += 512;
+    if (this.#backlog.length > MAX_BACKLOG) {
+      this.#backlog.shift();
+      this.#bytes -= this.#sizes.shift()!;
+    }
     this.#bus.publish(frame);
     return frame;
   }
