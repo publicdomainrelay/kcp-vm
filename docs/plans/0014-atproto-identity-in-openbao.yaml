@@ -249,7 +249,7 @@ items:
       repositories. Decided by Claude, user may veto.
     files: ["test/ (the 0010 harness)", "deploy/market-network"]
     done_when: "the tests pass on the harness and in the 0010 G3-CI-INTEGRATION pipeline."
-    risks: []
+    risks: ["Remains: the G3-CI-INTEGRATION pipeline run on the GitLab runner; the sign-in test restarts only the web app DenoPod, with no core restart and no `socialweb-computer upgrade` leg."]
     status: doing
     evidence:
 dropped_items:
