@@ -94,7 +94,7 @@ items:
     title: "The PDS is a DenoPod in the application's own kcp"
     depends_on: [M1-BIDDER-OWN-PDS]
     done_when: "units list / the MarketBidder status shows the DenoPod pds Running with its listeners; the bidder finds it as pds.default.app.svc.kcp.local."
-    status: todo
+    status: done
   - id: ACC18-ZERO-OPERATOR-WRITES
     title: "Zero writes to the operator's bsky.social repo per contract"
     depends_on: [M1-BIDDER-OWN-PDS]
@@ -119,7 +119,7 @@ items:
     title: "The gateway's PDS is a DenoPod in the gateway's own kcp"
     depends_on: [M2-GATEWAY-REQUESTER-OWN-PDS]
     done_when: "the Gateway status shows the DenoPod pds Running with its listener next to socialweb-computer-k8s and requester; the requester finds it as pds.default.app.svc.kcp.local."
-    status: todo
+    status: done
   - id: ACC18-GATEWAY-ZERO-OPERATOR-WRITES
     title: "Zero writes to alice's repo per contract"
     depends_on: [M2-GATEWAY-REQUESTER-OWN-PDS]
@@ -146,7 +146,7 @@ items:
       core writes into the operator's repo) whose own repo names that operator back with the same canonical
       record (discoverOperatedDids in operator-discovery-badge-blue-keys). bidderDids stays an extra source.
     done_when: "a gateway with no bidderDids rents a node from a bidder that only its operator's vouched account operates."
-    status: todo
+    status: done
   - id: M3-RECORDS-BEFORE-PDS-STOPS
     title: "Deleting an application removes its AtprotoRecord objects before its pds DenoPod stops"
     depends_on: [M0-SHARED-PDS-DENOPOD]
