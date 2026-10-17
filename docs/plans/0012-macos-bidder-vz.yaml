@@ -150,7 +150,7 @@ items:
     test_first: "None (measurement). Each command's output and exit status with UTC timestamps."
     done_when: "Host record committed; each non-VM mode recorded as works or fails-with-item; the deno-survives-bidder reading recorded."
     risks: []
-    status: todo
+    status: done
     evidence: []
   - id: M0-VFKIT-ASSET
     milestone: M0
@@ -465,7 +465,7 @@ items:
       (devcore, StopTimeout, Delegate) following Capabilities. Also here: stack/bidder CoreConfig passes
       EnforceMemory true to the DenoPod runner, which needs cgroups (cgroup_other.go refuses); on darwin it
       follows Capabilities().EnforcesLimits.
-    files: ["internal/versions/versions.json (darwin/arm64 kcp and kine)", "internal/bootstrap", "internal/stack/bidder/core.go", "internal/apiserverfront/fdstore_darwin.go", "internal/assets/assetpack"]
+    files: ["internal/versions/versions.json (darwin/arm64 kcp and kine)", "internal/bootstrap", "internal/stack/bidder/core.go", "internal/apiserverfront/fdstore_darwin.go", "internal/assets/assetpack", "internal/hostsvc (ListenPort and ListenPorts for darwin: a port-0 listener is read from the process, see M0-HOST-BASELINE)", "internal/portscan/scan_darwin.go", "the MaxSocketPath constants of kcpstore, pgunit, devinstance, apiserverfront, irohdial and vmruntime (107 on Linux, 103 on darwin)"]
     test_first: "None (AGENTS.md: no tests). Live proof: run bidder on the Mac reaches the MarketBidder root applied."
     done_when: "run bidder on the Mac applies its MarketBidder root object with every bootstrap job a launchd job; kill -9 of the core leaves kcp, kine and the front running."
     risks: ["kine's sqlite is cgo; the build host needs Xcode command line tools, and a Linux release cannot make it without a darwin cross toolchain; this is the reason a Mac build step may be recorded in M2-RELEASE-DARWIN."]

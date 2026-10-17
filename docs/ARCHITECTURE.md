@@ -3800,6 +3800,49 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **Plan 0012 M0-HOST-BASELINE: the Mac, and what the landed tree does on it, read on 2026-10-17 UTC (05:21
+  to 05:26).** Host: Mac17,4 (hostname Johns-Air), Apple M5, 10 cores (4 performance, 6
+  efficiency), 24 GiB (`hw.memsize` 25769803776), macOS 27.2 build 26B5101f, Darwin 27.2.0, SIP enabled,
+  FileVault ON, `kern.hv_support` 1, Xcode 27.1 (also the Command Line Tools package 27.0), go 1.26.4 (go.mod
+  switches to 1.26.6 and kine to 1.26.9 by toolchain download), deno 2.9.7, limactl 2.2.0, 32 GiB free of 460.
+  A console session of the owner has been open since Oct 9 (`who`: console), the machine has not rebooted
+  since (`kern.boottime` Oct 9 20:53), `pmset` reads `sleep 1` held off by sharingd, caffeinate and powerd
+  assertions (the Mac sleeps one minute after the last assertion goes; nothing here may release them), and
+  `sudo -n` works for the owner. `socialweb-computer` builds for darwin/arm64 (go build ./cmd/socialweb-computer) and
+  `socialweb-computer --help` marks, per verb, "no backend here ... (plan 0012)": every `dev` verb, `install`,
+  `uninstall`, `check-host`, `run bidder`, `run request`, `serve gateway kcp`, `status`, `units *`,
+  `internal vm *`, `internal devsup`, `internal hostprocesses`. What runs: `version --json` (revision, assets
+  none in a dev build, guest images firecracker/aarch64 and firecracker/x86_64 only), `manifests list|render`,
+  `apply`, `migrate`, `serve gateway xrpc`, `serve provider`, `internal apiserver-front`, `internal iroh-dial`,
+  `nodeimage guest-*`. `check-host` answers "no systemd user manager on darwin/arm64". Third-party binaries on
+  darwin/arm64, measured by hand (they are not guests): kcp v0.33.0 (`kcp_0.33.0_darwin_arm64.tar.gz`, sha256
+  eb6c31c9... equals the release checksums.txt; the binary is 173 MB) started with the exact flags of
+  `kcpserver.SlotArgv` over kine v0.17.1 on a unix socket: admin.kubeconfig after 4 s, listener
+  127.0.0.1:60090 from `--secure-port=0 --experimental-bind-free-port`, controllers synced 13 s after start,
+  RSS 413 MB kcp and 62 MB kine, both stop on SIGTERM. kine has no darwin release; `CGO_ENABLED=1 go install
+  github.com/k3s-io/kine@v0.17.1` builds a working arm64 binary with sqlite in 13 s (55 MB). OpenBao v2.6.2
+  `openbao_2.6.2_darwin_arm64.tar.gz` (sha256 4e495376... matches checksums.txt) runs, and `bao server -dev
+  -dev-listen-address=127.0.0.1:0` binds a port 0 listener (60491) whose number appears in no log line (the log
+  prints `:0`), so reading a bound port needs a darwin `hostsvc.ListenPort` (today a refusal reading /proc;
+  `lsof`, `netstat -anv` or libproc are the candidates). `deno check --node-modules-dir=none` of
+  `ts/atproto-market/hono-plc/mod.ts` and `hono-bidder/mod.ts` passes on deno 2.9.7. Release assets that exist
+  for darwin/arm64: vfkit v0.6.4 (66 MB universal x86_64+arm64, signed Red Hat Developer ID with
+  `com.apple.security.virtualization`), gvproxy v0.9.0 (`gvproxy-darwin`, 27 MB), dumbpipe v0.39.0
+  (`dumbpipe-v0.39.0-darwin-aarch64.tar.gz`), deno, bao, kcp. A unix socket path of 103 bytes binds and 104
+  fails with EINVAL on darwin (sun_path is 104), while `kcpstore`, `pgunit`, `devinstance`, `apiserverfront`,
+  `irohdial` and `vmruntime` hold 107: every one of those constants and the install state dir
+  (`/var/db/socialweb-computer/bidder/<h>/...` is long) must become OS-dependent. A home directory is mode 750
+  (`drwxr-x---+`), so a daemon user cannot execute anything staged under the owner's `~/.tmp`: spike jobs run
+  from a root-owned directory (`/private/var/db/socialweb-m0012`). The process-group question, measured with a
+  stand-in parent that starts one child with `Setpgid` and one without, as a system-domain launchd job with
+  `UserName` a non-admin account (`socialweb-m0012`, uid 480): SIGKILL of the job process took the plain child
+  with it, and the `Setpgid` child (the shape of `execrunner` `osProcessHost.prepare`) was re-parented to launchd
+  (ppid 1), survived the SIGKILL and survived `launchctl bootout`, and only a root `kill` removed it. So
+  the plan's claim holds: on darwin the DenoPod runner must not give each run its own process group, or the
+  deno children outlive a crashed bidder. Not run, because nothing places them yet: an OpenBaoServer object, the
+  embedded deno with a closure, a DenoPod through the runner (`runner_darwin.go` refuses); they are the
+  acceptance of M1-HOSTUNIT-LAUNCHD, M1-BOOTSTRAP-DARWIN and M1-DENOPOD-RUNNER-DARWIN.
+
 - **Plan 0012 M0-REVISIT: the darwin seams as they landed, and what the plan missed, on 2026-10-16.** Read at
   socialweb-computer-kcp 79f40adb (vendored ts/hono-compute-provider and ts/atproto-market at that commit);
   plans 0006 (45 items), 0007 (32) and 0008 (16) are all done. `GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build
