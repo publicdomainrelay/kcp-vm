@@ -206,5 +206,5 @@ export const OAUTH_SCOPE_STRING = OAUTH_SCOPE.join(" ");
  * `http://localhost?...` client id. Preserved verbatim (existing behavior).
  */
 export const OAUTH_SCOPE_LOCALHOST =
-  "atproto repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create,update,delete " +
+  "atproto repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create&action=update&action=delete " +
   "rpc:com.publicdomainrelay.temp.requester.associateConfirm?aud=*";
