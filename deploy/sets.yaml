@@ -378,6 +378,10 @@ sets:
         after:
           - kind: APIBinding
             for: Ready
+      - name: records
+        workspace: root:app
+        files:
+          - path: apps/gateway/records.yaml
       - name: socialweb-computer-k8s@prod
         workspace: root:app
         files:
