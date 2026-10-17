@@ -354,6 +354,9 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 				if err := ctl.associateGatewayOperator(ctx, id, m.OwnerSessionsFile, o.Spec.Network); err != nil {
 					ctl.c.log().Warn("associating the requester's DID with the market network operator account", "err", err.Error())
 				}
+				if err := ctl.reconcileOperatorRecords(ctx, ctl.c.workspace(), m.OwnerSessionsFile, o.Spec.Network); err != nil {
+					ctl.c.log().Warn("writing the declared records of the market network operator account", "err", err.Error())
+				}
 			}
 		}
 		if ctl.c.OnComponents != nil {

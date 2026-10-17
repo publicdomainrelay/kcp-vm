@@ -518,6 +518,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 		}()
 	}
 	wg.Wait()
+	n.declareOperatorVouches(ctx, o.Spec.Apps)
 	st.Apps = apps
 	var names []string
 	for _, a := range o.Spec.Apps {
