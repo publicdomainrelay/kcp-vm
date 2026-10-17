@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -28,6 +29,7 @@ const (
 	BidderAccountDomain = "bob.test"
 	CABundleFile        = "ca-bundle.pem"
 	NetworkServiceState = "state"
+	NetworkPortsFile    = "ports.json"
 )
 
 type service struct {
@@ -77,8 +79,41 @@ func (n *networks) values(spec v1alpha1.MarketNetworkSpec) (manifests.MarketNetw
 	if label == "" {
 		label = n.ctl.c.Layout.ID
 	}
+	var ports manifests.NetworkPorts
+	devinstance.ReadJSON(filepath.Join(dir, NetworkPortsFile), &ports)
 	return manifests.MarketNetwork{NetworkID: label, StateDir: filepath.Join(dir, NetworkServiceState), GuestTLSDir: guest,
-		PDSPrivateKeyHex: alice, BobPDSPrivateKeyHex: bob}, nil
+		PDSPrivateKeyHex: alice, BobPDSPrivateKeyHex: bob, Ports: ports}, nil
+}
+
+func servicePorts(views map[string]podView) (manifests.NetworkPorts, error) {
+	var p manifests.NetworkPorts
+	for key, into := range map[string]*int{"global/plc": &p.Plc, "relay/relay": &p.Relay, "relay/dispatcher": &p.Dispatcher,
+		"relay/dispatcher-tls": &p.DispatcherTLS, "alice/pds": &p.AlicePds, "bob/pds": &p.BobPds} {
+		s, err := portFrom(views[key].Address)
+		if err != nil {
+			return p, fmt.Errorf("%s: %w", key, err)
+		}
+		if *into, err = strconv.Atoi(s); err != nil {
+			return p, fmt.Errorf("%s: %w", key, err)
+		}
+	}
+	return p, nil
+}
+
+func (n *networks) holdPorts(views map[string]podView) (string, error) {
+	live, err := servicePorts(views)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(NetworkStateDir(n.ctl.c.Layout.StateDir), NetworkPortsFile)
+	var recorded manifests.NetworkPorts
+	if devinstance.ReadJSON(path, &recorded) != nil {
+		return "", devinstance.WriteJSON(path, live)
+	}
+	if live != recorded {
+		return fmt.Sprintf("the network's services listen on %+v, not on the ports they keep across a core restart %+v; waiting for them to bind those again", live, recorded), nil
+	}
+	return "", nil
 }
 
 func (n *networks) applyServices(ctx context.Context, owner string, values *manifests.MarketNetwork) error {
@@ -382,6 +417,13 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	if !rep.ready() {
 		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, false, "Waiting", strings.Join(rep.notReady, "; "))
 		return write(v1alpha1.ApplicationPhaseProvisioning, "waiting for the network's services to report ready")
+	}
+	if why, err := n.holdPorts(views); err != nil || why != "" {
+		if err != nil {
+			why = err.Error()
+		}
+		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, false, "Rebinding", why)
+		return write(v1alpha1.ApplicationPhaseProvisioning, why)
 	}
 	bundle, err := n.caBundle(ctx)
 	if err != nil {

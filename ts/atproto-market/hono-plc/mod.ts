@@ -1,7 +1,7 @@
 import { Command } from "@publicdomainrelay/cli-args-env";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
-import { createPlcDirectoryFactory, MemoryPlcStore } from "@publicdomainrelay/hono-factory-did-plc-directory";
+import { createPlcDirectoryFactory, FilePlcStore, MemoryPlcStore } from "@publicdomainrelay/hono-factory-did-plc-directory";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -13,7 +13,8 @@ const { options } = await new Command(
 ).resolve();
 
 const logger = createLogger({ serviceName: "hono-plc" });
-const store = new MemoryPlcStore();
+const statePath = options.statePath as string | undefined;
+const store = statePath ? new FilePlcStore(statePath) : new MemoryPlcStore();
 const factory = createPlcDirectoryFactory({ store });
 
 const port = options.port as number;

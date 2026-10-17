@@ -34,6 +34,10 @@
       "type": "string",
       "description": "File every bound listener (tcp, unix, relay) is reported to as JSON once listening",
       "env": "LISTENERS_FILE"
+    },
+    "state-path": {
+      "type": "string",
+      "description": "A JSON file that keeps the directory's operation log across restarts; unset keeps it in memory"
     }
   }
 }

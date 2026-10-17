@@ -15,7 +15,7 @@ export interface PlcStore {
 }
 
 export class MemoryPlcStore implements PlcStore {
-  private logs = new Map<string, LogEntry[]>();
+  protected logs = new Map<string, LogEntry[]>();
 
   async getCurrentOps(did: string): Promise<LogEntry[]> {
     const ops = this.logs.get(did);
@@ -64,5 +64,33 @@ export class MemoryPlcStore implements PlcStore {
     all.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     if (count !== undefined) return all.slice(0, count);
     return all;
+  }
+}
+
+export class FilePlcStore extends MemoryPlcStore {
+  constructor(private readonly path: string) {
+    super();
+    try {
+      const saved = JSON.parse(Deno.readTextFileSync(path)) as Record<string, LogEntry[]>;
+      for (const [did, ops] of Object.entries(saved)) this.logs.set(did, ops);
+    } catch (err) {
+      if (!(err instanceof Deno.errors.NotFound)) throw err;
+    }
+  }
+
+  private async save(): Promise<void> {
+    const tmp = `${this.path}.tmp`;
+    await Deno.writeTextFile(tmp, JSON.stringify(Object.fromEntries(this.logs)));
+    await Deno.rename(tmp, this.path);
+  }
+
+  override async insertOp(entry: LogEntry): Promise<void> {
+    await super.insertOp(entry);
+    await this.save();
+  }
+
+  override async nullifyOps(did: string, cids: string[]): Promise<void> {
+    await super.nullifyOps(did, cids);
+    await this.save();
   }
 }

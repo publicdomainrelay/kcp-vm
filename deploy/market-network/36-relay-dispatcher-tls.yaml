@@ -16,7 +16,7 @@ spec:
     GUEST_TLS_DIR: "{{.GuestTLSDir}}"
     DISPATCHER_HOST: "relay.localhost"
     DISPATCHER_PORT: "{{.DispatcherPort}}"
-    TLS_PORT: "0"
+    TLS_PORT: "{{.Ports.DispatcherTLS}}"
   script: |
     const dir = Deno.env.get("GUEST_TLS_DIR") ?? "";
     const base = Deno.env.get("DISPATCHER_HOST") ?? "relay.localhost";

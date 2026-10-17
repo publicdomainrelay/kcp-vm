@@ -30,6 +30,16 @@ type MarketNetwork struct {
 	BobPDSPrivateKeyHex string `json:",omitempty"`
 	DispatcherPort      int    `json:",omitempty"`
 	GuestTLSPort        int    `json:",omitempty"`
+	Ports               NetworkPorts
+}
+
+type NetworkPorts struct {
+	Plc           int
+	Relay         int
+	Dispatcher    int
+	DispatcherTLS int
+	AlicePds      int
+	BobPds        int
 }
 
 type MarketBidder struct {

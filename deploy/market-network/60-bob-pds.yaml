@@ -4,9 +4,9 @@ stateDir: "{{.StateDir}}/bob-pds"
 memory: 512Mi
 serviceAccount: deno-runner
 tls: serve
-args: ["--port", "0", "--hostname", "127.0.0.1", "--kv-path", "{{.StateDir}}/bob-pds/kv.sqlite3"]
+args: ["--port", "{{.Ports.BobPds}}", "--hostname", "127.0.0.1", "--kv-path", "{{.StateDir}}/bob-pds/kv.sqlite3"]
 env:
-  PORT: "0"
+  PORT: "{{.Ports.BobPds}}"
   HOSTNAME: "127.0.0.1"
   PDS_PUBLIC_HOSTNAME: pds.default.bob.svc.kcp.local
   PDS_PLC_DIRECTORY_URL: https://plc.default.global.svc.kcp.local

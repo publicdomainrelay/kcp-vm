@@ -5,9 +5,9 @@ memory: 512Mi
 serviceAccount: deno-runner
 tls: serve
 trust: ["{{.GuestTLSDir}}/ca.crt"]
-args: ["--port", "0", "--hostname", "127.0.0.1", "--kv-path", "{{.StateDir}}/relay-relay/kv.sqlite3"]
+args: ["--port", "{{.Ports.Relay}}", "--hostname", "127.0.0.1", "--kv-path", "{{.StateDir}}/relay-relay/kv.sqlite3"]
 env:
-  PORT: "0"
+  PORT: "{{.Ports.Relay}}"
   HOSTNAME: relay.default.relay.svc.kcp.local
 permissions:
   net: true
