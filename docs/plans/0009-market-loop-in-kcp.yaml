@@ -341,7 +341,7 @@ acceptance:
       evidence: []
     - id: ACC9-LATENCY
       text: "kcp adds at most 20 ms p95 to rfp seen -> bid published."
-      status: todo
+      status: done
       evidence: []
     - id: ACC9-GUEST-IDENTITY
       text: "Every guest token is issued by the bidder handle's own OpenBaoServer after an sshsig login with the guest's bound host key; its audience comes only from a GuestIdentityGrant derived from the requester's RBAC records; no other vault in the stack loads the sshsig plugin."

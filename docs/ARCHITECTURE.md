@@ -3735,21 +3735,12 @@ because it bounds a mechanism the rest of this document leans on.
   limit). M4-SOAK-READING retunes them from the plateau it reads; until then a quota hit is a finding, not
   a fault.
 
-- **The bidder's kcp wait on the hot path is over 20 ms p95 when the host is oversubscribed (opened by
-  plan 0009 M4-LATENCY-READINGS, 2026-10-15).** The reading is in section 15. On a host at load 3 to 20
-  the wait (the gate `get` plus the Bid `createIfAbsent`) was 4.5 ms p50 and 5.7 ms p95 over 100 RFPs.
-  In two blocks run at load 35 on 16 cores it was 5.6 and 4.9 ms p50 and 24.1 and 26.9 ms p95, and
-  `rfp seen -> bid published` was in queue collapse in the same blocks, so the stall is the process's
-  scheduling and not kcp (the same client against the same kcp measured 0.7 ms p95 for a `get` and
-  1.9 ms for a create at load 4 to 5). Not closed: the budget is held where it was measured and not
-  where the host is starved. The rule when it recurs on a host below load 16, or in the prod bidder's
-  `status.market` readings, is the one the plan wrote down: the Bid create moves after the publish and
-  dedup falls back to the market.bid record key (an rkey derived from the RFP uri). It needs a reading
-  of the prod bidder (hat-8, the lead). The reading is now one command on any bidder (section 15,
-  M4-LATENCY-READINGS item 9): on a quiet dev-linux-1 the kcp wait is 40 to 51 ms p95, over the
-  budget, and 12.7 ms of the 29 ms p50 is `claim`, which counts Bids and ComputeVMs fresh before the
-  create. Cheaper first steps than moving the create: serve `claim` the quota gauge that `capacity`
-  just read, and read prod before changing anything.
+- **The bidder's kcp wait on the hot path: the prod reading is open (plan 0009 ACC9-LATENCY, 2026-10-17).**
+  The cuts and the readings on dev-linux-1 are in section 15 (M4-LATENCY-READINGS item 10): the kcp wait
+  went from 30 / 42 to 11 / 13 ms p50 / p95 (4 at a time, one series of two at 25.7) and from 30 / 93 to
+  12 / 16 serial. What is left is the prod bidder's own `status.market.kcpWait` over 256 RFPs after the
+  deploy. If its p95 is over 20 ms at a host load under 16, the next cut is the Bid create beside the
+  bid config and payload PDS writes. If it holds, this item closes into section 15.
 
 - **The Windows bidder: the seams as they landed (plan 0011 M0-REVISIT, 2026-10-16, read at 79f40adb;
   hono-compute-provider and atproto-market are `ts/` in the same tree).** `GOOS=windows GOARCH=amd64 go
@@ -8613,8 +8604,8 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
      counters (integer microseconds: the generated validator takes integers only). `rfpToBid` runs
      from the RFP's entry into the bidder's gate (`bidLoop.rfpGate`) to the call of
      `ledger.published`; `kcpWait` is the time the bidder waited on kcp in that span: the gate
-     `find`, the quota `capacity` check, `claim`, and the `published` status patch (the patch is not
-     awaited by the path, but its time is counted). Read it with `kubectl get marketbidder app -o
+     `find`, the quota `capacity` check, `claim`, and (until item 10) the `published` status patch (the
+     patch is not awaited by the path, but its time was counted). Read it with `kubectl get marketbidder app -o
      jsonpath='{.status.market.kcpWait}'` on the bidder's kcp. The ring is not stored; a restart of
      the bidder empties it. Reading, dev-linux-1 (c-48), commit 56569f26, one bidder market network
      (`dev up --profile market-network --bidders 1`), 20 RFPs each from `run request --skip-ssh`
@@ -8627,7 +8618,52 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
      `claim` 12.7 (a `get`, a fresh quota count of Bids and ComputeVMs, the create) and `published`
      8.4. The calls the path awaits sum to about 21 ms p50; each kcp call on this droplet is 3 to 4
      ms, against 0.5 to 1 ms in the earlier reading. So ACC9-LATENCY is not met on this host and the
-     check stays todo. The "3 live slots" were `SWC_LIVE_SLOTS` in the lead's
+     check stays todo.
+  10. Fewer awaited kcp round trips on the hot path (plan 0009 ACC9-LATENCY, 2026-10-17, commit
+     e9630cc6; before = d1fc3531). Three changes in `bid-loop.ts` and `market-bidder-bids-kcp`. The
+     gate reads the Bid (`find`) and the quota counts (`capacity`) at the same time, and the two counts
+     (Bids, ComputeVMs) are read at the same time; the sum of the awaited gate time is counted once,
+     not once per call. The counts are kept for the quota cache window (2 s) and a created Bid raises
+     the kept Bid count; `claim` reads the kept counts (a recount only when the window ended while the
+     policy ran) and goes straight to the `createIfAbsent`, whose 409 already answers an existing Bid
+     with the one `get` it needs. `claim` calls `get` first only when a quota is full, to tell an
+     existing Bid (returned, not refused) from a new one (refused). The create is still the atomic
+     claim: one POST with the Bid name, a conflict means another process holds it. The `published`
+     patch is not awaited and not in `kcpWait` any more (item 9 counted it; `rfpToBid` and `kcpWait`
+     now both stop at the call of `ledger.published`). The exact-count rule of M2-QUOTAS changes in one
+     way: the count `claim` checks is at most 2 s old (and includes this bidder's own new Bids), where
+     it was read fresh; the kcp ResourceQuota backstop is unchanged.
+     Conditions: dev-linux-1 (c-48), host load 1 to 4 throughout, one bidder market network per series
+     (a fresh network each, the fake PDS runs out of heap after about 30 `run request`), 20 RFPs each
+     from `run request --skip-ssh`, bidder restarted before the series, all RFPs counted (no
+     warm-up dropped); the per-call timer is a temporary log line in the mirror's `kcp-client-rest`
+     (not committed), the same one for before and after. `kcpWait` p50 / p95 (max) ms:
+     before, 4 at a time 30.3 / 42.3 (44.0), serial 29.8 / 93.0 (93.0, 19 RFPs: the first request
+     hung before its RFP, see below); after, serial 12.3 / 15.8 (17.4), 4 at a time 11.9 / 25.7 (40.1)
+     and, on a second fresh network, 10.9 / 13.5 (13.9). The 25.7 series has a 34 ms `list` and a 20 ms
+     create in it; the same code with the kine file on tmpfs, 4 at a time: 11.4 / 13.2 (15.8). `rfpToBid`
+     p50 stayed 500 to 550 ms (the policy evaluation and the PDS writes). Per-call p50 / p95 ms, disk,
+     before (serial): `get` of the Bid 2.7 / 3.7, `list` limit=1 2.3 / 2.7 (Bids) and 1.9 / 2.3
+     (ComputeVMs), create 5.2 / 10.4, `published` = `get` 2.7 + patch 5.1 / 45.8; after (serial): `get`
+     2.6 / 4.9, `list` 4.1 / 4.8 and 3.8 / 5.0 (slower when two run at once; the pair costs the
+     slower one), create 6.8 / 10.4. Awaited path before: 2.7 + 2.3 + 1.9 + 2.7 + 2.3 + 1.9 + 5.2 = 19
+     ms of calls in 7 round trips plus the counted patch; after: max(2.6, 4.1) + 6.8 in 2 steps. Disk
+     effect (kine sqlite on tmpfs against the default disk, same code, 4 at a time): the median of each
+     call is the same on both (`get` 2.8 and 2.8, create 5.7 and 5.9), so the 3 to 4 ms per call is
+     not storage; the tail is: single calls of 20 to 70 ms (a `list` 34, a `get` 30, a status patch 47)
+     appear on disk, and no awaited call of the tmpfs series was over 13.5 ms. The status patch of 46 to 48 ms at p95
+     is on tmpfs as well (n 80 each), so that one is not the disk; it is off the awaited path. The
+     production durability settings are unchanged. Not isolated: whether the 25.7 series was the
+     droplet's disk (guests of earlier requests booting at the same time) or chance; the second disk
+     series at 13.5 says the tail is rare, and the prod reading (256 RFPs) decides. A load driver
+     lesson: a `run request` that hangs before its RFP printed nothing for 28 minutes (ssh to the
+     droplet stalled once, also seen on a `dev restart` right after `dev up`); the driver now kills a
+     request at 240 s and prints a line per request. Decision: ACC9-LATENCY is done on this reading
+     (p95 15.8, 13.5, 13.2 against 20, three of four series). The lead reads the prod bidder after
+     the deploy; a prod p95 over 20 ms with host load under 16 reopens it, and the next step is
+     the Bid create beside the bid config and payload PDS writes (they take about 150 ms), not a fallback
+     to the market.bid record key.
+  The "3 live slots" were `SWC_LIVE_SLOTS` in the lead's
   `~/.tmp/swc-lead/live-slot.ts`, not hardware. Readings on hat-8 (Ryzen 7 7700X, 16 threads, 46 GB, load
   average 20 to 29 from other work) and on a DigitalOcean `c-16-intel` droplet (16 vCPU Xeon 8358, 32 GB,
   /dev/kvm present, `kvm_intel nested=Y`; a `c-16` Xeon 8168 droplet has it too), one `1 bidder` market
