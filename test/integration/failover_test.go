@@ -26,6 +26,7 @@ const (
 	failoverReplaceWait    = 6 * time.Minute
 	failoverBackWait       = 3 * time.Minute
 	failoverOrphanWait     = 3 * time.Minute
+	failoverVMWait         = 30 * time.Second
 	failoverPod            = "it-failover"
 )
 
@@ -148,7 +149,16 @@ func TestAStoppedBidderIsReplacedAndReleasesItsOrphan(t *testing.T) {
 	other := 1 - winner
 	oldRFP := first.Status.Contract.RFPUri
 	oldReceipt := first.Status.Contract.ReceiptUri
-	t.Logf("+%.1fs: claim %s (%s) accepted by %s; stopping it before the node joins", time.Since(started).Seconds(), first.Name, first.Status.Phase, n.bidderName(winner))
+	if oldReceipt == "" {
+		t.Fatalf("claim %s has an accept but no receipt", first.Name)
+	}
+	onVM := `"receiptUri":"` + oldReceipt + `","type":"accepted"`
+	for deadline := time.Now().Add(failoverVMWait); !strings.Contains(n.appRunLogs(n.bidderName(winner)), onVM); time.Sleep(200 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s did not record receipt %s on a ComputeVM inside %s", n.bidderName(winner), oldReceipt, failoverVMWait)
+		}
+	}
+	t.Logf("+%.1fs: claim %s (%s) accepted by %s, whose contract names its ComputeVM; stopping it before the node joins", time.Since(started).Seconds(), first.Name, first.Status.Phase, n.bidderName(winner))
 	if err := n.SetBidderStopped(ctx, winner, true); err != nil {
 		t.Fatal(err)
 	}

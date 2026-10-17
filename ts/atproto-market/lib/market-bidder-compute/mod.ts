@@ -354,11 +354,49 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     log("info", "bidder_guest_gone_no_contract", { providerId: gone.id, reason: gone.reason });
   };
 
+  const releasedWhileDown = async (contract: ActiveContract): Promise<{ uri: string; cid: string; value: Record<string, unknown> } | undefined> => {
+    if (!contract.receiptUri || !contract.acceptAuthor) return undefined;
+    const doc = await idResolver.did.resolve(contract.acceptAuthor).catch(() => null);
+    const pds = doc?.service?.find((s) => s.id === "#atproto_pds" || s.id.endsWith("#atproto_pds"))?.serviceEndpoint;
+    if (typeof pds !== "string") return undefined;
+    let cursor = "";
+    // ponytail: scans at most 20 pages (2000 market.event records) of the requester's repo; a per-receipt index when repos grow past that
+    for (let page = 0; page < 20; page++) {
+      const q = new URLSearchParams({ repo: contract.acceptAuthor, collection: EVENT_NSID, limit: "100" });
+      if (cursor) q.set("cursor", cursor);
+      const res = await fetch(`${pds.replace(/\/+$/, "")}/xrpc/com.atproto.repo.listRecords?${q}`).catch(() => undefined);
+      if (!res?.ok) {
+        await res?.body?.cancel();
+        log("warn", "bidder_restore_release_check_failed", { receiptUri: contract.receiptUri, requester: contract.acceptAuthor, status: res?.status });
+        return undefined;
+      }
+      const body = await res.json() as { cursor?: string; records?: Array<{ uri: string; cid: string; value: Record<string, unknown> }> };
+      for (const r of body.records ?? []) {
+        const receipt = r.value.receipt as { uri?: string } | undefined;
+        const payload = r.value.payload as { uri?: string } | undefined;
+        if (receipt?.uri === contract.receiptUri && payload?.uri && nsidFromUri(payload.uri) === COMPUTE_EVENTS_VM_DELETE_NSID) return r;
+      }
+      cursor = body.cursor ?? "";
+      if (!cursor || !body.records?.length) return undefined;
+    }
+    return undefined;
+  };
+
   const restore = async (): Promise<void> => {
     for (const [key, contract] of [...activeContracts]) {
       if (!contract.restored || contract.provider !== computeProvider.name) continue;
       contract.restored = false;
       if (!activeContracts.has(key)) continue;
+      const deletion = await releasedWhileDown(contract);
+      if (deletion) {
+        log("warn", "bidder_restored_contract_released_while_down", { receiptKey: key, event: deletion.uri });
+        await onVmDelete({
+          uri: deletion.uri, cid: deletion.cid, event: deletion.value as EventDispatchContext["event"],
+          payloadNsid: COMPUTE_EVENTS_VM_DELETE_NSID, issuerDid: contract.acceptAuthor, serviceId: "pdr_temp_compute_event",
+          resolve, log, req: new Request("https://localhost"),
+        });
+        continue;
+      }
       const providerId = await contract.providerIdPromise?.catch(() => undefined);
       let gone: GuestGone | undefined;
       if (providerId === undefined) {
