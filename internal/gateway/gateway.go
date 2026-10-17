@@ -267,10 +267,13 @@ func (s *Server) ControlPlaneDown(ctx context.Context, caller Caller, req NameRe
 }
 
 func (s *Server) DeleteCluster(ctx context.Context, caller Caller, req NameRequest) (ClusterView, error) {
-	if _, err := s.lookup(ctx, caller, req); err != nil {
+	view, err := s.lookup(ctx, caller, req)
+	if err != nil {
 		return ClusterView{}, err
 	}
-	s.revokeCerts(ctx, "deleteCluster", caller, req.Name)
+	if view.Phase != "Draining" {
+		s.revokeCerts(ctx, "deleteCluster", caller, req.Name)
+	}
 	return s.Store.Delete(ctx, caller, req.Name)
 }
 
