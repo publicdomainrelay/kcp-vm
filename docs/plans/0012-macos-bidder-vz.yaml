@@ -172,7 +172,7 @@ items:
     test_first: "None (measurement)."
     done_when: "codesign, xattr, spctl and run readings recorded for the extracted vfkit; signing step order recorded."
     risks: ["Never rewrite an extracted asset in place (Apple: in-place replacement risks a code-signing kill); a re-extraction is always a new file plus rename."]
-    status: todo
+    status: done
     evidence: []
   - id: M0-SCRATCH-BACKEND
     milestone: M0
@@ -609,10 +609,12 @@ items:
     depends_on: [M1-GUEST-IMAGE-ARM64, "0006:M4-BUILD", "0006:M0-SIZE-BUDGET"]
     decision: >
       The reproducible build (0006:M4-BUILD) gains darwin/arm64 carrying: the core binary (CGO_ENABLED=0,
-      ad-hoc signed by the Go linker), deno darwin/arm64, bao darwin/arm64, vfkit darwin/arm64 signed with
-      the virtualization entitlement before pinning (M0-VFKIT-ASSET), gvproxy if chosen, the arm64 guest
-      image, the TypeScript closure; no k3s, kine, postgres, firecracker or pasta (`serve gateway kcp`
-      refuses by name on darwin). darwin/amd64 is the user's question (recommended: not built until asked).
+      ad-hoc signed by the Go linker), deno darwin/arm64, bao darwin/arm64, kcp and kine darwin/arm64
+      (M1-BOOTSTRAP-DARWIN), vfkit darwin/arm64 as the arm64 slice of the upstream universal Developer ID binary,
+      unchanged (M0-VFKIT-ASSET: the slice is byte-identical to lipo -thin and can be cut on Linux, so no
+      signing step is needed), gvproxy if chosen, the TypeScript closure; the arm64 guest image is fetched, not
+      embedded (M1-GUEST-IMAGE-ARM64); no k3s, postgres, firecracker or pasta (`serve gateway kcp` refuses by
+      name on darwin). darwin/amd64 is the user's question (recommended: not built until asked).
       Notarization and Developer ID are the user's question; until answered, the release is ad-hoc signed
       and the docs say how to clear quarantine on a downloaded binary. Byte-identical builds hold for the
       unsigned inputs; signing is a recorded post-step whose output sha256 is pinned.
