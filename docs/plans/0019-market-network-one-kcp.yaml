@@ -60,7 +60,7 @@ items:
       profile is removed; prod (run bidder, install gateway, run request without --network) is unchanged.
     files: ["internal/appctl/child.go", "internal/appctl/appworkspace.go", "internal/appctl/network.go", "internal/bootstrap", "internal/devcore", "internal/devinstance"]
     done_when: "on a fresh droplet dev up --profile market-network --bidders 1 --with-gateway is Ready with OneKcp True; kubectl get workspaces shows root:global, root:relay, root:alice, root:bob, root:bidder-1(:app), root:gateway(:app); no child kine or kcp process runs."
-    status: todo
+    status: done
   - id: M2-GATEWAY-IN-WORKSPACE
     title: "The gateway child runs in root:gateway"
     depends_on: [M1-CHILD-IN-WORKSPACE]
@@ -73,7 +73,7 @@ items:
       clusterprovider registry, sweepkcp and the tenant credential paths.
     files: ["internal/stack/gatewaykcp"]
     done_when: "a tenant cluster of the network's gateway gets a node as a market RFP VM from bidder-1 (RFP -> bid -> accept -> cloud-init guest -> Ready node)."
-    status: todo
+    status: done
   - id: M3-CROSS-WORKSPACE-REFS
     title: "Cross-application values are valueFrom references that name a workspace"
     depends_on: [M1-CHILD-IN-WORKSPACE]
@@ -86,7 +86,7 @@ items:
       its one kcp or the composer fills them.
     files: ["internal/appctl", "deploy/apps"]
     done_when: "a record in one application's workspace resolves a reference into another's on the market network, and the same record without workspace resolves in prod."
-    status: todo
+    status: done
   - id: M3B-FRONTS-SURVIVE-A-CORE-RESTART
     title: "The network's fronts keep their ports across a core restart"
     depends_on: [M1-CHILD-IN-WORKSPACE]
@@ -97,7 +97,7 @@ items:
       own; ServicesReady waits for them. hono-plc --state-path keeps the PLC log.
     files: ["internal/appctl/network.go", "internal/manifests/service.go", "deploy/market-network", "ts/atproto-market/hono-plc"]
     done_when: "after dev restart --instance <network> core (and --binary) every front reports its old address, the network is Ready and run request --network completes."
-    status: todo
+    status: done
   - id: M3C-ADOPT-DENOPODS
     title: "A core restart adopts the running DenoPods instead of restarting them"
     depends_on: [M3B-FRONTS-SURVIVE-A-CORE-RESTART]
