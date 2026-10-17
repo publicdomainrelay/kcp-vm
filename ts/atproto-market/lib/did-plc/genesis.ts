@@ -93,3 +93,9 @@ export async function createGenesisOp(opts: GenesisOptions): Promise<GenesisResu
 
   return { did, op };
 }
+
+export async function createTombstoneOp(opts: { prev: string; sign: (bytes: Uint8Array) => Promise<Uint8Array> }): Promise<Operation> {
+  const unsigned = { type: "plc_tombstone", prev: opts.prev };
+  const sig = toBase64url(await opts.sign(cborEncode(unsigned)));
+  return { ...unsigned, sig } as Operation;
+}

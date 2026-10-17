@@ -1,4 +1,9 @@
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
+import { Secp256k1Keypair } from "@atproto/crypto";
+import { createLogger } from "@publicdomainrelay/logger";
+import { createServe } from "@publicdomainrelay/serve";
+import { signServiceAuth } from "@publicdomainrelay/atproto-repo-deno";
+import { createOAuthLocalPds, type OAuthLocalPds } from "@publicdomainrelay/atproto-helpers";
 
 const CLUSTER_NSID = "com.publicdomainrelay.temp.cluster.";
 const K8S_NSID = "computer.socialweb.k8s.";
@@ -16,8 +21,16 @@ const args = parseArgs(Deno.args, {
     "image",
     "kubectl",
     "bidder-kubeconfig",
+    "identity",
+    "plc",
+    "ingress-proxy-host",
+    "web-origin",
   ],
+  boolean: ["web-signin", "ingress-tls"],
   default: {
+    identity: "ephemeral",
+    plc: "https://plc.directory",
+    "ingress-proxy-host": "xrpc.fedproxy.com",
     gateway: "https://k8s.socialweb.computer",
     audience: "did:web:k8s.socialweb.computer",
     creds: "~/.aliceoa_bsky_social_source",
@@ -40,6 +53,9 @@ function expand(path: string): string {
 }
 
 const gateway = args.gateway.replace(/\/+$/, "");
+const webOrigin = (args["web-origin"] ?? args.gateway).replace(/\/+$/, "");
+const ephemeral = args.identity === "ephemeral";
+if (!ephemeral && args.identity !== "creds") throw new Error("--identity is ephemeral or creds");
 const logPath = expand(args.log);
 const readyTimeout = Number(args["ready-timeout"]) * 1000;
 const jobTimeout = Number(args["job-timeout"]) * 1000;
@@ -112,6 +128,119 @@ interface Session {
 }
 
 let session: Session | null = null;
+let pds: OAuthLocalPds | null = null;
+let tombstoned = false;
+let webToken: string | null = null;
+
+async function openEphemeral(): Promise<void> {
+  const t = Date.now();
+  const logger = createLogger({ serviceName: "prod-canary" });
+  const serve = createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 } });
+  pds = await createOAuthLocalPds({
+    logger,
+    keypair: await Secp256k1Keypair.create({ exportable: true }),
+    serve,
+    plcDirectoryUrl: args.plc.replace(/\/+$/, ""),
+    ingressProxyHost: args["ingress-proxy-host"],
+    tls: args["ingress-tls"],
+  });
+  if (args["web-signin"]) await pds.beginServe();
+  note("ephemeralIdentity", t, true, { did: pds.did, pds: pds.issuer });
+}
+
+function cookieOf(r: Response, name: string): string | null {
+  for (const c of r.headers.getSetCookie()) {
+    const [pair] = c.split(";");
+    const i = pair.indexOf("=");
+    if (pair.slice(0, i).trim() === name) return pair.slice(i + 1).trim();
+  }
+  return null;
+}
+
+async function webSignIn(): Promise<void> {
+  const t = Date.now();
+  const start = await http(`${webOrigin}/oauth/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: webOrigin },
+    body: JSON.stringify({ handle: pds!.did }),
+  });
+  if (!start.ok) throw new CanaryError(`/oauth/start answered ${start.status}: ${(await start.text()).slice(0, 300)}`);
+  const state = cookieOf(start, "swc_oauth_state");
+  const { authorizationUrl } = await start.json();
+  if (!state || !authorizationUrl) throw new CanaryError("/oauth/start set no state cookie or gave no authorizationUrl");
+  const callback = await pds!.approve(authorizationUrl);
+  if (!callback.startsWith(`${webOrigin}/`)) throw new CanaryError(`the PDS redirected to ${new URL(callback).origin}, not the web app`);
+  const back = await http(callback, { headers: { cookie: `swc_oauth_state=${state}` }, redirect: "manual" });
+  await back.body?.cancel();
+  webToken = cookieOf(back, "swc_session");
+  if (!webToken) throw new CanaryError(`the callback answered ${back.status} ${back.headers.get("location") ?? ""} and set no session cookie`);
+  const who = await web("GET", "/session");
+  if (who.status !== 200 || who.body.did !== pds!.did) throw new CanaryError(`GET /session answered ${who.status} for ${JSON.stringify(who.body)}`);
+  note("webSignIn", t, true, { did: who.body.did });
+}
+
+async function web(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<Answer> {
+  const r = await http(`${webOrigin}${path}`, {
+    method,
+    headers: {
+      origin: webOrigin,
+      cookie: `swc_session=${webToken}`,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await r.text();
+  try {
+    return { status: r.status, body: JSON.parse(text) };
+  } catch {
+    return { status: r.status, body: text.slice(0, 300) };
+  }
+}
+
+async function webListsCluster(): Promise<void> {
+  const t = Date.now();
+  const a = await web("POST", "/api/clusters/list", {});
+  if (a.status !== 200) throw new CanaryError(`POST /api/clusters/list answered ${a.status}: ${JSON.stringify(a.body).slice(0, 300)}`);
+  if (!(a.body.clusters ?? []).some((c: { name?: string }) => c.name === clusterName)) {
+    throw new CanaryError(`POST /api/clusters/list through the web session does not list ${clusterName}`);
+  }
+  note("webClusterList", t, true, { clusters: a.body.clusters.length });
+}
+
+async function webSignOut(): Promise<string | null> {
+  if (!webToken) return null;
+  const t = Date.now();
+  try {
+    const a = await web("DELETE", "/session");
+    webToken = null;
+    if (a.status !== 200) return `DELETE /session answered ${a.status}`;
+    note("webSignOut", t, true, a.body);
+    return null;
+  } catch (e) {
+    return `DELETE /session failed: ${(e as Error).message}`;
+  }
+}
+
+async function tombstone(): Promise<string | null> {
+  if (!pds || tombstoned) return null;
+  const t = Date.now();
+  try {
+    await pds.tombstone();
+    tombstoned = true;
+    const r = await http(`${args.plc.replace(/\/+$/, "")}/${pds.did}/log/audit`);
+    const audit = await r.json().catch(() => null);
+    const last = Array.isArray(audit) ? audit.filter((e: { nullified?: boolean }) => !e.nullified).at(-1)?.operation : null;
+    if (last?.type !== "plc_tombstone") return `after the tombstone the last PLC operation of ${pds.did} is ${last?.type ?? r.status}`;
+    const doc = await http(`${args.plc.replace(/\/+$/, "")}/${pds.did}`);
+    await doc.body?.cancel();
+    note("tombstone", t, true, { did: pds.did, lastOp: last.type, resolve: doc.status });
+    return null;
+  } catch (e) {
+    return `tombstone of ${pds.did} failed: ${(e as Error).message}`;
+  } finally {
+    pds.stop();
+  }
+}
 
 async function openSession(): Promise<Session> {
   const { handle, password } = await readCreds();
@@ -130,6 +259,7 @@ async function openSession(): Promise<Session> {
 }
 
 async function token(lxm: string): Promise<string> {
+  if (pds) return await signServiceAuth(pds.signer as never, { aud: args.audience, lxm, expiresInSec: 120 });
   session ??= await openSession();
   const q = new URLSearchParams({ aud: args.audience, lxm });
   const r = await http(`${session.pds}/xrpc/com.atproto.server.getServiceAuth?${q}`, {
@@ -180,7 +310,7 @@ function sleep(ms: number): Promise<void> {
 async function listClusters(): Promise<Array<Record<string, any>>> {
   const a = await xrpc("GET", `${CLUSTER_NSID}listClusters`);
   if (a.status !== 200) {
-    throw new CanaryError(`${transient.has(a.status) ? "transient: " : ""}listClusters answered ${a.status}`);
+    throw new CanaryError(`${transient.has(a.status) ? "transient: " : ""}listClusters answered ${a.status}: ${JSON.stringify(a.body).slice(0, 300)}`);
   }
   return a.body.clusters ?? [];
 }
@@ -336,9 +466,12 @@ async function deleteAndVerify(): Promise<void> {
 
 async function main(): Promise<void> {
   const checkVMs = Boolean(args["bidder-kubeconfig"]);
+  if (ephemeral) await openEphemeral();
+  if (args["web-signin"]) await webSignIn();
   await preflight();
   const before = checkVMs ? await computeVMs() : new Set<string>();
   await createAndWaitReady();
+  if (args["web-signin"]) await webListsCluster();
   await runJob();
   let mine: string[] = [];
   if (checkVMs) {
@@ -376,16 +509,22 @@ async function finish(): Promise<never> {
   finished = true;
   const leaked = cluster;
   const cleanupError = failure ? await bestEffortDelete() : null;
+  const signOutError = await webSignOut();
+  const tombstoneError = await tombstone();
+  if (!failure && (signOutError || tombstoneError)) failure = signOutError ?? tombstoneError;
   const result = {
     ts: new Date(started).toISOString(),
     ok: failure === null,
     gateway,
+    identity: pds ? pds.did : "creds",
     cluster: clusterName,
     job: jobName,
     seconds: Math.round((Date.now() - started) / 100) / 10,
     error: failure,
     leaked: failure && leaked ? leaked : undefined,
     cleanupError: cleanupError ?? undefined,
+    signOutError: signOutError ?? undefined,
+    tombstoneError: tombstoneError ?? undefined,
     steps,
   };
   const line = JSON.stringify(result);
@@ -409,7 +548,8 @@ const watchdog = setTimeout(() => {
 try {
   await main();
 } catch (e) {
-  failure = (e as Error).message ?? String(e);
+  const cause = (e as { cause?: unknown }).cause;
+  failure = `${(e as Error).message ?? String(e)}${cause ? `: ${String(cause)}` : ""}`;
 }
 clearTimeout(watchdog);
 await finish();

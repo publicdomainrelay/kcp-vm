@@ -2,6 +2,7 @@ package appctl
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -96,6 +97,9 @@ func atprotoTrust(n *v1alpha1.MarketNetworkValue) (plc string, hosts []string, c
 		case strings.HasPrefix(h.Name, "pds."):
 			hosts = append(hosts, h.Name+"="+h.Address)
 		}
+	}
+	if u, uerr := url.Parse(n.GuestTlsUrl); n.GuestTlsUrl != "" && uerr == nil && u.Port() != "" {
+		hosts = append(hosts, "*."+u.Hostname()+"=127.0.0.1:"+u.Port())
 	}
 	if plc == "" && n.PlcDirectoryUrl != "" {
 		plc = n.PlcDirectoryUrl

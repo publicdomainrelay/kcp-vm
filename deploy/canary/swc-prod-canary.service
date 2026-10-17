@@ -7,4 +7,5 @@ After=network-online.target
 Type=oneshot
 TimeoutStartSec=4500
 Nice=10
-ExecStart=%h/.deno/bin/deno run --no-lock --node-modules-dir=none --allow-net --allow-read=%h --allow-write=%h/.local/state/swc-prod-canary --allow-env=HOME --allow-run=kubectl,sudo %h/.local/share/swc-prod-canary/prod-canary.ts
+WorkingDirectory=%h/.local/share/swc-prod-canary/checkout
+ExecStart=%h/.deno/bin/deno run --node-modules-dir=none --allow-net --allow-read --allow-write=%h/.local/state/swc-prod-canary --allow-env --allow-run=kubectl,sudo scripts/prod-canary.ts

@@ -21,14 +21,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/toolchain
       - name: canary
-        env:
-          ALICE_ATPROTO_HANDLE: ${{ secrets.PROD_CANARY_ALICE_HANDLE }}
-          ALICE_ATPROTO_PASSWORD: ${{ secrets.PROD_CANARY_ALICE_PASSWORD }}
-        run: |
-          creds="$RUNNER_TEMP/alice.source"
-          umask 077
-          printf 'ALICE_ATPROTO_HANDLE=%s\nALICE_ATPROTO_PASSWORD=%s\n' "$ALICE_ATPROTO_HANDLE" "$ALICE_ATPROTO_PASSWORD" > "$creds"
-          deno run -A scripts/prod-canary.ts --creds "$creds" --log "$RUNNER_TEMP/results.jsonl"
+        run: deno run -A --node-modules-dir=none scripts/prod-canary.ts --web-signin --log "$RUNNER_TEMP/results.jsonl"
       - if: always()
         uses: actions/upload-artifact@v7
         with:

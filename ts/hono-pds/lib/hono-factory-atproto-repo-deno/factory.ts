@@ -55,6 +55,7 @@ export interface RepoFactoryOptions {
   oauthServer?: {
     enabled: boolean;
     issuer: string; // "http://127.0.0.1:PORT" — actual port resolved at route time from Host header
+    publicIssuer?: string;
   };
   /** Admin password for admin-protected endpoints (HTTP Basic). */
   adminPassword?: string;
@@ -553,7 +554,9 @@ export function createRepoFactory(opts: RepoFactoryOptions): RepoFactory {
     sessionInjector = createSessionInjector(tokenStore, opts.oauthServer.issuer);
 
     // Resolve issuer from request Host header (handles port: 0 dynamic assignment)
+    const publicIssuer = opts.oauthServer.publicIssuer?.replace(/\/+$/, "");
     function resolveIssuer(c: { req: { header: (n: string) => string | undefined; url: string } }): string {
+      if (publicIssuer) return publicIssuer;
       let authority: string | undefined;
       let requestScheme: string | undefined;
       try {
