@@ -3747,6 +3747,15 @@ because it bounds a mechanism the rest of this document leans on.
   dedup falls back to the market.bid record key (an rkey derived from the RFP uri). It needs a reading
   of the prod bidder (hat-8, the lead).
 
+- **ROLL-1: `units roll cluster` with a market node fails /readyz polls through the apiserver front (opened by the
+  acceptance check ACC6-CP-SWAP, 2026-10-17).** A tenant cluster with one market node and a running pod, `/readyz` polled through the
+  cluster front every 200 ms, `units roll cluster` a to b with `--idle-bound 5s`: the front flipped at 06:30:35.239, blue stopped
+  1.2 s later, and from 06:30:37.3 to 06:30:39.9 (14 polls) the green apiserver answered 500 with `[-]poststarthook/apiservice-discovery-controller
+  failed`. The node's Ready transition, the NodeClaim and the ComputeVM were unchanged; the roll report shows greenReadyAt 21.4 s
+  after the request and no failed poll of its own. The check says no failed poll. The hat-8 reading of 2026-10-12 (1 s polls) had 1
+  failed poll. Open: why green's discovery controller is not ready after blue is gone, and whether the roll should keep blue until
+  green answers /readyz through the front for some seconds.
+
 - **The Windows bidder: the seams as they landed (plan 0011 M0-REVISIT, 2026-10-16, read at 79f40adb;
   hono-compute-provider and atproto-market are `ts/` in the same tree).** `GOOS=windows GOARCH=amd64 go
   build ./...` and `go vet ./...` are green. The plan was written against names that did not land:
@@ -3800,6 +3809,51 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **The plan-level acceptance checks of plans 0006 to 0009 and 0013 to 0016, read on 2026-10-17 UTC (main at
+  80998ef9).** Host: dev-linux-1 (Ubuntu 24.04, 48 vCPU), up to six market networks at once, VM account test-0001; the
+  gateway networks needed the web app downloads asset staged unpinned (its tree sha256 differs from the pin off Fedora),
+  and the sign-in test needed Chrome and kubectl on the host. Integration tests, each PASS: `TestARentedVMSurvivesABidderKillAndRestart`
+  226 s, `TestRequestSecretsReachTheGuestThroughTheRFPFlow` 217 s, `TestTenantClusterScalesFromZeroOnMarketVMsAndBack` 389 s
+  (0 ssh lines), `TestBidderAnswersEachRFPOnceAcrossARestart` 308 s,
+  `TestKubeconfigClientCertificateWithoutCredentialHelper` 170 s with kubectl, `TestWebAppSignInThroughThePluginKeepsTheCookieAcrossARestartAndIssuesACertificate`
+  384 s. The hostsvc contract suite passed on systemd-user and on proc. One check failed (ROLL-1 in section 14).
+  Manual runs on top of the harness. Certificates (market network, gateway, no bidder): `getKubeconfig` without
+  `ttlSeconds` gave 8 h, 86400 gave 24 h, 60 gave 1 min; 59, 86401, 0, -5 and 999999 were 400 InvalidRequest; k3s saw the
+  caller DID as user and `socialweb.computer:cluster-owners` as group; injected `X-Remote-User`/`X-Remote-Group`/`X-Remote-Extra-*`
+  headers were ignored; the k3s `client-admin` certificate of the same client CA was refused (403); `revokeIdentity` refused the
+  old certificate 0.08 to 0.17 s after the call, `deleteCluster` 0.16 s; the revoked serials were in `pki/certs/revoked`;
+  OpenBao builds no CRL (`pki/crl/rotate` warns that the imported issuer lacks CRL signing key usage), so the plan text
+  now says the revoked list. The issued client key was in no file under the network state dir, no journal line, no process
+  argument or environment and no kcp object (8 kinds). Sign-in (market network, gateway, bidder): after `kill -9` of the
+  gateway core (back 0.6 s later, 4 DenoPods restarted, 9 member processes kept their pids) the same cookie answered
+  `GET /session` 5.9 to 6.5 s later and the claim kept its uid and Running phase; `DELETE /session` made the PDS log a call to
+  `/oauth/revoke` (log line added in the mirror only), the cookie then got 401, and a downloaded certificate was refused
+  0.32 s after `revokeIdentity`; the cookie token was in no journal line and no process, the user's repo held 14 records
+  in 4 collections and none held a token or key, and the only text files with `PRIVATE KEY` were 28 TLS and kcp `*.key`
+  files of the infrastructure. The web app's DenoPod environment holds only projected file paths; its vault client
+  `client-socialweb-computer-k8s` reaches `socialweb-computer-k8s/*` only and that mount held only `contracts/<name>/bundle`.
+  Vaults (gateway network, one bidder, one node): with a node the cluster vault held one `jwt-<sha12>` mount, its role,
+  the policy `node-<n>` and the `socialweb-nodes/<n>` entry, equal to the OpenBaoServer declaration; the same after a restart of
+  the bidder DenoPod, after raising `signingKeyRotation` to 7 (three keys published) and after `kill -9` of the gateway
+  core; 45 s after the pod was gone the cluster vault held approle, cert and token only, the bidder vault held no `guests/`
+  entry and no `guest-<computevm>` policy, the root vault held no `contracts/` entry. Only the root vault (atproto plugin)
+  and the bidder vault (sshsig plugin) set a plugin directory. Bidder (market network, two guests): each guest's pasta and
+  firecracker ran in their own user namespace under host uids 721896 and 656360 inside test-0001's range 655360 + 1048576,
+  no file under the state dir was owned by those uids, and neither uid could read the bidder's state, kcp, vault keys or the other
+  guest's work dir; `kill -9` of a firecracker made its ComputeVM Lost 0.21 s later, the unit was inactive, the ComputeVM
+  was released by the bidder and the `vms/` directory held the live guest only; `units audit` passed after boot and after
+  a bidder restart; ssh with the reported host key worked, with another key and with no entry it failed `Host key verification
+  failed`; no log of the network held an ssh session line. Deno argv: 42 service processes, none with `-A`, all
+  with `--deny-read` and `--deny-write` of `/dev/kvm` and `/run/user/<uid>`, the policy engine with no `KCP_TOKENS` and no
+  projected read, no process with `--allow-ffi`, and `--allow-run` only on the 20 launchers of `deploy/denopods/service.yaml`.
+  Installed bidder (staged install of account swc-acc joined to a market network, two held guests, UTC 07:03 to 07:04):
+  `systemctl --user kill -s KILL` of the bidder, `systemctl --user restart` and `upgrade --binary` to a build with another closure
+  each brought it back Ready in 12 s, 4 s and 4 s with three DenoPods once each, the two VM units kept their InvocationID,
+  pid and start ticks, both ComputeVMs stayed Running, `units audit` passed each time, after the upgrade every DenoPod ran closure
+  109e962f and the closure 013dc7eb stayed on disk; `run request release` then gave vm.delete 200 for both with no ComputeVM,
+  VM unit or work dir left. The qr.fedfork.com client metadata scope covers every bidder and requester scope token (25 against 24).
+  Not shown by these runs: a second bidder process on the same kcp (the relay ingress sent every RFP to the second
+  process, so no duplicate arrived) and a gateway `upgrade` with a signed-in cookie.
 - **Plan 0012 is paused by the user (2026-10-16); what M0 settled and what it did not, as of 2026-10-17 UTC.**
   Done and committed: M0-REVISIT, M0-HOST-BASELINE and M0-VFKIT-ASSET (entries below). One pre-probe was run
   before the pause, outside any item: a system-domain LaunchDaemon with `UserName` the non-admin account

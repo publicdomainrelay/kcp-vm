@@ -697,6 +697,18 @@ open:
       and the count of sockets in the ephemeral range (`ss -tan | wc -l` against
       `net.ipv4.ip_local_port_range`) shows headroom while a cluster is deleted and recreated.
 
+  - id: ROLL-1
+    title: OPEN - a cluster slot swap with a market node fails /readyz polls through the apiserver front for about 3 s after the old slot stops.
+    body: >
+      Opened 2026-10-17 by the acceptance check ACC6-CP-SWAP on a market network (dev-linux-1): one market node
+      with a running pod, /readyz polled every 200 ms through the cluster front, units roll cluster a to b with
+      --idle-bound 5s. Front flipped 06:30:35.239, blue stopped 06:30:36.44, 14 polls failed from 06:30:37.3 to
+      06:30:39.9 with [-]poststarthook/apiservice-discovery-controller failed on the green apiserver. The node Ready
+      transition, the NodeClaim and the ComputeVM did not change.
+    instrument: >
+      The same run with 0 failed polls at 200 ms from the flip to 60 s after the old slot stopped, with a market node
+      joined and a pod running.
+
 execution_order:
   written: "2026-10-12, third fold of plans 0006-0008 (user request (i)); waves computed from depends_on across plans 0005-0012 (no unresolved id, no cycle). Re-derived after the fifth fold (multi-server-to-kcp.md + the user's section-7 answers): still no unresolved id or cycle; critical path unchanged. Advisory: depends_on governs; re-derive after every merge."
   early_fifth_fold: >

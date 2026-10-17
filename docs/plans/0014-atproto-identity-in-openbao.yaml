@@ -271,7 +271,7 @@ acceptance:
   checks:
     - id: ACC14-KEY-CUSTODY
       text: "No DPoP private key, refresh token or OAuth client private key of a gateway user exists outside the OpenBao of the application the user signed in to; every caller acts with proofs that bao signs."
-      status: todo
+      status: done
       evidence: []
     - id: ACC14-SURVIVES
       text: "A signed-in user keeps working with no new sign-in across a core restart and a gateway upgrade."
@@ -279,14 +279,14 @@ acceptance:
       evidence: []
     - id: ACC14-REVOCATION
       text: "Sign-out revokes the atproto tokens at the authorization server and the bao token; a revoked client certificate is refused at the front."
-      status: todo
+      status: done
       evidence: []
     - id: ACC14-KUBECTL
       text: "Plain kubectl works with a kubeconfig that holds a short-lived client certificate from the cluster's own OpenBao PKI, from the web app download and from getKubeconfig called with a service JWT."
-      status: todo
+      status: done
       evidence: []
     - id: ACC14-NO-LEAK
       text: "No token, key or session appears in a kcp object, a log, a DenoPod or HostProcess argument or an atproto record."
-      status: todo
+      status: done
       evidence: []
 questions_for_user: []

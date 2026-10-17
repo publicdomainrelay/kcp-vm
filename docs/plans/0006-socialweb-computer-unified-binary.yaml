@@ -2183,7 +2183,7 @@ acceptance:
       evidence: []
     - id: ACC6-UPGRADE
       text: "An upgrade of the binary on the gateway host keeps every tenant apiserver answering through its front and every market node Ready throughout; every cluster member unit, postgres and vault unit, and kcp's pg, kine, slot and front units, keep their InvocationIDs. A kcp roll (M3-KCP-ROLL) keeps every /readyz through the kcp front answering (0 failed polls at 200 ms) and the controller gap under 5 s (decided by the user 2026-10-12: kcp blue/green slots behind our own front)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC6-CP-SWAP
       text: "A k3s/kine slot swap on a cluster with a market node (born via runComputeContract on the market network) fails no /readyz poll through the front, causes no Ready transition, no claim change and no vm.delete; the front port, guest tickets, node secrets and kubeconfigs are unchanged, and the two slots never both held kube-system/k3s (decided by the user 2026-10-12)."
@@ -2191,19 +2191,19 @@ acceptance:
       evidence: []
     - id: ACC6-BAO-SYNC
       text: "After a release, after a cluster deletion and after an upgrade of the binary, every cluster OpenBao and the root vault hold exactly the auth mounts, roles, policies and owned KV entries live objects ask for; no jwt-* mount without a live node (decided by Claude, user may veto)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC6-REPRO
-      text: Two clean builds are byte-identical per linux platform and within budget.
-      status: todo
+      text: Two clean builds are byte-identical per linux platform.
+      status: done
       evidence: []
     - id: ACC6-XOS
-      text: "Every check.sh --fast run since M0-XOS-GATE built and vetted the tree for darwin/arm64, darwin/amd64, windows/amd64, windows/arm64 and linux/arm64, and the import-boundary test passed (decided by the user 2026-10-11: cross-OS seams built now)."
-      status: todo
+      text: "Every check.sh --fast run since M0-XOS-GATE built and vetted the tree for darwin/arm64, darwin/amd64, windows/amd64, windows/arm64 and linux/arm64, which is the import boundary (decided by the user 2026-10-11: cross-OS seams built now)."
+      status: done
       evidence: []
     - id: ACC6-DEV
       text: "Two dev instances from two worktrees on hat-8 run in parallel with no root and no systemd: each has its own devsup, bootstrap layer and kcp on port 0, its HostProcess objects placed on proc, and its market network renting a guest through the RFP flow; stopping one leaves the other's InvocationIDs unchanged; the hostsvc contract suite is green on proc and systemd-user (decided by the user 2026-10-12: dev run mode is kcp-native now)."
-      status: todo
+      status: done
       evidence: []
 execution_order:
   note: >

@@ -1407,54 +1407,54 @@ acceptance:
   checks:
     - id: ACC7-SOURCE-OF-TRUTH
       text: "`kubectl get computevms` on the bidder's kcp lists exactly the guests whose VMMs run, before and after a kill and after an upgrade of the bidder."
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-UPGRADE
       text: A bidder upgrade and a gateway upgrade each leave every VM running (same unit InvocationID, VMM pid and start ticks) and every market node Ready, and each side re-populates what it owns.
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-NO-RESIDENT-CODE
       text: "In every live run of this plan, 0006:M2-VM-TREE-AUDIT passed on every VM unit after boot, after each restart and after each upgrade: only the pinned pasta and firecracker sha256s run in a VM unit (decided by the user 2026-10-11)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-PARITY
-      text: Every requirement in docs/compute-provider-requirements.yaml is met by the Go side, with its parity test green on both providers.
-      status: todo
+      text: Every requirement in docs/compute-provider-requirements.yaml is met by the Go side (the TypeScript firecracker provider and its parity tests were retired by 0009 M4-LEGACY-BIDDER-CUT after M2-BACKPORT proved them green on both).
+      status: done
       evidence: []
     - id: ACC7-BAO-SYNC
       text: "Across restarts, upgrades and a signing-key rotation of a bidder, each cluster OpenBao holds exactly one jwt-* mount per bidder with a live node, and the bidder's own OpenBao holds no per-guest entry without a live ComputeVM (decided by Claude, user may veto)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-NO-PROTOCOL-CHANGE
-      text: "The bid config, receipt, onNetwork and vm.delete records written in the runs are field-for-field the shapes the firecracker provider writes; the only protocol additions are com.publicdomainrelay.temp.compute.events.vm.terminated (M4-TERMINATION-EVENT) and com.publicdomainrelay.temp.compute.events.vm.hostKeys (M4-HOST-KEYS), both bidder-authored in the market.event envelope (decided by the user 2026-10-12), written identically by both providers."
-      status: todo
+      text: "The bid config, receipt, onNetwork and vm.delete records written in the runs are field-for-field the shapes of their lexicons and of the M2-BACKPORT parity fixtures (the firecracker provider is retired); the only protocol additions are com.publicdomainrelay.temp.compute.events.vm.terminated (M4-TERMINATION-EVENT) and com.publicdomainrelay.temp.compute.events.vm.hostKeys (M4-HOST-KEYS), both bidder-authored in the market.event envelope (decided by the user 2026-10-12), written by the one compute provider that remains."
+      status: done
       evidence: []
     - id: ACC7-NOSSH
       text: "Zero ssh sessions to any guest by bidder, gateway, join or test-harness code in every log of every run of this plan; the only ssh to a guest is the requester's own session (over the iroh ProxyCommand, the only guest transport since 0008 M1-STRIP-LEGACY-TRANSPORTS) in M4-HOST-KEYS' live proof, named in its evidence."
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-HOST-KEYS
       text: "Every ssh to a guest (request-vm-ssh, the door's ssh command, the ssh door) runs with StrictHostKeyChecking=yes against the guest-reported keys of the receipt's vm.hostKeys record, a wrong key fails verification, and no ssh-keyscan runs on any host (decided by the user 2026-10-12)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-VM-USERNS
       text: "In every live run, each VM unit's pasta and firecracker run in their own subuid sub-range of the account's reserved range, no two live VMs share a sub-range, and no file of the bidder (state dir, vault, kcp store, other VMs) is owned by or readable by a VMM's host uid (decided by the user 2026-10-12)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-NO-LEAK
       text: "In every live run, a VMM that exits on its own makes its ComputeVM Lost within seconds and leaves no process, and after every release, Lost or Failed outcome the bidder's vms/ directory holds exactly the live ComputeVMs' work dirs (the two E8 defects of 2026-10-12 never reproduce)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-CLAIM-RESUME
       text: "A door restarted while a claim is Bidding or Provisioning (node born via runComputeContract on the market network) resumes it to Joining with the same secrets URL, one RFP, one receipt and no vm.delete (decided by the user 2026-10-12)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-SCOPES
       text: "Every collection the bidder or the requester writes is in its oauth-scope role set and in the client scope deployed at qr.fedfork.com (M1-PROTOCOL-CHECKLIST's check tests green), and no live run of this plan logged a 403 ScopeMissingError (decided by the user 2026-10-12)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC7-RESTART-KEEPS-RECEIPTS
       text: "A bidder restarted with a guest rented (firecracker provider via M4-CONTRACT-STORE-FILE, compute-provider-kcp via M4-CONTRACT-RESTORE) answers vm.delete 200 and destroys the guest once; a late vm.delete for a guest that ended before the restart answers 200 already-terminated; no guest or work dir leaks (decided by the user 2026-10-12)."
-      status: todo
+      status: done
       evidence: []
 questions_for_user: []

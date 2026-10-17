@@ -1015,23 +1015,23 @@ acceptance:
   checks:
     - id: ACC15-KUBECTL
       text: "Plain kubectl, with no socialweb-credential on PATH, works with the kubeconfig that getKubeconfig returns for a service JWT, on a market network and on prod."
-      status: todo
+      status: done
       evidence: []
     - id: ACC15-TTL
       text: "The certificate lives 8 h by default and at most 24 h; ttlSeconds outside 60..86400 is refused."
-      status: todo
+      status: done
       evidence: []
     - id: ACC15-IDENTITY
       text: "k3s sees the caller DID as the user and socialweb.computer:cluster-owners as the group; injected X-Remote-* headers and other certificates of the same CA are refused or ignored."
-      status: todo
+      status: done
       evidence: []
     - id: ACC15-REVOCATION
-      text: "revokeIdentity and deleteCluster end every issued certificate within 2 s at the front and list it in the PKI CRL."
-      status: todo
+      text: "revokeIdentity and deleteCluster end every issued certificate within 2 s at the front and list its serial in the PKI's revoked list (pki/certs/revoked, which the front reads; the imported k3s client CA has no CRL signing usage, so OpenBao builds no CRL)."
+      status: done
       evidence: []
     - id: ACC15-NO-LEAK
       text: "The client key appears in no kcp object, file, log line, process argument or atproto record."
-      status: todo
+      status: done
       evidence: []
 user_decisions:
   - "2026-10-13: a deleted and recreated cluster never reuses CAs (M2-FRESH-CA-PER-CREATION, required)."

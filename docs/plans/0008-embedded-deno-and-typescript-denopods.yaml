@@ -631,18 +631,18 @@ acceptance:
   checks:
     - id: ACC8-OFFLINE
       text: Every production service DenoPod starts with jsr.io and registry.npmjs.org unreachable, from the embedded closure alone.
-      status: todo
+      status: done
       evidence: []
     - id: ACC8-NO-STALE-CODE
       text: After an upgrade to a binary with a different closure, every DenoPod runs the new code (checked by a version marker each service logs), with the previous DENO_DIR still on disk.
-      status: todo
+      status: done
       evidence: []
     - id: ACC8-RESTART
       text: "A `systemctl --user restart` of the unit running socialweb-computer, a kill -s KILL of its main process, and an upgrade each bring every recorded DenoPod back to Running exactly once, leave no deno process of the previous run, and no deleted DenoPod returns."
-      status: todo
+      status: done
       evidence: []
     - id: ACC8-PERMISSIONS
       text: "Every production service DenoPod runs with an explicit permission list and no -A; the bidder's deno cannot open /dev/kvm or connect to the user bus or the systemd private socket (decided by the user 2026-10-11)."
-      status: todo
+      status: done
       evidence: []
 questions_for_user: []

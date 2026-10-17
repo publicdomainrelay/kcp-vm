@@ -325,7 +325,7 @@ acceptance:
   checks:
     - id: ACC9-OBSERVABLE
       text: "During a market network run, every in-flight RFP decision, bid and contract is visible in kcp with its phase, current step and reason; no step is visible only in a log."
-      status: todo
+      status: done
       evidence: []
     - id: ACC9-EXACTLY-ONCE
       text: "A bidder restart inside a bid window, a second relay, and a second bidder replica each give one bid per RFP and miss none."
@@ -333,11 +333,11 @@ acceptance:
       evidence: []
     - id: ACC9-NO-SESSION-IN-WEB-APP
       text: "The internet-facing web app holds no requester PDS session, claim key or secrets key."
-      status: todo
+      status: done
       evidence: []
     - id: ACC9-UNTRUSTED-POLICY
       text: "A policy attached to an RFP runs only in the PolicyEngine process, which has no secrets, no host access and no -A."
-      status: todo
+      status: done
       evidence: []
     - id: ACC9-LATENCY
       text: "kcp adds at most 20 ms p95 to rfp seen -> bid published."
@@ -345,6 +345,6 @@ acceptance:
       evidence: []
     - id: ACC9-GUEST-IDENTITY
       text: "Every guest token is issued by the bidder handle's own OpenBaoServer after an sshsig login with the guest's bound host key; its audience comes only from a GuestIdentityGrant derived from the requester's RBAC records; no other vault in the stack loads the sshsig plugin."
-      status: todo
+      status: done
       evidence: []
 questions_for_user: []
