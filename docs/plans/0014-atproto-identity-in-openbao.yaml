@@ -246,10 +246,16 @@ items:
       with a kubeconfig from getKubeconfig called by a service JWT, and refused after revoke; and a leak check:
       no token, key or session in any kcp object (`kubectl get -A -o yaml` of every workspace), any unit
       journal or DenoPod stdout/stderr, any DenoPod or HostProcess argument, or any record on the network's PDS
-      repositories. Decided by Claude, user may veto.
-    files: ["test/ (the 0010 harness)", "deploy/market-network"]
+      repositories. Decided by Claude, user may veto. The core restart leg is a kill -9 of the gateway's core
+      (a child application has no devsup of its own, so `dev restart <gateway> core` does not apply).
+      `socialweb-computer upgrade` needs an installed host, so the upgrade leg is the prod reading
+      ACC14-SURVIVES (the cookie across rc8 to rc9). Its dev form, the network core restarted on another
+      binary (`dev restart --binary <path> core`), joins the test once a network core restart keeps the
+      addresses its adopted child applications use (today the fronts rebind on new ports and the gateway
+      and bidder DenoPods keep the old ones).
+    files: ["test/integration/web_app_signin_test.go", "test/integration/web_app_session_test.go", "test/integration/kubeconfig_client_cert_test.go"]
     done_when: "the tests pass on the harness and in the 0010 G3-CI-INTEGRATION pipeline."
-    risks: ["Remains: the G3-CI-INTEGRATION pipeline run on the GitLab runner; the sign-in test restarts only the web app DenoPod, with no core restart and no `socialweb-computer upgrade` leg."]
+    risks: []
     status: doing
     evidence:
 dropped_items:
