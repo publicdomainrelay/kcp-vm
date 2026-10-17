@@ -5,8 +5,9 @@ usage() {
   cat >&2 <<'EOF'
 usage: scripts/ci-runner-install.sh [--remove] [--account NAME] [--token-file FILE]
   Installs the CI runner of socialweb-computer-kcp on this host: a dedicated unprivileged system account
-  (no docker group, no sudo), one gitlab-runner with the shell executor as a systemd user unit of that
-  account, registered to this project only, tagged socialweb-computer-kcp, one job at a time.
+  (no docker group, no sudo; kvm for the VM guests), one gitlab-runner with the shell executor as a systemd
+  user unit of that account, registered to this project only, tagged socialweb-computer-kcp, one job at a
+  time, 90 minutes at most. The host needs /usr/bin/google-chrome (the web app sign-in test).
   --remove      stop the unit, delete the runner on the GitLab server, remove the account and its home
   --account     the runner account (default socialweb-ci)
   --token-file  a 0600 file holding a GitLab token with the create_runner scope (default: the password of
@@ -31,7 +32,7 @@ done
 die() { echo "ci-runner-install: $*" >&2; exit 1; }
 say() { echo "ci-runner-install: $*" >&2; }
 
-for tool in sudo jq curl git useradd loginctl /usr/bin/gitlab-runner; do
+for tool in sudo jq curl git useradd loginctl zstd /usr/bin/gitlab-runner /usr/bin/google-chrome; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
 sudo -n true 2>/dev/null || die "needs sudo -n (run as an administrator of this host)"
@@ -98,10 +99,12 @@ if ! id "$account" >/dev/null 2>&1; then
     --comment "gitlab-runner for socialweb-computer-kcp" "$account"
   say "created account $account (home $home)"
 fi
+sudo rm -f "$home/.bash_logout"
+id -nG "$account" | tr ' ' '\n' | grep -qx kvm || sudo usermod -aG kvm "$account"
 for group in $(id -nG "$account"); do
   case "$group" in
-    "$account") ;;
-    *) die "$account is in group $group; the runner account must be in no group but its own" ;;
+    "$account"|kvm) ;;
+    *) die "$account is in group $group; the runner account must be in no group but its own and kvm" ;;
   esac
 done
 sudo chmod 0700 "$home"
@@ -118,6 +121,9 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 sudo test -S "/run/user/$uid/systemd/private" || die "the user manager of $account did not start"
+manager_pid="$(systemctl show -p MainPID --value "user@$uid.service")"
+sudo sed -n 's/^Groups://p' "/proc/$manager_pid/status" | tr ' \t' '\n\n' | grep -qx "$(getent group kvm | cut -d: -f3)" ||
+  die "user@$uid started before $account joined kvm; no job may run then: sudo systemctl restart user@$uid.service, then run this again"
 
 as_account mkdir -p "$config_dir" "$unit_dir" "$home/.tmp"
 as_account chmod 0700 "$home/.config" "$config_dir" "$home/.tmp"
@@ -134,7 +140,7 @@ else
     --data-urlencode "tag_list=$tag" \
     --data-urlencode run_untagged=false \
     --data-urlencode locked=true \
-    --data-urlencode maximum_timeout=1800)"
+    --data-urlencode maximum_timeout=5400)"
   runner_id="$(printf '%s' "$resp" | jq -r .id)"
   runner_token="$(printf '%s' "$resp" | jq -r .token)"
   case "$runner_token" in glrt-*) ;; *) die "the GitLab server did not return a runner token" ;; esac
