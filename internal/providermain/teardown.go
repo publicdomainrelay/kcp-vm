@@ -19,11 +19,14 @@ const (
 
 	TeardownBackoffMax = 5 * time.Minute
 
+	TeardownBlockedAfter = 3 * time.Minute
+
 	ReasonTeardownStepFailing = "TeardownStepFailing"
 )
 
 type deleteBackoff struct {
 	attempts int
+	since    time.Time
 	next     time.Time
 }
 
@@ -40,7 +43,7 @@ func (p *Provider) deleteDone(key string) {
 	delete(p.deletes, key)
 }
 
-func (p *Provider) deleteFailed(key string) (attempts int, next time.Time) {
+func (p *Provider) deleteFailed(key string) (attempts int, since, next time.Time) {
 	p.busyMu.Lock()
 	defer p.busyMu.Unlock()
 	if p.deletes == nil {
@@ -48,7 +51,7 @@ func (p *Provider) deleteFailed(key string) (attempts int, next time.Time) {
 	}
 	b := p.deletes[key]
 	if b == nil {
-		b = &deleteBackoff{}
+		b = &deleteBackoff{since: time.Now()}
 		p.deletes[key] = b
 	}
 	b.attempts++
@@ -60,7 +63,7 @@ func (p *Provider) deleteFailed(key string) (attempts int, next time.Time) {
 		}
 	}
 	b.next = time.Now().Add(delay)
-	return b.attempts, b.next
+	return b.attempts, b.since, b.next
 }
 
 func (p *Provider) teardown(ctx context.Context, ref clusterprovider.Ref, key string, cl *v1alpha1.Cluster) error {
@@ -74,8 +77,8 @@ func (p *Provider) teardown(ctx context.Context, ref clusterprovider.Ref, key st
 		p.deleteDone(key)
 		return nil
 	}
-	attempts, next := p.deleteFailed(key)
-	if attempts < TeardownFreeAttempts {
+	attempts, since, next := p.deleteFailed(key)
+	if attempts < TeardownFreeAttempts || time.Since(since) < TeardownBlockedAfter {
 		return nil
 	}
 	p.log.Warn("cluster provider: a step of deleting this cluster has not completed; the next attempt waits",
@@ -107,9 +110,9 @@ func (p *Provider) reportTeardown(ctx context.Context, ref clusterprovider.Ref, 
 		Type:   v1alpha1.ConditionTeardownBlocked,
 		Status: metav1.ConditionTrue,
 		Reason: ReasonTeardownStepFailing,
-		Message: fmt.Sprintf("the %s step of deleting this cluster has not completed in %d passes in a row; "+
+		Message: fmt.Sprintf("the %s step of deleting this cluster has not completed in %d passes in a row over %s; "+
 			"the next attempt is not made before %s; the last error: %s",
-			step, attempts, next.UTC().Format(time.RFC3339), cause.Error()),
+			step, attempts, TeardownBlockedAfter, next.UTC().Format(time.RFC3339), cause.Error()),
 		ObservedGeneration: cl.Generation,
 	})
 	st.Conditions = conds
