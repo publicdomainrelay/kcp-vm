@@ -600,6 +600,8 @@ export interface MarketLoopStatus {
   contractsActive?: number;
   streams?: MarketStreamStatus[];
   recentDeclines?: MarketDecline[];
+  rfpToBid?: MarketLatencyStatus;
+  kcpWait?: MarketLatencyStatus;
   updatedAt?: string;
 }
 
@@ -619,6 +621,13 @@ export interface MarketDecline {
   rfpUri: string;
   reason: string;
   at: string;
+}
+
+export interface MarketLatencyStatus {
+  count: number;
+  p50Us: number;
+  p95Us: number;
+  maxUs: number;
 }
 
 export interface MarketRequester {
@@ -863,7 +872,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-9.marketbidders.socialweb.computer",
+  schema: "v1alpha1-10.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -874,7 +883,7 @@ export const MARKET_REQUESTER_RESOURCE: ApiResource = {
   listKind: "MarketRequesterList",
   plural: "marketrequesters",
   singular: "marketrequester",
-  schema: "v1alpha1-7.marketrequesters.socialweb.computer",
+  schema: "v1alpha1-8.marketrequesters.socialweb.computer",
   export: "applications",
 };
 
@@ -896,7 +905,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-10.gateways.socialweb.computer",
+  schema: "v1alpha1-11.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -907,7 +916,7 @@ export const SSH_GATEWAY_RESOURCE: ApiResource = {
   listKind: "SshGatewayList",
   plural: "sshgateways",
   singular: "sshgateway",
-  schema: "v1alpha1-5.sshgateways.socialweb.computer",
+  schema: "v1alpha1-6.sshgateways.socialweb.computer",
   export: "applications",
 };
 
@@ -981,6 +990,7 @@ export type ApiTypeName =
   | "MarketIdentityPhase"
   | "MarketIdentitySpec"
   | "MarketIdentityStatus"
+  | "MarketLatencyStatus"
   | "MarketLoopStatus"
   | "MarketNetwork"
   | "MarketNetworkSpec"
@@ -2507,6 +2517,29 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [],
     "type": "object"
   },
+  "MarketLatencyStatus": {
+    "properties": {
+      "count": {
+        "type": "integer"
+      },
+      "maxUs": {
+        "type": "integer"
+      },
+      "p50Us": {
+        "type": "integer"
+      },
+      "p95Us": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "count",
+      "p50Us",
+      "p95Us",
+      "maxUs"
+    ],
+    "type": "object"
+  },
   "MarketLoopStatus": {
     "properties": {
       "bids": {
@@ -2521,11 +2554,17 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
         },
         "type": "array"
       },
+      "kcpWait": {
+        "ref": "MarketLatencyStatus"
+      },
       "recentDeclines": {
         "items": {
           "ref": "MarketDecline"
         },
         "type": "array"
+      },
+      "rfpToBid": {
+        "ref": "MarketLatencyStatus"
       },
       "rfpsScoped": {
         "type": "integer"
@@ -4814,6 +4853,24 @@ export function assertMarketDecline(value: unknown): asserts value is MarketDecl
 
 export function parseMarketDecline(value: unknown): MarketDecline {
   assertMarketDecline(value);
+  return value;
+}
+
+export function validateMarketLatencyStatus(value: unknown): ApiIssue[] {
+  return validate("MarketLatencyStatus", value);
+}
+
+export function isMarketLatencyStatus(value: unknown): value is MarketLatencyStatus {
+  return validate("MarketLatencyStatus", value).length === 0;
+}
+
+export function assertMarketLatencyStatus(value: unknown): asserts value is MarketLatencyStatus {
+  const issues = validate("MarketLatencyStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketLatencyStatus", issues);
+}
+
+export function parseMarketLatencyStatus(value: unknown): MarketLatencyStatus {
+  assertMarketLatencyStatus(value);
   return value;
 }
 

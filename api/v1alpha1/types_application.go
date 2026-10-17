@@ -233,7 +233,21 @@ type MarketLoopStatus struct {
 
 	RecentDeclines []MarketDecline `json:"recentDeclines,omitempty"`
 
+	RfpToBid *MarketLatencyStatus `json:"rfpToBid,omitempty"`
+
+	KcpWait *MarketLatencyStatus `json:"kcpWait,omitempty"`
+
 	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+type MarketLatencyStatus struct {
+	Count int64 `json:"count"`
+
+	P50Us int64 `json:"p50Us"`
+
+	P95Us int64 `json:"p95Us"`
+
+	MaxUs int64 `json:"maxUs"`
 }
 
 type MarketDecline struct {

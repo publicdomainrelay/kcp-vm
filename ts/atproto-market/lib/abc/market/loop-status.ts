@@ -18,6 +18,22 @@ export interface MarketRecentDecline {
 
 export const RECENT_DECLINES = 50;
 
+export const LATENCY_RING = 256;
+
+export interface MarketLatencyView {
+  count: number;
+  p50Us: number;
+  p95Us: number;
+  maxUs: number;
+}
+
+export function latencyViewOf(ring: readonly number[]): MarketLatencyView | undefined {
+  if (ring.length === 0) return undefined;
+  const sorted = [...ring].sort((a, b) => a - b);
+  const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];
+  return { count: sorted.length, p50Us: at(0.5), p95Us: at(0.95), maxUs: sorted[sorted.length - 1] };
+}
+
 export interface MarketLoopView {
   rfpsSeen: number;
   rfpsScoped: number;
@@ -27,6 +43,8 @@ export interface MarketLoopView {
   contractsActive: number;
   streams: MarketStreamTally[];
   recentDeclines?: MarketRecentDecline[];
+  rfpToBid?: MarketLatencyView;
+  kcpWait?: MarketLatencyView;
   updatedAt: string;
 }
 
@@ -36,6 +54,7 @@ export interface MarketLoopRecorder {
   declined(reason: string, rfpUri?: string, at?: Date): void;
   recentlyDeclined?(rfpUri: string): MarketRecentDecline | undefined;
   bid(): void;
+  bidTimed?(rfpToBidMs: number, kcpWaitMs: number): void;
   win(): void;
   contractsActive(count: number): void;
   streamProgress(source: string, cursor: number, eventTime: string | undefined, receivedAt: Date): void;
@@ -56,6 +75,8 @@ export class MarketLoopTally implements MarketLoopRecorder {
   #contractsActive = 0;
   #streams = new Map<string, MarketStreamTally>();
   #recent: MarketRecentDecline[] = [];
+  #rfpToBid: number[] = [];
+  #kcpWait: number[] = [];
   #onChange: () => void;
 
   constructor(onChange: () => void = () => {}, initial?: Partial<MarketLoopView>) {
@@ -107,6 +128,14 @@ export class MarketLoopTally implements MarketLoopRecorder {
     this.#changed();
   }
 
+  bidTimed(rfpToBidMs: number, kcpWaitMs: number): void {
+    for (const [ring, ms] of [[this.#rfpToBid, rfpToBidMs], [this.#kcpWait, kcpWaitMs]] as const) {
+      ring.push(Math.round(ms * 1000));
+      if (ring.length > LATENCY_RING) ring.shift();
+    }
+    this.#changed();
+  }
+
   win(): void {
     this.#wins++;
     this.#changed();
@@ -138,6 +167,7 @@ export class MarketLoopTally implements MarketLoopRecorder {
       contractsActive: this.#contractsActive,
       streams: [...this.#streams.values()].sort((a, b) => a.source.localeCompare(b.source)),
       ...(this.#recent.length ? { recentDeclines: this.#recent.map((d) => ({ ...d })) } : {}),
+      ...(this.#rfpToBid.length ? { rfpToBid: latencyViewOf(this.#rfpToBid), kcpWait: latencyViewOf(this.#kcpWait) } : {}),
       updatedAt: at.toISOString(),
     };
   }

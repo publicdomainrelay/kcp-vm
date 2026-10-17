@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-5.sshgateways.socialweb.computer
+  name: v1alpha1-6.sshgateways.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -397,6 +397,46 @@ spec:
                         - rfpUri
                         - reason
                         - at
+                  rfpToBid:
+                    type: object
+                    properties:
+                      count:
+                        type: integer
+                        format: int64
+                      p50Us:
+                        type: integer
+                        format: int64
+                      p95Us:
+                        type: integer
+                        format: int64
+                      maxUs:
+                        type: integer
+                        format: int64
+                    required:
+                      - count
+                      - p50Us
+                      - p95Us
+                      - maxUs
+                  kcpWait:
+                    type: object
+                    properties:
+                      count:
+                        type: integer
+                        format: int64
+                      p50Us:
+                        type: integer
+                        format: int64
+                      p95Us:
+                        type: integer
+                        format: int64
+                      maxUs:
+                        type: integer
+                        format: int64
+                    required:
+                      - count
+                      - p50Us
+                      - p95Us
+                      - maxUs
                   updatedAt:
                     type: string
       additionalPrinterColumns:
