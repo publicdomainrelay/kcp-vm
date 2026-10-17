@@ -24,6 +24,7 @@ const (
 	clusterListBackWait = 3 * time.Minute
 	kcpDumpMinBytes     = 100_000
 	kcpDumpMinSpaces    = 4
+	kcpDumpTimeout      = 5 * time.Minute
 )
 
 func TestWebAppCookieSurvivesAGatewayCoreKillAndNoSecretLeaks(t *testing.T) {
@@ -146,12 +147,14 @@ func TestWebAppCookieSurvivesAGatewayCoreKillAndNoSecretLeaks(t *testing.T) {
 	}
 
 	dump := filepath.Join(n.Dir, "kcp-dump")
-	r := n.h.As(ctx, "sh", "-c", kcpDumpScript, "sh", n.StateDir, dump, kubectlBinary)
-	if r.Err != nil {
-		t.Fatalf("dumping every kcp workspace: %v %s", r.Err, r.Tail(5))
+	dumpCtx, cancelDump := context.WithTimeout(ctx, kcpDumpTimeout)
+	defer cancelDump()
+	listing, err := n.h.Command(dumpCtx, "sh", "-c", kcpDumpScript, "sh", n.StateDir, dump, kubectlBinary).Output()
+	if err != nil {
+		t.Fatalf("dumping every kcp workspace: %v", err)
 	}
 	var spaces, dumped int
-	for _, l := range strings.Split(strings.TrimSpace(r.Stdout), "\n") {
+	for _, l := range strings.Split(strings.TrimSpace(string(listing)), "\n") {
 		var ws string
 		var size int
 		if _, err := fmt.Sscanf(l, "%s %d", &ws, &size); err == nil {
@@ -160,7 +163,7 @@ func TestWebAppCookieSurvivesAGatewayCoreKillAndNoSecretLeaks(t *testing.T) {
 		}
 	}
 	if spaces < kcpDumpMinSpaces || dumped < kcpDumpMinBytes {
-		t.Fatalf("the kcp dump read too little: %d workspace(s), %d bytes:\n%s", spaces, dumped, r.Tail(20))
+		t.Fatalf("the kcp dump read too little: %d workspace(s), %d bytes:\n%s", spaces, dumped, listing)
 	}
 	hits, err := n.FilesContaining([]string{dump}, append(secrets, `"refresh_token"`, "dpopPrivate", "client-key-data"))
 	if err != nil {
