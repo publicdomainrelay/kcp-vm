@@ -275,7 +275,7 @@ acceptance:
       evidence: []
     - id: ACC14-SURVIVES
       text: "A signed-in user keeps working with no new sign-in across a core restart and a gateway upgrade."
-      status: todo
+      status: done
       evidence: []
     - id: ACC14-REVOCATION
       text: "Sign-out revokes the atproto tokens at the authorization server and the bao token; a revoked client certificate is refused at the front."
