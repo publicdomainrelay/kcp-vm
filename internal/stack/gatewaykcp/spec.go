@@ -106,6 +106,12 @@ func Spec(s v1alpha1.GatewaySpec, profile string, environ []string) v1alpha1.Gat
 	if n.PlcDirectoryUrl == "" {
 		n.PlcDirectoryUrl = DefaultPLC
 	}
+	if n.IngressProxyHost == "" {
+		n.IngressProxyHost = e.get("SOCIALWEB_GATEWAY_INGRESS_PROXY_HOST")
+	}
+	if n.IngressProxyHost == "" {
+		n.IngressProxyHost = DefaultIngress
+	}
 	if n.RelayUrls == nil {
 		n.RelayUrls = []string{}
 	}

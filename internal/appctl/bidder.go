@@ -192,8 +192,8 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir, guestStateDir string
 func BidderPds(v manifests.MarketBidder, stateDir string, n *v1alpha1.MarketNetworkValue) (manifests.RepoPds, error) {
 	p := manifests.RepoPds{StateDir: stateDir, Identity: BidderIdentity, KcpServer: v.Kcp.Server, KcpWorkspace: v.Kcp.Workspace,
 		VaultServer: v.Vault.Server, VaultClient: PdsVaultClient, VaultKcpServer: v.Vault.KcpServer, VaultMount: BidderVaultClient,
-		VaultMountClient: BidderVaultClient,
-		PlcDirectoryUrl:  n.PlcDirectoryUrl, IngressProxyHost: n.IngressProxyHost, Trust: v.Trust, Read: v.Read}
+		VaultMountClient: BidderVaultClient, VaultWorkspace: v.Kcp.Workspace,
+		PlcDirectoryUrl: n.PlcDirectoryUrl, IngressProxyHost: n.IngressProxyHost, Trust: v.Trust, Read: v.Read}
 	var err error
 	if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
 		p.ExtraArgs, err = fragment([]string{"--network-hosts", hosts})
@@ -221,6 +221,14 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		}
 		if vms > 0 {
 			st.Phase, st.Message = v1alpha1.ApplicationPhaseDeleting, fmt.Sprintf("%d ComputeVM(s) releasing", vms)
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
+		records, err := ctl.releaseRecords(ctx, ctl.c.workspace(), ws, owner)
+		if err != nil {
+			return err
+		}
+		if records > 0 {
+			st.Phase, st.Message = v1alpha1.ApplicationPhaseDeleting, fmt.Sprintf("%d AtprotoRecord(s) leaving the repo before the pds DenoPod stops", records)
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
 		}
 		left, err := ctl.deletePods(ctx, ws, owner, nil)

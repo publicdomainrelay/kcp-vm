@@ -3,7 +3,7 @@ import { ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION, ONLY_REMOTE_POLICY_EXEC_CLI_OPT
 export default {
   name: "request-vm-ssh",
   description:
-    "The requester controller DenoPod of an application. It runs only inside the application's own kcp and carries out every ComputeContract object of its workspace: for a MarketRequester application (`socialweb-computer run request`) with the application's own identity, for a Gateway application with the delegated sessions of the accounts that own the contracts. Its keys and secrets live in the application's own OpenBao.",
+    "The requester controller DenoPod of an application. It runs only inside the application's own kcp and carries out every ComputeContract object of its workspace: for a MarketRequester application (`socialweb-computer run request`) with the application's own identity, for a Gateway application with the gateway's own repo, associated once with its operator account. Its keys and secrets live in the application's own OpenBao.",
   options: {
     "status-file": {
       type: "string" as const,
@@ -121,14 +121,6 @@ export default {
       type: "string" as const,
       description: "kcp workspace holding the ComputeContract objects; the controller carries out every one of them",
     },
-    "account-custody-mount": {
-      type: "string" as const,
-      description: "Mount of the OpenBao atproto auth plugin that holds the accounts' OAuth sessions and signs their DPoP proofs; set, the controller carries contracts for the accounts named by spec.ownerDid, with no identity of its own; unset, it carries contracts with the application's own MarketIdentity",
-    },
-    "test-owner-sessions-file": {
-      type: "string" as const,
-      description: "JSON object keyed by DID of password sessions (service, identifier, password) that stand in for an account's OAuth session in a market network",
-    },
     "max-concurrent": {
       type: "number" as const,
       description: "How many contracts the controller carries out at once; the others wait Pending",
@@ -224,6 +216,11 @@ export default {
     "oauth-session-client-id": {
       type: "string" as const,
       description: "OAuth client_id a restored session was issued to; a refresh token is bound to the client that obtained it",
+    },
+    "repo-pds-url": {
+      type: "string" as const,
+      description: "The application's own PDS DenoPod by kcp service name (hono-repo-pds); set, every record the requester writes and reads goes to that repo, signed with the repo key from the application's OpenBao, and the requester answers bids and events on a callback DID of its own",
+      env: "REPO_PDS_URL",
     },
     "pds-state-path": {
       type: "string" as const,

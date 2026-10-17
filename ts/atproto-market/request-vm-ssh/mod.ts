@@ -3,7 +3,8 @@ import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import { applyOAuthAgentToRequesterPDS, createOAuthRequester, createRequesterPDS } from "@publicdomainrelay/requester-xrpc";
 import type { OAuthRequesterHandle } from "@publicdomainrelay/requester-xrpc";
-import { createDelegatingAgent } from "@publicdomainrelay/atproto-helpers";
+import { createDelegatingAgent, createRepoPdsAgent } from "@publicdomainrelay/atproto-helpers";
+import type { RepoPdsAgent } from "@publicdomainrelay/atproto-helpers";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { REQUESTER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
@@ -26,11 +27,6 @@ import { MarketLoopTally, type MarketLoopView } from "@publicdomainrelay/market-
 import type { AccountPdsProvider } from "@publicdomainrelay/requester-controller-abc";
 import { createRequesterController } from "@publicdomainrelay/requester-controller-kcp";
 import { createNodeJoinProfile } from "@publicdomainrelay/socialweb-computer-k8s-node-contract";
-import { createAccountAgents } from "@publicdomainrelay/socialweb-computer-account-agents";
-import { createAccountRequesters } from "@publicdomainrelay/socialweb-computer-account-requesters";
-import { createOpenBaoCustodyConnector } from "@publicdomainrelay/atproto-session-custody-openbao";
-import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
-import { loadOrCreateVaultKeyHex } from "@publicdomainrelay/key-vault";
 import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
 import { createScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 import cliArgsEnv from "./cli-args-env.ts";
@@ -48,16 +44,13 @@ if (!o.statusFile) {
   console.error("request-vm-ssh runs only as a requester DenoPod, in its application's own kcp: start a requester with `socialweb-computer run request`");
   Deno.exit(2);
 }
-const accountsMode = typeof o.accountCustodyMount === "string" && o.accountCustodyMount !== "";
 const kcpBase = typeof o.kcpServer === "string" ? o.kcpServer.split("/clusters/")[0] : undefined;
 o.marketIdentityKcpServer ||= kcpBase;
 o.computeContractKcpServer ||= kcpBase;
 o.identityVaultKcpServer ||= kcpBase;
 const missing = [
-  ...(accountsMode ? [] : [
-    ["market-identity-kcp-server", o.marketIdentityKcpServer],
-    ["market-identity-kcp-workspace", o.marketIdentityKcpWorkspace],
-  ]),
+  ["market-identity-kcp-server", o.marketIdentityKcpServer],
+  ["market-identity-kcp-workspace", o.marketIdentityKcpWorkspace],
   ["compute-contract-kcp-server", o.computeContractKcpServer],
   ["identity-vault-openbao-server", o.identityVaultOpenbaoServer],
   ["identity-vault-kcp-server", o.identityVaultKcpServer],
@@ -161,59 +154,10 @@ const splitList = (s: string | undefined): string[] => s ? s.split(",").map((x) 
 
 let stopIdentity: (() => Promise<void>) | undefined;
 let pdsProvider: AccountPdsProvider;
-let stopAccounts: (() => Promise<void>) | undefined;
-let ownerDids: string[] = [];
 let statusDid = "";
 let statusRepoDid = "";
 
-if (accountsMode) {
-  const testSessions = o.testOwnerSessionsFile
-    ? parsePasswordSessions(JSON.parse(await Deno.readTextFile(o.testOwnerSessionsFile as string)))
-    : null;
-  ownerDids = testSessions ? [...testSessions.keys()] : [];
-  const custody = createOpenBaoCustodyConnector({
-    endpoint: async () => {
-      const r = await resolveVault();
-      return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
-    },
-    mount: o.accountCustodyMount,
-  });
-  const agents = createAccountAgents({
-    custody: custody.own,
-    agentWithoutOAuthFor: (did) => {
-      const session = testSessions?.get(did);
-      return session
-        ? createPasswordSessionAgent(session, {
-          onRetry: (event) => logger.info("password_session_request_retry", { did, ...event }),
-          onGiveUp: (event) => logger.warn("password_session_request_gave_up", { did, ...event }),
-        })
-        : null;
-    },
-    log: (event, data) => logger.info(event, data ?? {}),
-  });
-  const accounts = createAccountRequesters({
-    agents,
-    requesterKeyHex: () => loadOrCreateVaultKeyHex(vault, { mount: vaultMount, path: "requester/key" }),
-    plcDirectoryUrl: network.plcDirectoryUrl,
-    ingressProxyHost: network.ingressProxyHost,
-    label,
-    log: (event, data) => logger.info(event, data ?? {}),
-  });
-  pdsProvider = {
-    accounts: true,
-    pdsFor: (did) => {
-      if (!did) return Promise.reject(new Error("this requester carries contracts for accounts only: spec.ownerDid is unset"));
-      return accounts.requesterFor(did);
-    },
-    did: (did) => Promise.resolve(did ?? ""),
-  };
-  stopAccounts = () => agents.shutdown();
-  healthDid = "controller";
-  statusDid = "controller";
-  statusRepoDid = "controller";
-  logger.info("requester_accounts_mode", { custodyMount: o.accountCustodyMount, testOwners: ownerDids.length });
-  if (o.testOwnerSessionsFile) logger.warn("test_seams_enabled", { ownerSessions: ownerDids });
-} else {
+{
   const identityName = o.marketIdentityName as string;
   const identityPrompt = createKcpIdentityPrompt({
     server: o.marketIdentityKcpServer,
@@ -293,6 +237,25 @@ if (accountsMode) {
     };
   }
 
+  async function repoPdsDid(url: string): Promise<string> {
+    let waiting = false;
+    while (true) {
+      try {
+        const res = await fetch(`${url.replace(/\/+$/, "")}/xrpc/com.atproto.server.describeServer`);
+        if (res.ok) {
+          const did = (await res.json() as { did?: string }).did;
+          if (did) return did;
+        } else await res.body?.cancel();
+      } catch (err) {
+        if (!waiting) logger.info("requester_repo_pds_waiting", { url, error: String(err) });
+        waiting = true;
+      }
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  }
+
+  let repoAgent: RepoPdsAgent | undefined;
+
   const identityHandle: MarketIdentityHandle = startMarketIdentityReconciler({
     name: identityName,
     prompt: identityPrompt,
@@ -306,6 +269,19 @@ if (accountsMode) {
     localRepo: {
       qrParam: "plc",
       open: async (repoKeyHex: string) => {
+        if (o.repoPdsUrl) {
+          const did = await repoPdsDid(o.repoPdsUrl);
+          const agent = createRepoPdsAgent({ pdsUrl: o.repoPdsUrl, did, keypair: await Secp256k1Keypair.import(repoKeyHex, { exportable: true }) });
+          repoAgent = agent;
+          logger.info("requester_repo_pds", { url: o.repoPdsUrl, did });
+          return requesterAssociatingRepo({
+            did,
+            associateCalled: new Promise<string>(() => {}),
+            approveAssociation: () => {},
+            rejectAssociation: () => {},
+            api: { listRecords: (r, c, opts) => agent.listRecordsPage(r, c, opts) },
+          });
+        }
         localPds = await requesterPDS(repoKeyHex);
         await localPds.beginServe();
         return requesterAssociatingRepo(localPds);
@@ -322,6 +298,9 @@ if (accountsMode) {
     pds = localPds;
   } else if (browserRequester) {
     pds = browserRequester.pds;
+  } else if (repoAgent) {
+    pds = await requesterPDS(await heldKeyHex({ mount: vaultMount, path: `identity/${identityName}/callback` }, "keyHex"));
+    applyOAuthAgentToRequesterPDS(pds, Object.assign(repoAgent, { sessionData: { userDid: repoAgent.did } }), { log: (event, data) => logger.info(event, data) });
   } else {
     pds = await requesterPDS(privateKeyHex);
     const userAgent = Object.assign(createDelegatingAgent(ready.did, () => identityHandle.agent()), { sessionData: { userDid: ready.did } });
@@ -336,7 +315,7 @@ if (accountsMode) {
   healthDid = marketDid;
   statusDid = marketDid;
   statusRepoDid = pds.did;
-  logger.info("requester_identity_ready", { did: ready.did, handle: ready.handle, mode: identityMode, localRepo: !!localPds });
+  logger.info("requester_identity_ready", { did: ready.did, handle: ready.handle, mode: identityMode, localRepo: !!localPds, repoPds: o.repoPdsUrl ?? null });
 }
 
 await serve.beginServe();
@@ -382,8 +361,7 @@ const controller = createRequesterController({
   acceptCopies: o.acceptCopies,
   offeringWatcherDids: () => [...offeringDids],
   limits: { maxConcurrent: o.maxConcurrent as number, perAccount: o.perAccountMax as number },
-  orphanScan: accountsMode,
-  scanOwners: () => ownerDids,
+  orphanScan: true,
   unclaimedGraceMs: o.unclaimedGraceMs as number,
   orphanScanIntervalMs: o.orphanScanIntervalMs as number,
   recordRetentionMs: (o.recordRetentionSec as number) * 1000,
@@ -394,7 +372,6 @@ function shutdown(): void {
   eventStreams.close();
   serve.shutdown();
   controller.stop()
-    .then(() => stopAccounts?.())
     .then(() => stopIdentity?.())
     .finally(() => Deno.exit());
 }
@@ -402,5 +379,5 @@ Deno.addSignalListener("SIGINT", shutdown);
 Deno.addSignalListener("SIGTERM", shutdown);
 
 controller.start();
-logger.info("requester_controller_started", { accounts: accountsMode, maxConcurrent: o.maxConcurrent, perAccountMax: o.perAccountMax });
+logger.info("requester_controller_started", { maxConcurrent: o.maxConcurrent, perAccountMax: o.perAccountMax });
 await new Promise<never>(() => {});

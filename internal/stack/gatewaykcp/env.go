@@ -19,6 +19,7 @@ import (
 const (
 	DefaultAudience = "did:web:socialweb.local"
 	DefaultPLC      = "https://plc.directory"
+	DefaultIngress  = "xrpc.fedproxy.com"
 	DefaultJoin     = "*"
 	DeployDir       = "deploy"
 	tenantGrantFile = "tenant-grant.yaml"

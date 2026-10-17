@@ -109,7 +109,7 @@ import {
 } from "@publicdomainrelay/market-lexicons";
 import { createTangledGraphVouchResolver } from "@publicdomainrelay/trust-graph-tangled-graph";
 import { createBadgeBlueKeysDelegatedTrustResolver } from "@publicdomainrelay/delegated-trust-badge-blue-keys";
-import { createBadgeBlueKeysOperatorDiscovery } from "@publicdomainrelay/operator-discovery-badge-blue-keys";
+import { createBadgeBlueKeysOperatorDiscovery, discoverOperatedDids } from "@publicdomainrelay/operator-discovery-badge-blue-keys";
 
 type EventStreamsClient =
   import("@publicdomainrelay/atproto-event-streams-client").ATProtoEventStreamsClient;
@@ -1464,6 +1464,13 @@ runcmd:
     } catch (err) {
       log("vouch_discovery_error", { error: String(err) });
     }
+    const operatedDids = await discoverOperatedDids({
+      operators: vouchedDids,
+      service: "bidder_associate",
+      listRecordsPublic: (repo, coll) => listRecordsPublic(idResolver, repo, coll),
+      log: (level, msg, meta) => log(`operated_discovery_${level}`, { msg, ...(meta ?? {}) }),
+    });
+    if (operatedDids.length > 0) log("operated_discovery", { count: operatedDids.length, bidders: operatedDids });
 
     const autoRelayUrls = await autoDiscoverRelayUrls({ log: logger });
     const allRelayUrls = [...new Set([...relayUrls, ...autoRelayUrls])];
@@ -1488,7 +1495,7 @@ runcmd:
     if (watcherDids.length > 0) log("offering_watch_discovery", { count: watcherDids.length });
 
     const bidderDids = Array.from(
-      new Set([...relayDids, ...watcherDids, ...vouchedDids, ...extraBidderDids]),
+      new Set([...relayDids, ...watcherDids, ...vouchedDids, ...operatedDids, ...extraBidderDids]),
     );
     const deniedSet = new Set(denyBidderDids);
     const filteredBidderDids = bidderDids.filter((d) => !deniedSet.has(d));
@@ -1497,11 +1504,12 @@ runcmd:
       relay: relayDids.length,
       watch: watcherDids.length,
       vouched: vouchedDids.length,
+      operated: operatedDids.length,
       extra: extraBidderDids.length,
       denied: bidderDids.length - filteredBidderDids.length,
     });
 
-    const prewarmDids = [...new Set([...vouchedDids, ...extraBidderDids])]
+    const prewarmDids = [...new Set([...vouchedDids, ...operatedDids, ...extraBidderDids])]
       .filter((d) => !deniedSet.has(d));
     if (scopeCache && prewarmDids.length > 0) {
       const startedAt = Date.now();

@@ -3814,7 +3814,21 @@ because it bounds a mechanism the rest of this document leans on.
   (one createRecord, 3 points, once per bidder DID).
   The requester's policy reads the bidder's own repo for the operator (`resolveOperatorDid`). In a market
   network the bidder's core plays the operator's browser once with the bidder account on the bob PDS.
-  Open: the readings of the live proof; the gateway requester side (M2); whether prod requesters find the
+  The gateway requester side (M2): before, the gateway's requester DenoPod carried every ComputeContract
+  with the OAuth session of its spec.ownerDid account (accounts mode, the atproto auth mount), so every
+  rfp, compute.vm, accept and rbac record of every node went into alice's bsky.social repo, and a gateway
+  with no web app session for alice failed every claim. Now the gateway set renders the same `pds` DenoPod
+  in root:app for the MarketIdentity `requester` (mode localRepo, associateWith = Gateway `spec.operator`);
+  the core writes its key once at `requester/identity/requester/keys` of the root vault. The requester
+  DenoPod writes and reads only through `--repo-pds-url http://pds.default.app.svc.kcp.local` and answers
+  bids and events on a callback DID of its own key; spec.ownerDid stays the account of a contract for the
+  per-account limits, and the orphan scan reads the one repo. People still sign in to the web app through
+  the atproto auth mount; only the identity that posts RFPs changed. The operator scans
+  `<qrOrigin>/#plc=<requester DID>` once (the Gateway status message names the link while it waits); the
+  frontend calls associateConfirm through the operator's PDS and writes one record into the operator's
+  repo. In a market network the gateway's core does that with the tenant cluster's owner account on the
+  alice PDS. A requester_associate record has the shape {challenge: operator, keyId: requester}.
+  Open: the readings of the live proof; whether prod requesters find the
   new bidder DID through the relay index or need it in the Gateway's bidderDids (the operator's vouches name
   Bob, not the bidder DID). The pds writes the canonical association shape {challenge: operator, keyId:
   the application's DID} for every service; the policy context and the MarketIdentity read it first and

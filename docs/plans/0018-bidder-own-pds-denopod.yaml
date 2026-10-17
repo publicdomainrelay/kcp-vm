@@ -73,10 +73,21 @@ items:
     title: "The gateway's requester (Alice) writes its market records to its own PDS DenoPod"
     depends_on: [M0-SHARED-PDS-DENOPOD]
     decision: >
-      The gateway set renders deploy/apps/repo-pds/pds.values.yaml with the Pds field of manifests.Gateway,
-      a pds client in the gateway's vault, and the requester's RFP, compute.vm, accept and vouch records go
-      to it. The vouch records the requester's policy reads (sh.tangled.graph.vouch) are AtprotoRecord
-      objects. Alice's bsky.social account is written once, to associate the requester DID.
+      Before: the gateway's requester DenoPod ran in accounts mode (--account-custody-mount atproto): every
+      ComputeContract was carried with the OAuth session of the account named by spec.ownerDid, held by the
+      atproto auth mount of the root vault, so every rfp, compute.vm, accept and rbac record of every node
+      went into alice's bsky.social repo, and a gateway with no web app session for alice failed every claim.
+      Now: the gateway set renders pds@<profile> (deploy/apps/repo-pds) in root:app for the MarketIdentity
+      requester (mode localRepo, associateWith = Gateway spec.operator); the core writes the repo key once at
+      requester/identity/requester/keys of the root vault, the pds client reads it, and the pds account may
+      get the root-vault OpenBaoServer. The requester DenoPod takes --repo-pds-url
+      http://pds.default.app.svc.kcp.local: it signs with the repo key and every record goes to that repo; it
+      answers bids and events on a callback DID of its own key (identity/requester/callback). spec.ownerDid
+      stays the account of a contract for the per-account limits; the orphan scan reads the one repo. The
+      web app's sign-in of people (k8s.socialweb.computer, the atproto auth mount) is unchanged. In a market
+      network the gateway child's operator is the tenant cluster's owner account on alice's PDS, and the core
+      associates once with it, as the bidder's core does. The requester's policy reads alice's vouches
+      through the association record (delegated trust), so the repo needs no vouch records of its own.
     done_when: "a prod contract posts no record to alice's bsky.social repo."
     status: todo
   - id: ACC18-PDS-IS-A-DENOPOD
@@ -103,4 +114,45 @@ items:
     title: "The gateway requester uses the same PDS DenoPod pattern"
     depends_on: [M2-GATEWAY-REQUESTER-OWN-PDS]
     done_when: "the gateway's kcp shows its own pds DenoPod and AtprotoRecord objects; alice's bsky.social repo takes no write per contract."
+    status: todo
+  - id: ACC18-GATEWAY-PDS-IS-A-DENOPOD
+    title: "The gateway's PDS is a DenoPod in the gateway's own kcp"
+    depends_on: [M2-GATEWAY-REQUESTER-OWN-PDS]
+    done_when: "the Gateway status shows the DenoPod pds Running with its listener next to socialweb-computer-k8s and requester; the requester finds it as pds.default.app.svc.kcp.local."
+    status: todo
+  - id: ACC18-GATEWAY-ZERO-OPERATOR-WRITES
+    title: "Zero writes to alice's repo per contract"
+    depends_on: [M2-GATEWAY-REQUESTER-OWN-PDS]
+    done_when: "the operator account's repo has the same rev and record count before and after a node contract (market network alice PDS; prod alice on bsky.social)."
+    status: todo
+  - id: ACC18-GATEWAY-KEY-SURVIVES
+    title: "The gateway requester's repo key and DID survive a restart and an upgrade"
+    depends_on: [M2-GATEWAY-REQUESTER-OWN-PDS]
+    done_when: "the Gateway status did is the same after a restart of the gateway core and after `socialweb-computer upgrade`; the key is read from the root vault, never created twice."
+    status: todo
+  - id: ACC18-GATEWAY-ASSOCIATION-ONCE
+    title: "Alice associates the gateway requester DID once"
+    depends_on: [M2-GATEWAY-REQUESTER-OWN-PDS]
+    done_when: "one association write to alice's repo per requester DID; a restart does not ask again; a bidder under bidder-tangled-vouch resolves alice as the requester's operator from the association record."
+    status: todo
+  - id: M3-OPERATED-BIDDER-DISCOVERY
+    title: "A requester finds the bidders its vouched operators operate"
+    depends_on: [M1-BIDDER-OWN-PDS, M2-GATEWAY-REQUESTER-OWN-PDS]
+    decision: >
+      A bidder DID made by its own PDS is in no relay index and in no vouch record, so a requester that knew
+      Bob's account found no bidder. Discovery adds, for every DID the requester vouches (its own and,
+      through its association, its operator's), the DIDs that DID's repo associates (a badgeBlueKeys record
+      bidder_associate {challenge: the vouched DID, keyId: the bidder}, the one record the QR page or the
+      core writes into the operator's repo) whose own repo names that operator back with the same canonical
+      record (discoverOperatedDids in operator-discovery-badge-blue-keys). bidderDids stays an extra source.
+    done_when: "a gateway with no bidderDids rents a node from a bidder that only its operator's vouched account operates."
+    status: todo
+  - id: M3-RECORDS-BEFORE-PDS-STOPS
+    title: "Deleting an application removes its AtprotoRecord objects before its pds DenoPod stops"
+    depends_on: [M0-SHARED-PDS-DENOPOD]
+    decision: >
+      The MarketBidder and Gateway delete paths delete every AtprotoRecord object of the application first and
+      stop their DenoPods only when none is left; the running pds DenoPod removes each record from the repo
+      and releases its finalizer. When the pds DenoPod is not running, the core releases the finalizers itself.
+    done_when: "dev down of a market network with a bidder and a gateway leaves no AtprotoRecord object and no stuck workspace."
     status: todo

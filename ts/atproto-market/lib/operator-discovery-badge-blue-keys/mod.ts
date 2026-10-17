@@ -69,3 +69,30 @@ export function createBadgeBlueKeysOperatorDiscovery(opts: BadgeBlueKeysOperator
     },
   };
 }
+
+export interface OperatedDiscoveryOpts {
+  operators: string[];
+  service: string;
+  listRecordsPublic(repo: string, collection: string): Promise<ListedRecord[]>;
+  log?(level: string, msg: string, meta?: Record<string, unknown>): void;
+}
+
+function associates(v: Record<string, unknown>, operator: string, service: string): string | undefined {
+  if (v.service !== service || v.challenge !== operator) return undefined;
+  return typeof v.keyId === "string" && v.keyId.startsWith("did:") && v.keyId !== operator ? v.keyId : undefined;
+}
+
+export async function discoverOperatedDids(opts: OperatedDiscoveryOpts): Promise<string[]> {
+  const log = opts.log ?? (() => {});
+  const found = new Set<string>();
+  await Promise.all(opts.operators.map(async (operator) => {
+    const claimed = await opts.listRecordsPublic(operator, BADGE_BLUE_KEYS_NSID).catch(() => [] as ListedRecord[]);
+    const candidates = [...new Set(claimed.map((r) => associates(r.value, operator, opts.service)).filter((d): d is string => !!d))];
+    await Promise.all(candidates.map(async (did) => {
+      const own = await opts.listRecordsPublic(did, BADGE_BLUE_KEYS_NSID).catch(() => [] as ListedRecord[]);
+      if (own.some((r) => associates(r.value, operator, opts.service) === did)) found.add(did);
+      else log("info", "operated discovery: the associated repo does not name the operator back", { operator, did });
+    }));
+  }));
+  return [...found];
+}

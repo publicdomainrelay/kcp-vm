@@ -2406,12 +2406,10 @@
         "dependencies": [
           "jsr:@publicdomainrelay/atproto-event-streams-client@0",
           "jsr:@publicdomainrelay/atproto-helpers@0",
-          "jsr:@publicdomainrelay/atproto-session-custody-openbao@0",
           "jsr:@publicdomainrelay/cli-args-env@0",
           "jsr:@publicdomainrelay/cloud-init-common@0",
           "jsr:@publicdomainrelay/identity-prompt-kcp@0",
           "jsr:@publicdomainrelay/kcp-client-rest@0",
-          "jsr:@publicdomainrelay/key-vault@0",
           "jsr:@publicdomainrelay/logger@0",
           "jsr:@publicdomainrelay/market-abc@0",
           "jsr:@publicdomainrelay/market-atproto@0",
@@ -2431,11 +2429,8 @@
           "jsr:@publicdomainrelay/requester-xrpc@0",
           "jsr:@publicdomainrelay/scope-refresh-timers@0",
           "jsr:@publicdomainrelay/serve@0",
-          "jsr:@publicdomainrelay/socialweb-computer-account-agents@0",
-          "jsr:@publicdomainrelay/socialweb-computer-account-requesters@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-node-contract@0",
-          "jsr:@publicdomainrelay/socialweb-computer-session-password@0",
           "npm:@atproto/crypto@0.5"
         ]
       },
