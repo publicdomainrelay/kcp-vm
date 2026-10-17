@@ -18,6 +18,9 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/impl/execrunner"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/request"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
@@ -49,6 +52,8 @@ type requestRun struct {
 	kcp             *request.Kcp
 	standalone      devinstance.Layout
 	instanceDir     string
+	runsDir         string
+	podSuffix       string
 }
 
 func splitWords(rest []string) ([]string, []string) {
@@ -280,6 +285,9 @@ func (r *requestRun) start(ctx context.Context, fresh bool) error {
 		}
 		rec, err := r.childRecord(netLayout, app.Instance)
 		r.instanceDir = rec.Layout.StateDir
+		if rec.SharedKcp != "" {
+			r.runsDir, r.podSuffix = denoruntime.RunsDir(rec.SharedKcp), manifests.ServiceSuffix(rec.BaseWorkspace+":"+appctl.ComponentWorkspace)
+		}
 		if err != nil {
 			return err
 		}
@@ -719,9 +727,19 @@ func (r *requestRun) keepLogs() {
 		return
 	}
 	out := filepath.Join(request.Dir(r.stateRoot, r.inv.Name), "logs")
-	runs, _ := filepath.Glob(filepath.Join(r.instanceDir, "denokcp", "runs", "pod-*"))
+	runsDir := r.runsDir
+	if runsDir == "" {
+		runsDir = denoruntime.RunsDir(r.instanceDir)
+	}
+	runs, _ := filepath.Glob(filepath.Join(runsDir, "pod-*"))
 	files := []string{filepath.Join(r.instanceDir, "logs", "core.log")}
 	for _, run := range runs {
+		if r.podSuffix != "" {
+			b, err := os.ReadFile(filepath.Join(run, execrunner.PodFile))
+			if err != nil || !strings.HasSuffix(strings.TrimSpace(string(b)), "."+r.podSuffix) {
+				continue
+			}
+		}
 		for _, f := range []string{"stdout.txt", "stderr.txt"} {
 			files = append(files, filepath.Join(run, f))
 		}
@@ -732,8 +750,11 @@ func (r *requestRun) keepLogs() {
 			continue
 		}
 		rel, err := filepath.Rel(r.instanceDir, f)
-		if err != nil {
-			continue
+		if err != nil || strings.HasPrefix(rel, "..") {
+			if rel, err = filepath.Rel(filepath.Dir(runsDir), f); err != nil {
+				continue
+			}
+			rel = filepath.Join("denokcp", rel)
 		}
 		dst := filepath.Join(out, strings.ReplaceAll(rel, string(filepath.Separator), "_"))
 		if err := os.MkdirAll(out, 0o700); err == nil {

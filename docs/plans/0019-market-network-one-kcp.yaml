@@ -98,6 +98,19 @@ items:
     files: ["internal/appctl/network.go", "internal/manifests/service.go", "deploy/market-network", "ts/atproto-market/hono-plc"]
     done_when: "after dev restart --instance <network> core (and --binary) every front reports its old address, the network is Ready and run request --network completes."
     status: todo
+  - id: M3C-ADOPT-DENOPODS
+    title: "A core restart adopts the running DenoPods instead of restarting them"
+    depends_on: [M3B-FRONTS-SURVIVE-A-CORE-RESTART]
+    decision: >
+      Today the deno runtime runs in the core and ReapRuns stops the DenoPods a previous core left
+      running (under systemd-user they also die with the core's cgroup), so a core restart restarts every
+      DenoPod of the kcp. The execrunner adopts a live run from runs/<id>/state.json (pid and start ticks)
+      when the provider observes the pod's runId, polls it for its exit, and reaps only runs that no
+      DenoPod claims after a grace; the DenoPods leave the core's cgroup (their own units, or the core
+      unit's KillMode=process) so they outlive it.
+    files: ["internal/kcplibs/impl/execrunner", "internal/denokcp/provider", "internal/stack/denoruntime", "internal/bootstrap"]
+    done_when: "a core restart and a --binary swap leave every DenoPod pid unchanged and no request fails during it."
+    status: todo
   - id: M4-PROOF
     title: "Live proof and dev up time"
     depends_on: [M1-CHILD-IN-WORKSPACE, M2-GATEWAY-IN-WORKSPACE]
