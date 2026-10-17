@@ -8,7 +8,7 @@ args: ["--market-identity-name", "{{.Pds.Identity}}", "--kcp-server", "{{.Pds.Kc
 projected:
   - {name: kcp-token, serviceAccountToken: {name: pds, workspace: "{{.Pds.KcpWorkspace}}"}}
   - {name: kcp-ca, kcpCA: {}}
-  - {name: vault, openBaoClient: {server: "{{.Pds.VaultServer}}", client: "{{.Pds.VaultClient}}", workspace: "{{.Pds.KcpWorkspace}}"}}
+  - {name: vault, openBaoClient: {server: "{{.Pds.VaultServer}}", client: "{{.Pds.VaultClient}}", workspace: "{{.Pds.VaultWorkspace}}"}}
 env:
   PORT: "0"
   SERVE_PORT: "0"
