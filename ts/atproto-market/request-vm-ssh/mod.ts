@@ -13,9 +13,10 @@ import { Secp256k1Keypair } from "@atproto/crypto";
 import { explicitRelayUrls, marketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import { vaultRefs } from "@publicdomainrelay/market-identity-abc";
-import type { BrowserOAuthClient, IdentityVault, MarketIdentity, MarketIdentityMode, VaultRef } from "@publicdomainrelay/market-identity-abc";
+import type { AssociatingRepo, BrowserOAuthClient, IdentityVault, MarketIdentity, MarketIdentityMode, VaultRef } from "@publicdomainrelay/market-identity-abc";
 import { requesterAssociatingRepo, startMarketIdentityReconciler, vaultOAuthSessionStore } from "@publicdomainrelay/market-identity-atproto";
 import type { MarketIdentityHandle } from "@publicdomainrelay/market-identity-atproto";
+import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
 import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
@@ -26,11 +27,7 @@ import { MarketLoopTally, type MarketLoopView } from "@publicdomainrelay/market-
 import type { AccountPdsProvider } from "@publicdomainrelay/requester-controller-abc";
 import { createRequesterController } from "@publicdomainrelay/requester-controller-kcp";
 import { createNodeJoinProfile } from "@publicdomainrelay/socialweb-computer-k8s-node-contract";
-import { createAccountAgents } from "@publicdomainrelay/socialweb-computer-account-agents";
-import { createAccountRequesters } from "@publicdomainrelay/socialweb-computer-account-requesters";
-import { createOpenBaoCustodyConnector } from "@publicdomainrelay/atproto-session-custody-openbao";
 import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
-import { loadOrCreateVaultKeyHex } from "@publicdomainrelay/key-vault";
 import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
 import { createScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 import cliArgsEnv from "./cli-args-env.ts";
@@ -48,16 +45,13 @@ if (!o.statusFile) {
   console.error("request-vm-ssh runs only as a requester DenoPod, in its application's own kcp: start a requester with `socialweb-computer run request`");
   Deno.exit(2);
 }
-const accountsMode = typeof o.accountCustodyMount === "string" && o.accountCustodyMount !== "";
 const kcpBase = typeof o.kcpServer === "string" ? o.kcpServer.split("/clusters/")[0] : undefined;
 o.marketIdentityKcpServer ||= kcpBase;
 o.computeContractKcpServer ||= kcpBase;
 o.identityVaultKcpServer ||= kcpBase;
 const missing = [
-  ...(accountsMode ? [] : [
-    ["market-identity-kcp-server", o.marketIdentityKcpServer],
-    ["market-identity-kcp-workspace", o.marketIdentityKcpWorkspace],
-  ]),
+  ["market-identity-kcp-server", o.marketIdentityKcpServer],
+  ["market-identity-kcp-workspace", o.marketIdentityKcpWorkspace],
   ["compute-contract-kcp-server", o.computeContractKcpServer],
   ["identity-vault-openbao-server", o.identityVaultOpenbaoServer],
   ["identity-vault-kcp-server", o.identityVaultKcpServer],
@@ -161,59 +155,10 @@ const splitList = (s: string | undefined): string[] => s ? s.split(",").map((x) 
 
 let stopIdentity: (() => Promise<void>) | undefined;
 let pdsProvider: AccountPdsProvider;
-let stopAccounts: (() => Promise<void>) | undefined;
-let ownerDids: string[] = [];
 let statusDid = "";
 let statusRepoDid = "";
 
-if (accountsMode) {
-  const testSessions = o.testOwnerSessionsFile
-    ? parsePasswordSessions(JSON.parse(await Deno.readTextFile(o.testOwnerSessionsFile as string)))
-    : null;
-  ownerDids = testSessions ? [...testSessions.keys()] : [];
-  const custody = createOpenBaoCustodyConnector({
-    endpoint: async () => {
-      const r = await resolveVault();
-      return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
-    },
-    mount: o.accountCustodyMount,
-  });
-  const agents = createAccountAgents({
-    custody: custody.own,
-    agentWithoutOAuthFor: (did) => {
-      const session = testSessions?.get(did);
-      return session
-        ? createPasswordSessionAgent(session, {
-          onRetry: (event) => logger.info("password_session_request_retry", { did, ...event }),
-          onGiveUp: (event) => logger.warn("password_session_request_gave_up", { did, ...event }),
-        })
-        : null;
-    },
-    log: (event, data) => logger.info(event, data ?? {}),
-  });
-  const accounts = createAccountRequesters({
-    agents,
-    requesterKeyHex: () => loadOrCreateVaultKeyHex(vault, { mount: vaultMount, path: "requester/key" }),
-    plcDirectoryUrl: network.plcDirectoryUrl,
-    ingressProxyHost: network.ingressProxyHost,
-    label,
-    log: (event, data) => logger.info(event, data ?? {}),
-  });
-  pdsProvider = {
-    accounts: true,
-    pdsFor: (did) => {
-      if (!did) return Promise.reject(new Error("this requester carries contracts for accounts only: spec.ownerDid is unset"));
-      return accounts.requesterFor(did);
-    },
-    did: (did) => Promise.resolve(did ?? ""),
-  };
-  stopAccounts = () => agents.shutdown();
-  healthDid = "controller";
-  statusDid = "controller";
-  statusRepoDid = "controller";
-  logger.info("requester_accounts_mode", { custodyMount: o.accountCustodyMount, testOwners: ownerDids.length });
-  if (o.testOwnerSessionsFile) logger.warn("test_seams_enabled", { ownerSessions: ownerDids });
-} else {
+{
   const identityName = o.marketIdentityName as string;
   const identityPrompt = createKcpIdentityPrompt({
     server: o.marketIdentityKcpServer,
@@ -293,6 +238,20 @@ if (accountsMode) {
     };
   }
 
+  async function associateTestOperator(pds: Awaited<ReturnType<typeof createRequesterPDS>>, repo: AssociatingRepo): Promise<void> {
+    if ((await repo.associations()).length) return;
+    const [session] = parsePasswordSessions(JSON.parse(await Deno.readTextFile(o.testOperatorSessionsFile as string))).values();
+    const operator = await createPasswordSessionAgent(session);
+    const token = await operator.getServiceAuth(`did:web:${pds.ingressHost}`, ASSOCIATE_CONFIRM_NSID);
+    const res = await fetch(`https://${pds.ingressHost}/xrpc/${ASSOCIATE_CONFIRM_NSID}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    logger.info("test_operator_association", { operator: operator.did, requester: pds.did, status: res.status, body: await res.text() });
+    operator.dispose();
+  }
+
   const identityHandle: MarketIdentityHandle = startMarketIdentityReconciler({
     name: identityName,
     prompt: identityPrompt,
@@ -306,9 +265,15 @@ if (accountsMode) {
     localRepo: {
       qrParam: "plc",
       open: async (repoKeyHex: string) => {
-        localPds = await requesterPDS(repoKeyHex);
-        await localPds.beginServe();
-        return requesterAssociatingRepo(localPds);
+        const pds = await requesterPDS(repoKeyHex);
+        localPds = pds;
+        await pds.beginServe();
+        const repo = requesterAssociatingRepo(pds);
+        if (o.testOperatorSessionsFile) {
+          logger.warn("test_seams_enabled", { operatorSessionsFile: o.testOperatorSessionsFile });
+          setTimeout(() => associateTestOperator(pds, repo).catch((err) => logger.error("test_operator_association_failed", { error: String(err) })), 0);
+        }
+        return repo;
       },
     },
     oauthBrowser: { open: openBrowserClient },
@@ -382,8 +347,7 @@ const controller = createRequesterController({
   acceptCopies: o.acceptCopies,
   offeringWatcherDids: () => [...offeringDids],
   limits: { maxConcurrent: o.maxConcurrent as number, perAccount: o.perAccountMax as number },
-  orphanScan: accountsMode,
-  scanOwners: () => ownerDids,
+  orphanScan: true,
   unclaimedGraceMs: o.unclaimedGraceMs as number,
   orphanScanIntervalMs: o.orphanScanIntervalMs as number,
   recordRetentionMs: (o.recordRetentionSec as number) * 1000,
@@ -394,7 +358,6 @@ function shutdown(): void {
   eventStreams.close();
   serve.shutdown();
   controller.stop()
-    .then(() => stopAccounts?.())
     .then(() => stopIdentity?.())
     .finally(() => Deno.exit());
 }
@@ -402,5 +365,5 @@ Deno.addSignalListener("SIGINT", shutdown);
 Deno.addSignalListener("SIGTERM", shutdown);
 
 controller.start();
-logger.info("requester_controller_started", { accounts: accountsMode, maxConcurrent: o.maxConcurrent, perAccountMax: o.perAccountMax });
+logger.info("requester_controller_started", { maxConcurrent: o.maxConcurrent, perAccountMax: o.perAccountMax });
 await new Promise<never>(() => {});

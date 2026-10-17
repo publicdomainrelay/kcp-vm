@@ -39,7 +39,7 @@ export function createOrphanScanner(opts: OrphanScannerOptions): OrphanScanner {
 
   function blocking(contracts: ComputeContract[], owner: string, vmName: string, stateOf: (c: ComputeContract) => ContractState | null): boolean {
     return contracts.some((c) => {
-      if (c.spec?.ownerDid !== owner || c.spec?.vmName !== vmName) return false;
+      if ((opts.pds.accounts && c.spec?.ownerDid !== owner) || c.spec?.vmName !== vmName) return false;
       const phase = c.status?.phase;
       const settled = phase === "Held" || phase === "Released" || phase === "Failed";
       return !settled || !stateOf(c)?.payload;
@@ -65,7 +65,7 @@ export function createOrphanScanner(opts: OrphanScannerOptions): OrphanScanner {
         }
         let lookups = 0;
         let waiting = 0;
-        for (const owner of knownOwners) {
+        for (const owner of opts.pds.accounts ? knownOwners : [""]) {
           const pds = await opts.pds.pdsFor(owner);
           const vms = await listVmRecords(pds as never, { plcUrl: opts.plcUrl });
           for (const vm of vms) {

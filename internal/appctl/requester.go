@@ -151,11 +151,15 @@ func IdentitySpecOf(id v1alpha1.ApplicationIdentity) v1alpha1.MarketIdentitySpec
 }
 
 func (ctl *Controller) ensureIdentity(ctx context.Context, name string, id v1alpha1.ApplicationIdentity) error {
-	ri, err := ctl.client(ctl.c.workspace(), MarketIdentityGVR)
+	return ctl.ensureIdentitySpec(ctx, ctl.c.workspace(), name, IdentitySpecOf(id))
+}
+
+func (ctl *Controller) ensureIdentitySpec(ctx context.Context, ws, name string, spec v1alpha1.MarketIdentitySpec) error {
+	ri, err := ctl.client(ws, MarketIdentityGVR)
 	if err != nil {
 		return err
 	}
-	u, err := toUnstructured(&v1alpha1.MarketIdentity{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: IdentitySpecOf(id)}, "MarketIdentity")
+	u, err := toUnstructured(&v1alpha1.MarketIdentity{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: spec}, "MarketIdentity")
 	if err != nil {
 		return err
 	}
@@ -171,7 +175,11 @@ func (ctl *Controller) ensureIdentity(ctx context.Context, name string, id v1alp
 }
 
 func (ctl *Controller) identityDid(ctx context.Context) string {
-	ri, err := ctl.client(ctl.c.workspace(), MarketIdentityGVR)
+	return ctl.identityDidIn(ctx, ctl.c.workspace())
+}
+
+func (ctl *Controller) identityDidIn(ctx context.Context, ws string) string {
+	ri, err := ctl.client(ws, MarketIdentityGVR)
 	if err != nil {
 		return ""
 	}

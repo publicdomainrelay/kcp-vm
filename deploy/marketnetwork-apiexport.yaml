@@ -21,7 +21,7 @@ spec:
         crd: {}
     - group: socialweb.computer
       name: gateways
-      schema: v1alpha1-12.gateways.socialweb.computer
+      schema: v1alpha1-13.gateways.socialweb.computer
       storage:
         crd: {}
     - group: socialweb.computer

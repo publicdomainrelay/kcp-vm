@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-12.gateways.socialweb.computer
+  name: v1alpha1-13.gateways.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -129,6 +129,8 @@ spec:
                   scalePodsPerNode:
                     type: integer
                     format: int32
+              operator:
+                type: string
             required:
               - profile
           status:

@@ -135,8 +135,14 @@ func RootVaultSpec(g v1alpha1.GatewaySpec) (v1alpha1.OpenBaoServerSpec, error) {
 	return v1alpha1.OpenBaoServerSpec{Asset: &v1alpha1.HostProcessAsset{Name: RootVaultAsset},
 		Clients: []v1alpha1.OpenBaoServerClient{{Name: vaultlayout.RootClient, Policies: []string{vaultlayout.PolicyRootWriter}},
 			{Name: WebAppVaultClient, KVMount: WebAppVaultMount},
-			{Name: RequesterVaultClient, KVMount: RequesterVaultMount, Policies: []string{GatewayRequesterPolicy, AtprotoSessionProxyPolicy}}},
+			{Name: RequesterVaultClient, KVMount: RequesterVaultMount, Policies: []string{GatewayRequesterPolicy}}},
 		Declared: declared, Plugins: []v1alpha1.OpenBaoPlugin{plugin}}, nil
+}
+
+func GatewayRequesterIdentity(g v1alpha1.GatewaySpec) v1alpha1.MarketIdentitySpec {
+	s := IdentitySpecOf(v1alpha1.ApplicationIdentity{Mode: v1alpha1.MarketIdentityModeLocalRepo})
+	s.AssociateWith = g.Operator
+	return s
 }
 
 func sameSpec(a, b any) bool {
@@ -278,6 +284,10 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its workspace: "+err.Error()
 				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
 			}
+			if err := ctl.ensureIdentitySpec(ctx, ws, RequesterIdentity, GatewayRequesterIdentity(o.Spec)); err != nil {
+				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "the requester's MarketIdentity: "+err.Error()
+				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+			}
 			server, err := ctl.webAppIdentity(ctx, o, owner, *ctl.c.WebApp)
 			if err != nil {
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "the web app's kcp identity: "+err.Error()
@@ -308,6 +318,7 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 			webAppReady = webAppReady && v.Ready && len(v.Listeners) > 0
 		}
 		st.Listeners = append(st.Listeners, components...)
+		st.Did = ctl.identityDidIn(ctx, ws)
 		if ctl.c.OnComponents != nil {
 			ctl.c.OnComponents(owner, components)
 		}
@@ -387,6 +398,9 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir, requesterStateDir st
 				requesterExtra = append(requesterExtra, kv[0], kv[1])
 			}
 		}
+		if n.QrOrigin != "" {
+			requesterExtra = append(requesterExtra, "--qr-origin", n.QrOrigin)
+		}
 	}
 	if len(o.Spec.BidderDids) > 0 {
 		extra = append(extra, "--node-extra-bidder-dids", strings.Join(o.Spec.BidderDids, ","))
@@ -438,7 +452,7 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir, requesterStateDir st
 				return manifests.Gateway{}, fmt.Errorf("appctl: spec.marketNetwork names %q, not an absolute path", file)
 			}
 			if flag == "--test-owner-sessions-file" {
-				requesterExtra, requesterRead = append(requesterExtra, flag, file), append(requesterRead, file)
+				requesterExtra, requesterRead = append(requesterExtra, "--test-operator-sessions-file", file), append(requesterRead, file)
 				continue
 			}
 			args, read = append(args, flag, file), append(read, file)

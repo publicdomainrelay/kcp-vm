@@ -803,6 +803,7 @@ export interface GatewaySpec {
   marketNetwork?: GatewayMarketNetwork;
   webAppFront?: string;
   clusterProvider?: GatewayClusterProvider;
+  operator?: string;
 }
 
 export interface GatewayMarketNetwork {
@@ -978,7 +979,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-12.gateways.socialweb.computer",
+  schema: "v1alpha1-13.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -2377,6 +2378,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "network": {
         "ref": "MarketNetworkValue"
+      },
+      "operator": {
+        "type": "string"
       },
       "options": {
         "items": {

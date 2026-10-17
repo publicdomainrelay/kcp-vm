@@ -463,6 +463,8 @@ type GatewaySpec struct {
 	WebAppFront string `json:"webAppFront,omitempty"`
 
 	ClusterProvider *GatewayClusterProvider `json:"clusterProvider,omitempty"`
+
+	Operator string `json:"operator,omitempty"`
 }
 
 type GatewayClusterProvider struct {
