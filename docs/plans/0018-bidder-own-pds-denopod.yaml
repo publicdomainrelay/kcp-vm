@@ -68,7 +68,7 @@ items:
       a second step. In the market network the core plays the operator's browser once: it signs in as the
       bidder's account on the network's bob PDS and runs the same associateConfirm call.
     done_when: "on a market network, run request ends exec ok against a bidder whose records are all in its pds DenoPod, and the operator account's PDS takes zero writes for the contract."
-    status: doing
+    status: done
   - id: M2-GATEWAY-REQUESTER-OWN-PDS
     title: "The gateway's requester (Alice) writes its market records to its own PDS DenoPod"
     depends_on: [M0-SHARED-PDS-DENOPOD]
