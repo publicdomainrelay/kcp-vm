@@ -7,7 +7,8 @@ usage: scripts/ci-runner-install.sh [--remove] [--account NAME] [--token-file FI
   Installs the CI runner of socialweb-computer-kcp on this host: a dedicated unprivileged system account
   (no docker group, no sudo; kvm for the VM guests), one gitlab-runner with the shell executor as a systemd
   user unit of that account, registered to this project only, tagged socialweb-computer-kcp, one job at a
-  time, 90 minutes at most. The host needs /usr/bin/google-chrome (the web app sign-in test).
+  time, 90 minutes at most. The host needs /usr/bin/google-chrome and /usr/local/bin/kubectl (the web app
+  sign-in and kubeconfig tests).
   --remove      stop the unit, delete the runner on the GitLab server, remove the account and its home
   --account     the runner account (default socialweb-ci)
   --token-file  a 0600 file holding a GitLab token with the create_runner scope (default: the password of
@@ -32,7 +33,7 @@ done
 die() { echo "ci-runner-install: $*" >&2; exit 1; }
 say() { echo "ci-runner-install: $*" >&2; }
 
-for tool in sudo jq curl git useradd loginctl zstd /usr/bin/gitlab-runner /usr/bin/google-chrome; do
+for tool in sudo jq curl git useradd loginctl zstd /usr/bin/gitlab-runner /usr/bin/google-chrome /usr/local/bin/kubectl; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
 sudo -n true 2>/dev/null || die "needs sudo -n (run as an administrator of this host)"
