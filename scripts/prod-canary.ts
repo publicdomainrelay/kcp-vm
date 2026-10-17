@@ -307,7 +307,7 @@ function sleep(ms: number): Promise<void> {
 async function listClusters(): Promise<Array<Record<string, any>>> {
   const a = await xrpc("GET", `${CLUSTER_NSID}listClusters`);
   if (a.status !== 200) {
-    throw new CanaryError(`${transient.has(a.status) ? "transient: " : ""}listClusters answered ${a.status}`);
+    throw new CanaryError(`${transient.has(a.status) ? "transient: " : ""}listClusters answered ${a.status}: ${JSON.stringify(a.body).slice(0, 300)}`);
   }
   return a.body.clusters ?? [];
 }
