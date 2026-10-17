@@ -113,10 +113,10 @@ func TestRequestSecretsReachTheGuestThroughTheRFPFlow(t *testing.T) {
 		}
 	}
 	stores, _ := n.FilesNamed(n.StateDir, "kv.sqlite3", "kine.db", "pds")
-	t.Logf("scanned %s, the processes and the journal while the guest held the secret: %d kine stores (every kcp), %d record stores (Deno KV of the relay, the PDSes and the requester's own repo)",
+	t.Logf("scanned %s, the processes and the journal while the guest held the secret: %d kine stores (the network's one kcp), %d record stores (Deno KV of the relay, the PDSes and the requester's own repo)",
 		strings.Join(scanned, " and "), countSuffix(stores, "kine.db"), countSuffix(stores, "kv.sqlite3")+countSuffix(stores, "/pds"))
-	if countSuffix(stores, "kine.db") < 3 || countSuffix(stores, "kv.sqlite3") < 3 || countSuffix(stores, "/pds") < 1 {
-		t.Errorf("the scan did not cover every kcp (network, bidder, requester) and record store (relay, PDSes, the requester's repo): %v", stores)
+	if countSuffix(stores, "kine.db") < 1 || countSuffix(stores, "kv.sqlite3") < 3 || countSuffix(stores, "/pds") < 1 {
+		t.Errorf("the scan did not cover the network's kcp and every record store (relay, PDSes, the requester's repo): %v", stores)
 	}
 	if len(leaks) > 0 {
 		p.Kill(fmt.Errorf("the secret leaked"))

@@ -34,6 +34,13 @@ func (n *Network) bidderDir(i int) string {
 
 func (n *Network) runsDir() string { return filepath.Join(n.StateDir, "denokcp", "runs") }
 
+func (n *Network) appRunDirs(app string) []string {
+	r := n.h.As(context.Background(), "sh", "-c", `for d in "$1"/pod-*; do
+  grep -q -s -F -- ".default.app.$2.svc." "$d/service.txt" && echo "$d"
+done; true`, "sh", n.runsDir(), app)
+	return strings.Fields(r.Stdout)
+}
+
 func (n *Network) appRunLogs(app string) string {
 	r := n.h.As(context.Background(), "sh", "-c", `for d in "$1"/pod-*; do
   grep -q -s -F -- ".default.app.$2.svc." "$d/service.txt" && cat "$d"/std*.txt 2>/dev/null
