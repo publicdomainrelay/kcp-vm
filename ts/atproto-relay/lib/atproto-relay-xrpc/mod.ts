@@ -79,6 +79,10 @@ export function createPdsSubscription(
         }
 
         if (!frame || typeof frame.seq !== "number" || typeof frame.repo !== "string") return;
+        const blocks = (frame as { blocks?: unknown }).blocks;
+        if (blocks && typeof blocks === "object" && !(blocks instanceof Uint8Array)) {
+          (frame as { blocks?: unknown }).blocks = Uint8Array.from(Object.values(blocks as Record<string, number>));
+        }
         cursor = frame.seq;
         onEvent?.(frame);
       } catch {
