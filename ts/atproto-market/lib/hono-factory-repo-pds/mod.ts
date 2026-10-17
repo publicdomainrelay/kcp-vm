@@ -23,7 +23,7 @@ export interface RepoPdsSpec {
   identityName: string;
   associateServiceId: string;
   kcp: { server: string; workspace: string; tokenFile?: string; caFile?: string };
-  vault: { server: string; client: string; clientDir?: string; kcpServer: string; mount: string };
+  vault: { server: string; client: string; clientDir?: string; kcpServer: string; mount: string; kvMountClient: string };
   storagePath: string;
   serve: { addr: string; port: number };
   reports: { portFile?: string; listenersFile?: string; statusFile?: string };
@@ -53,6 +53,7 @@ export function createRepoPdsApp(spec: RepoPdsSpec, ports: { logger: StructuredL
     name: spec.vault.server,
     client: spec.vault.client,
     clientDir: spec.vault.clientDir,
+    kvMountClient: spec.vault.kvMountClient,
     onWaiting: (reason) => logger.info("repo_pds_vault_waiting", { openbaoserver: spec.vault.server, reason }),
   });
   const vault = createOpenBaoIdentityVault({

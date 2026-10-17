@@ -20,7 +20,7 @@ const app = createRepoPdsApp({
   identityName: o.marketIdentityName,
   associateServiceId: o.associateServiceId,
   kcp: { server: o.kcpServer, workspace: o.kcpWorkspace, tokenFile: o.kcpTokenFile, caFile: o.kcpCaCertFile },
-  vault: { server: o.vaultOpenbaoServer, client: o.vaultOpenbaoClient, clientDir: o.vaultOpenbaoClientDir, kcpServer: o.vaultKcpServer, mount: o.vaultMount },
+  vault: { server: o.vaultOpenbaoServer, client: o.vaultOpenbaoClient, clientDir: o.vaultOpenbaoClientDir, kcpServer: o.vaultKcpServer, mount: o.vaultMount, kvMountClient: o.vaultKvMountClient },
   storagePath: o.storagePath,
   serve: { addr: o.serveAddr, port: o.servePort },
   reports: { portFile: o.portFile, listenersFile: o.listenersFile, statusFile: o.statusFile },

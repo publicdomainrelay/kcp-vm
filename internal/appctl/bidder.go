@@ -192,7 +192,8 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir, guestStateDir string
 func BidderPds(v manifests.MarketBidder, stateDir string, n *v1alpha1.MarketNetworkValue) (manifests.RepoPds, error) {
 	p := manifests.RepoPds{StateDir: stateDir, Identity: BidderIdentity, KcpServer: v.Kcp.Server, KcpWorkspace: v.Kcp.Workspace,
 		VaultServer: v.Vault.Server, VaultClient: PdsVaultClient, VaultKcpServer: v.Vault.KcpServer, VaultMount: BidderVaultClient,
-		PlcDirectoryUrl: n.PlcDirectoryUrl, IngressProxyHost: n.IngressProxyHost, Trust: v.Trust, Read: v.Read}
+		VaultMountClient: BidderVaultClient,
+		PlcDirectoryUrl:  n.PlcDirectoryUrl, IngressProxyHost: n.IngressProxyHost, Trust: v.Trust, Read: v.Read}
 	var err error
 	if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
 		p.ExtraArgs, err = fragment([]string{"--network-hosts", hosts})

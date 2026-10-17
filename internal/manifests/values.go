@@ -61,6 +61,7 @@ type RepoPds struct {
 	VaultClient      string `json:",omitempty"`
 	VaultKcpServer   string `json:",omitempty"`
 	VaultMount       string `json:",omitempty"`
+	VaultMountClient string `json:",omitempty"`
 	PlcDirectoryUrl  string `json:",omitempty"`
 	IngressProxyHost string `json:",omitempty"`
 	Trust            string

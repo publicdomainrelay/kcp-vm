@@ -50,6 +50,12 @@
       "description": "Directory holding that client's certificate, key and the vault CA, kept current by the DenoPod's projected credentials",
       "env": "KCP_PROJECTED_VAULT"
     },
+    "vault-kv-mount-client": {
+      "type": "string",
+      "description": "Client of the OpenBaoServer whose kv mount holds the keys (the PDS client itself has no mount, only a read policy on the key path)",
+      "env": "VAULT_KV_MOUNT_CLIENT",
+      "default": "bidder"
+    },
     "vault-kcp-server": {
       "type": "string",
       "description": "kcp server URL (a /clusters/<workspace> URL) holding the OpenBaoServer object",
