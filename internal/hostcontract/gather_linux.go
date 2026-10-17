@@ -111,15 +111,14 @@ func gatherProbe(ctx context.Context, f *Facts, o Options, socket string) {
 		f.ProbeErr = "no executable or state dir to probe with"
 		return
 	}
-	dir := filepath.Join(o.StateDir, "probe")
+	suffix := randomSuffix()
+	dir := filepath.Join(o.StateDir, "probe", suffix)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		f.ProbeErr = err.Error()
 		return
 	}
-	defer os.Remove(dir)
-	suffix := randomSuffix()
-	out := filepath.Join(dir, suffix+".log")
-	defer os.Remove(out)
+	defer os.RemoveAll(dir)
+	out := filepath.Join(dir, "probe.log")
 	spec, extra := ProbeSpec(o.Role, suffix, append(append([]string(nil), o.Self...), ProbeHoldFlag), out)
 	r, err := hostsvc.Probe(ctx, socket, spec, extra)
 	f.ProbeSent, f.ProbeReadBack = r.Sent, r.ReadBack
