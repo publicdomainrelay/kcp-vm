@@ -192,6 +192,7 @@ sets:
         files:
           - path: marketidentity-apiresourceschema.yaml
           - path: atprotorecord-apiresourceschema.yaml
+          - path: atprotorecordwatch-apiresourceschema.yaml
           - path: marketidentity-apiexport.yaml
         after:
           - kind: APIExport
@@ -232,6 +233,7 @@ sets:
         files:
           - path: marketidentity-apiresourceschema.yaml
           - path: atprotorecord-apiresourceschema.yaml
+          - path: atprotorecordwatch-apiresourceschema.yaml
           - path: marketidentity-apiexport.yaml
         after:
           - kind: APIExport
@@ -274,6 +276,18 @@ sets:
             for: Ready
         files:
           - path: market-network/10-rbac.yaml
+      - name: association-watch@market-network
+        workspace: root
+        files:
+          - path: apps/repo-pds/association-watch.market-network.yaml
+      - name: association-watch@prod-qr
+        workspace: root
+        files:
+          - path: apps/repo-pds/association-watch.prod.yaml
+      - name: association-watch@dev-local
+        workspace: root
+        files:
+          - path: apps/repo-pds/association-watch.market-network.yaml
       - name: pds@market-network
         workspace: root:app
         files:
@@ -336,7 +350,7 @@ sets:
             template: denopods/service.yaml
 
   - name: gateway
-    summary: the components of a Gateway application in its own kcp - the root:app workspace, the MarketIdentity schema bound there (one MarketIdentity per web app account) and, per profile, the socialweb-computer-k8s web app DenoPod rendered from deploy/apps/gateway/<profile>.values.yaml, the requester's own PDS DenoPod pds (deploy/apps/repo-pds; its repo holds every market record the requester writes, associated once with spec.operator; plan 0018) and the requester DenoPod (a phase named <component>@<profile> belongs to that profile only); its root vault is the OpenBaoServer root-vault the app controller declares; applied by internal/appctl
+    summary: the components of a Gateway application in its own kcp - the root:app workspace, the MarketIdentity schema bound there (one MarketIdentity per web app account) and, per profile, the socialweb-computer-k8s web app DenoPod rendered from deploy/apps/gateway/<profile>.values.yaml, the requester's own PDS DenoPod pds (deploy/apps/repo-pds; its repo holds every market record the requester writes, associated once by the operator's claim record that its AtprotoRecordWatch association verifies; plan 0018) and the requester DenoPod (a phase named <component>@<profile> belongs to that profile only); its root vault is the OpenBaoServer root-vault the app controller declares; applied by internal/appctl
     values: Gateway
     phases:
       - name: workspace
@@ -360,6 +374,7 @@ sets:
         files:
           - path: marketidentity-apiresourceschema.yaml
           - path: atprotorecord-apiresourceschema.yaml
+          - path: atprotorecordwatch-apiresourceschema.yaml
           - path: marketidentity-apiexport.yaml
           - path: computecontract-apiresourceschema.yaml
           - path: computecontract-apiexport.yaml
@@ -392,6 +407,14 @@ sets:
         files:
           - path: apps/gateway/market-network.values.yaml
             template: denopods/service.yaml
+      - name: association-watch@prod
+        workspace: root:app
+        files:
+          - path: apps/repo-pds/association-watch.prod.yaml
+      - name: association-watch@market-network
+        workspace: root:app
+        files:
+          - path: apps/repo-pds/association-watch.market-network.yaml
       - name: pds@prod
         workspace: root:app
         files:
@@ -424,6 +447,7 @@ sets:
           - path: computecontract-apiexport.yaml
           - path: marketidentity-apiresourceschema.yaml
           - path: atprotorecord-apiresourceschema.yaml
+          - path: atprotorecordwatch-apiresourceschema.yaml
           - path: marketidentity-apiexport.yaml
         after:
           - kind: APIExport
