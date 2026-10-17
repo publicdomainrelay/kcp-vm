@@ -121,10 +121,6 @@ export default {
       type: "string" as const,
       description: "kcp workspace holding the ComputeContract objects; the controller carries out every one of them",
     },
-    "test-operator-sessions-file": {
-      type: "string" as const,
-      description: "JSON object keyed by DID of one password session (service, identifier, password) of the operator account; in a market network the requester's repo asks that account to associate with it once, as the did-key-associator page does for a real account",
-    },
     "max-concurrent": {
       type: "number" as const,
       description: "How many contracts the controller carries out at once; the others wait Pending",
@@ -220,6 +216,11 @@ export default {
     "oauth-session-client-id": {
       type: "string" as const,
       description: "OAuth client_id a restored session was issued to; a refresh token is bound to the client that obtained it",
+    },
+    "repo-pds-url": {
+      type: "string" as const,
+      description: "The application's own PDS DenoPod by kcp service name (hono-repo-pds); set, every record the requester writes and reads goes to that repo, signed with the repo key from the application's OpenBao, and the requester answers bids and events on a callback DID of its own",
+      env: "REPO_PDS_URL",
     },
     "pds-state-path": {
       type: "string" as const,

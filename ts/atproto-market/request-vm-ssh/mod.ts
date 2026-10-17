@@ -3,7 +3,8 @@ import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import { applyOAuthAgentToRequesterPDS, createOAuthRequester, createRequesterPDS } from "@publicdomainrelay/requester-xrpc";
 import type { OAuthRequesterHandle } from "@publicdomainrelay/requester-xrpc";
-import { createDelegatingAgent } from "@publicdomainrelay/atproto-helpers";
+import { createDelegatingAgent, createRepoPdsAgent } from "@publicdomainrelay/atproto-helpers";
+import type { RepoPdsAgent } from "@publicdomainrelay/atproto-helpers";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { REQUESTER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
@@ -13,10 +14,9 @@ import { Secp256k1Keypair } from "@atproto/crypto";
 import { explicitRelayUrls, marketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import { vaultRefs } from "@publicdomainrelay/market-identity-abc";
-import type { AssociatingRepo, BrowserOAuthClient, IdentityVault, MarketIdentity, MarketIdentityMode, VaultRef } from "@publicdomainrelay/market-identity-abc";
+import type { BrowserOAuthClient, IdentityVault, MarketIdentity, MarketIdentityMode, VaultRef } from "@publicdomainrelay/market-identity-abc";
 import { requesterAssociatingRepo, startMarketIdentityReconciler, vaultOAuthSessionStore } from "@publicdomainrelay/market-identity-atproto";
 import type { MarketIdentityHandle } from "@publicdomainrelay/market-identity-atproto";
-import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
 import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
@@ -27,7 +27,6 @@ import { MarketLoopTally, type MarketLoopView } from "@publicdomainrelay/market-
 import type { AccountPdsProvider } from "@publicdomainrelay/requester-controller-abc";
 import { createRequesterController } from "@publicdomainrelay/requester-controller-kcp";
 import { createNodeJoinProfile } from "@publicdomainrelay/socialweb-computer-k8s-node-contract";
-import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
 import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
 import { createScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 import cliArgsEnv from "./cli-args-env.ts";
@@ -238,19 +237,24 @@ let statusRepoDid = "";
     };
   }
 
-  async function associateTestOperator(pds: Awaited<ReturnType<typeof createRequesterPDS>>, repo: AssociatingRepo): Promise<void> {
-    if ((await repo.associations()).length) return;
-    const [session] = parsePasswordSessions(JSON.parse(await Deno.readTextFile(o.testOperatorSessionsFile as string))).values();
-    const operator = await createPasswordSessionAgent(session);
-    const token = await operator.getServiceAuth(`did:web:${pds.ingressHost}`, ASSOCIATE_CONFIRM_NSID);
-    const res = await fetch(`https://${pds.ingressHost}/xrpc/${ASSOCIATE_CONFIRM_NSID}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: "{}",
-    });
-    logger.info("test_operator_association", { operator: operator.did, requester: pds.did, status: res.status, body: await res.text() });
-    operator.dispose();
+  async function repoPdsDid(url: string): Promise<string> {
+    let waiting = false;
+    while (true) {
+      try {
+        const res = await fetch(`${url.replace(/\/+$/, "")}/xrpc/com.atproto.server.describeServer`);
+        if (res.ok) {
+          const did = (await res.json() as { did?: string }).did;
+          if (did) return did;
+        } else await res.body?.cancel();
+      } catch (err) {
+        if (!waiting) logger.info("requester_repo_pds_waiting", { url, error: String(err) });
+        waiting = true;
+      }
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
   }
+
+  let repoAgent: RepoPdsAgent | undefined;
 
   const identityHandle: MarketIdentityHandle = startMarketIdentityReconciler({
     name: identityName,
@@ -265,15 +269,22 @@ let statusRepoDid = "";
     localRepo: {
       qrParam: "plc",
       open: async (repoKeyHex: string) => {
-        const pds = await requesterPDS(repoKeyHex);
-        localPds = pds;
-        await pds.beginServe();
-        const repo = requesterAssociatingRepo(pds);
-        if (o.testOperatorSessionsFile) {
-          logger.warn("test_seams_enabled", { operatorSessionsFile: o.testOperatorSessionsFile });
-          setTimeout(() => associateTestOperator(pds, repo).catch((err) => logger.error("test_operator_association_failed", { error: String(err) })), 0);
+        if (o.repoPdsUrl) {
+          const did = await repoPdsDid(o.repoPdsUrl);
+          const agent = createRepoPdsAgent({ pdsUrl: o.repoPdsUrl, did, keypair: await Secp256k1Keypair.import(repoKeyHex, { exportable: true }) });
+          repoAgent = agent;
+          logger.info("requester_repo_pds", { url: o.repoPdsUrl, did });
+          return requesterAssociatingRepo({
+            did,
+            associateCalled: new Promise<string>(() => {}),
+            approveAssociation: () => {},
+            rejectAssociation: () => {},
+            api: { listRecords: (r, c, opts) => agent.listRecordsPage(r, c, opts) },
+          });
         }
-        return repo;
+        localPds = await requesterPDS(repoKeyHex);
+        await localPds.beginServe();
+        return requesterAssociatingRepo(localPds);
       },
     },
     oauthBrowser: { open: openBrowserClient },
@@ -287,6 +298,9 @@ let statusRepoDid = "";
     pds = localPds;
   } else if (browserRequester) {
     pds = browserRequester.pds;
+  } else if (repoAgent) {
+    pds = await requesterPDS(await heldKeyHex({ mount: vaultMount, path: `identity/${identityName}/callback` }, "keyHex"));
+    applyOAuthAgentToRequesterPDS(pds, Object.assign(repoAgent, { sessionData: { userDid: repoAgent.did } }), { log: (event, data) => logger.info(event, data) });
   } else {
     pds = await requesterPDS(privateKeyHex);
     const userAgent = Object.assign(createDelegatingAgent(ready.did, () => identityHandle.agent()), { sessionData: { userDid: ready.did } });
@@ -301,7 +315,7 @@ let statusRepoDid = "";
   healthDid = marketDid;
   statusDid = marketDid;
   statusRepoDid = pds.did;
-  logger.info("requester_identity_ready", { did: ready.did, handle: ready.handle, mode: identityMode, localRepo: !!localPds });
+  logger.info("requester_identity_ready", { did: ready.did, handle: ready.handle, mode: identityMode, localRepo: !!localPds, repoPds: o.repoPdsUrl ?? null });
 }
 
 await serve.beginServe();

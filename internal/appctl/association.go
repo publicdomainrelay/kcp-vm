@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 )
 
@@ -77,31 +79,80 @@ func (ctl *Controller) associateNetworkOperator(ctx context.Context, spec v1alph
 	if err != nil {
 		return err
 	}
-	pds := strings.TrimSuffix(spec.Identity.PdsUrl, "/")
-	ca := spec.Network.CaBundleRef
-	sess, err := xrpcCall(ctx, http.MethodPost, pds+"/xrpc/com.atproto.server.createSession", ca, "",
-		map[string]string{"identifier": spec.Identity.Handle, "password": password})
+	operator, err := associateOperator(ctx, id.Status.Did, pdsAddress, spec.Identity.PdsUrl, spec.Network.CaBundleRef,
+		spec.Identity.Handle, password, BidderAssociate, "bidder-")
 	if err != nil {
-		return err
-	}
-	operator, _ := sess["did"].(string)
-	access, _ := sess["accessJwt"].(string)
-	q := url.Values{"aud": {id.Status.Did}, "lxm": {AssociateConfirmNSID}}
-	sa, err := xrpcCall(ctx, http.MethodGet, pds+"/xrpc/com.atproto.server.getServiceAuth?"+q.Encode(), ca, access, nil)
-	if err != nil {
-		return err
-	}
-	token, _ := sa["token"].(string)
-	if _, err := xrpcCall(ctx, http.MethodPost, "http://"+pdsAddress+"/xrpc/"+AssociateConfirmNSID, "", token, map[string]any{}); err != nil {
-		return err
-	}
-	rec := map[string]any{"$type": BadgeBlueKeysNSID, "keyId": id.Status.Did, "challenge": operator, "service": BidderAssociate,
-		"name": "bidder-" + id.Status.Did[len(id.Status.Did)-8:], "createdAt": time.Now().UTC().Format(time.RFC3339)}
-	if _, err := xrpcCall(ctx, http.MethodPost, pds+"/xrpc/com.atproto.repo.createRecord", ca, access,
-		map[string]any{"repo": operator, "collection": BadgeBlueKeysNSID, "record": rec}); err != nil {
 		return err
 	}
 	ctl.c.log().Info("the market network operator account associated the bidder's own DID", "operator", operator,
 		"handle", spec.Identity.Handle, "bidderDid", id.Status.Did)
+	return nil
+}
+
+func associateOperator(ctx context.Context, did, pdsAddress, operatorPds, ca, identifier, password, service, namePrefix string) (string, error) {
+	pds := strings.TrimSuffix(operatorPds, "/")
+	sess, err := xrpcCall(ctx, http.MethodPost, pds+"/xrpc/com.atproto.server.createSession", ca, "",
+		map[string]string{"identifier": identifier, "password": password})
+	if err != nil {
+		return "", err
+	}
+	operator, _ := sess["did"].(string)
+	access, _ := sess["accessJwt"].(string)
+	q := url.Values{"aud": {did}, "lxm": {AssociateConfirmNSID}}
+	sa, err := xrpcCall(ctx, http.MethodGet, pds+"/xrpc/com.atproto.server.getServiceAuth?"+q.Encode(), ca, access, nil)
+	if err != nil {
+		return "", err
+	}
+	token, _ := sa["token"].(string)
+	if _, err := xrpcCall(ctx, http.MethodPost, "http://"+pdsAddress+"/xrpc/"+AssociateConfirmNSID, "", token, map[string]any{}); err != nil {
+		return "", err
+	}
+	rec := map[string]any{"$type": BadgeBlueKeysNSID, "keyId": did, "challenge": operator, "service": service,
+		"name": namePrefix + did[len(did)-8:], "createdAt": time.Now().UTC().Format(time.RFC3339)}
+	if _, err := xrpcCall(ctx, http.MethodPost, pds+"/xrpc/com.atproto.repo.createRecord", ca, access,
+		map[string]any{"repo": operator, "collection": BadgeBlueKeysNSID, "record": rec}); err != nil {
+		return "", err
+	}
+	return operator, nil
+}
+
+func (ctl *Controller) identityIn(ctx context.Context, ws, name string) (*v1alpha1.MarketIdentity, error) {
+	ri, err := ctl.client(ws, MarketIdentityGVR)
+	if err != nil {
+		return nil, err
+	}
+	u, err := ri.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var id v1alpha1.MarketIdentity
+	if err := fromUnstructured(u, &id); err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+func (ctl *Controller) associateGatewayOperator(ctx context.Context, id *v1alpha1.MarketIdentity, pdsAddress, sessionsFile string, n *v1alpha1.MarketNetworkValue) error {
+	if id.Status.Phase != v1alpha1.MarketIdentityPhaseAwaitingScan || id.Status.Did == "" || pdsAddress == "" || n == nil {
+		return nil
+	}
+	b, err := os.ReadFile(sessionsFile)
+	if err != nil {
+		return err
+	}
+	var sessions map[string]ownerSession
+	if err := json.Unmarshal(b, &sessions); err != nil {
+		return fmt.Errorf("the owner sessions file %s: %w", sessionsFile, err)
+	}
+	s, ok := sessions[id.Spec.AssociateWith]
+	if !ok {
+		return fmt.Errorf("the owner sessions file %s holds no session of the operator %q", sessionsFile, id.Spec.AssociateWith)
+	}
+	operator, err := associateOperator(ctx, id.Status.Did, pdsAddress, s.Service, n.CaBundleRef, s.Identifier, s.Password, RequesterAssociate, "requester-")
+	if err != nil {
+		return err
+	}
+	ctl.c.log().Info("the market network operator account associated the gateway requester's own DID", "operator", operator,
+		"handle", s.Identifier, "requesterDid", id.Status.Did)
 	return nil
 }

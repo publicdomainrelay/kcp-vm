@@ -173,6 +173,9 @@ func (ctl *Controller) webAppIdentity(ctx context.Context, o v1alpha1.Gateway, o
 	if err := ctl.grant(ctx, ctl.c.workspace(), owner, RequesterGrant, ForeignAccount(app, WebAppAccountNS, RequesterAccount), RequesterRootRules()); err != nil {
 		return "", err
 	}
+	if err := ctl.grant(ctx, ctl.c.workspace(), owner, GatewayPdsGrant, ForeignAccount(app, WebAppAccountNS, PdsComponent), RequesterRootRules()); err != nil {
+		return "", err
+	}
 	ctl.c.log().Info("the web app's own kcp identity", "user", user, "workspace", ctl.c.workspace()+":"+ComponentWorkspace, "server", f.server)
 	return f.server, nil
 }

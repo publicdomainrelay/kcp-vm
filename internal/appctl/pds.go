@@ -192,7 +192,7 @@ func (ctl *Controller) bidderVault(ctx context.Context, spec v1alpha1.MarketBidd
 		vault = manifests.BidderVault{Server: BidderVaultServer, Client: BidderVaultClient}
 	}
 	if spec.Identity.Mode == v1alpha1.MarketIdentityModeLocalRepo {
-		if err := ctl.ensureRepoKey(ctx); err != nil {
+		if err := ctl.ensureRepoKey(ctx, BidderVaultServer, BidderVaultClient, identityKeysPath); err != nil {
 			return vault, err
 		}
 	}
@@ -215,13 +215,13 @@ func NewRepoKeyHex() (string, error) {
 	}
 }
 
-func (ctl *Controller) ensureRepoKey(ctx context.Context) error {
-	client, _, c, err := ctl.vaultClient(ctx, BidderVaultServer, BidderVaultClient)
+func (ctl *Controller) ensureRepoKey(ctx context.Context, server, clientName, keysPath string) error {
+	client, _, c, err := ctl.vaultClient(ctx, server, clientName)
 	if err != nil {
 		return err
 	}
 	defer client.RevokeSelf(context.Background())
-	path := c.KVMount + "/data/" + identityKeysPath
+	path := c.KVMount + "/data/" + keysPath
 	data, err := client.GetKV(ctx, path)
 	var re *openbao.ResponseError
 	if err != nil && !(errors.As(err, &re) && re.Status == http.StatusNotFound) {
@@ -241,7 +241,7 @@ func (ctl *Controller) ensureRepoKey(ctx context.Context) error {
 	if err := client.PutKV(ctx, path, data); err != nil {
 		return err
 	}
-	ctl.c.log().Info("the bidder's repo key is in its own OpenBao", "server", BidderVaultServer, "path", path)
+	ctl.c.log().Info("the application's repo key is in its own OpenBao", "server", server, "path", path)
 	return nil
 }
 

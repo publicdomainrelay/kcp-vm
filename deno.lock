@@ -2417,7 +2417,6 @@
           "jsr:@publicdomainrelay/market-identity-abc@0",
           "jsr:@publicdomainrelay/market-identity-atproto@0",
           "jsr:@publicdomainrelay/market-identity-vault-openbao@0",
-          "jsr:@publicdomainrelay/market-lexicons@0",
           "jsr:@publicdomainrelay/market-network-common@0",
           "jsr:@publicdomainrelay/market-network-fetch@0",
           "jsr:@publicdomainrelay/oauth-scope@0",
@@ -2432,7 +2431,6 @@
           "jsr:@publicdomainrelay/serve@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-node-contract@0",
-          "jsr:@publicdomainrelay/socialweb-computer-session-password@0",
           "npm:@atproto/crypto@0.5"
         ]
       },

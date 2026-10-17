@@ -157,7 +157,7 @@ apps:
       - {name: market-identity-kcp-workspace, to: profile}
       - {name: market-identity-kcp-token-file, to: state}
       - {name: market-identity-kcp-ca-cert-file, to: profile}
-      - {name: test-operator-sessions-file, to: profile}
+      - {name: repo-pds-url, to: profile}
       - {name: max-concurrent, to: options}
       - {name: per-account-max, to: options}
       - {name: unclaimed-grace-ms, to: options}

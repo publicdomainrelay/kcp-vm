@@ -37,6 +37,9 @@ const (
 	WebAppVaultMount       = "socialweb-computer-k8s"
 	RequesterVaultMount    = "requester"
 	GatewayRequesterPolicy = "gateway-requester"
+	GatewayPdsPolicy       = "gateway-repo-key"
+	GatewayPdsGrant        = "socialweb-computer-k8s-pds"
+	RequesterAssociate     = "requester_associate"
 	NodeGuestCurlHome      = "/root"
 )
 
@@ -124,9 +127,15 @@ func RequesterVaultRules() []v1alpha1.OpenBaoPolicyRule {
 	}
 }
 
+func RequesterKeysPath() string {
+	return "identity/" + RequesterIdentity + "/keys"
+}
+
 func RootVaultSpec(g v1alpha1.GatewaySpec) (v1alpha1.OpenBaoServerSpec, error) {
 	declared := RootVaultDeclared()
-	declared.Policies = append(declared.Policies, v1alpha1.OpenBaoPolicy{Name: GatewayRequesterPolicy, Rules: RequesterVaultRules()})
+	declared.Policies = append(declared.Policies, v1alpha1.OpenBaoPolicy{Name: GatewayRequesterPolicy, Rules: RequesterVaultRules()},
+		v1alpha1.OpenBaoPolicy{Name: GatewayPdsPolicy, Rules: []v1alpha1.OpenBaoPolicyRule{
+			{Path: RequesterVaultMount + "/data/" + RequesterKeysPath(), Capabilities: []string{"read"}}}})
 	declared.Policies = append(declared.Policies, AtprotoPolicies()...)
 	plugin, err := AtprotoPlugin(g.Options, g.Network, GatewayAtprotoScope())
 	if err != nil {
@@ -135,7 +144,8 @@ func RootVaultSpec(g v1alpha1.GatewaySpec) (v1alpha1.OpenBaoServerSpec, error) {
 	return v1alpha1.OpenBaoServerSpec{Asset: &v1alpha1.HostProcessAsset{Name: RootVaultAsset},
 		Clients: []v1alpha1.OpenBaoServerClient{{Name: vaultlayout.RootClient, Policies: []string{vaultlayout.PolicyRootWriter}},
 			{Name: WebAppVaultClient, KVMount: WebAppVaultMount},
-			{Name: RequesterVaultClient, KVMount: RequesterVaultMount, Policies: []string{GatewayRequesterPolicy}}},
+			{Name: RequesterVaultClient, KVMount: RequesterVaultMount, Policies: []string{GatewayRequesterPolicy}},
+			{Name: PdsVaultClient, Policies: []string{GatewayPdsPolicy}}},
 		Declared: declared, Plugins: []v1alpha1.OpenBaoPlugin{plugin}}, nil
 }
 
@@ -265,6 +275,7 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 	}
 	st.Listeners = append(st.Listeners, core...)
 	webAppReady := true
+	awaitingOperator := ""
 	webAppVault, haveWebAppVault := WebAppVaultOf(vault)
 	requesterVault, haveRequesterVault := RequesterVaultOf(vault)
 	haveVault := haveWebAppVault && haveRequesterVault
@@ -294,6 +305,14 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
 			}
 			values.KcpServer = server
+			if err := ctl.ensureRepoKey(ctx, vaultlayout.RootServerName, RequesterVaultClient, RequesterKeysPath()); err != nil {
+				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "the requester's repo key: "+err.Error()
+				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+			}
+			if values.Pds, err = GatewayPds(values, ComponentStateDir(ctl.c.Layout.StateDir, PdsComponent), o.Spec.Network); err != nil {
+				st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
+				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+			}
 			pods, err := ctl.applyProfile(ctx, GatewaySet, o.Spec.Profile, owner, true, &values)
 			if err != nil {
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its components: "+err.Error()
@@ -311,14 +330,28 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 		}
 		webAppReady = len(pods) > 0
 		var components []v1alpha1.ApplicationListener
+		pdsAddress := ""
 		for i := range pods {
 			v := podViewOf(ws, &pods[i])
 			st.Components = append(st.Components, v.component())
 			components = append(components, v.Listeners...)
 			webAppReady = webAppReady && v.Ready && len(v.Listeners) > 0
+			if v.Name == PdsComponent && v.Ready {
+				pdsAddress = v.Address
+			}
 		}
 		st.Listeners = append(st.Listeners, components...)
-		st.Did = ctl.identityDidIn(ctx, ws)
+		if id, err := ctl.identityIn(ctx, ws, RequesterIdentity); err == nil {
+			st.Did = id.Status.Did
+			if a := id.Status.PendingAction; a != nil && id.Status.Phase == v1alpha1.MarketIdentityPhaseAwaitingScan {
+				awaitingOperator = "waiting for the operator account to associate the requester's repo " + id.Status.Did + ": " + a.Url
+			}
+			if m := o.Spec.MarketNetwork; o.Spec.Profile == ProfileGatewayNetwork && m != nil && m.OwnerSessionsFile != "" {
+				if err := ctl.associateGatewayOperator(ctx, id, pdsAddress, m.OwnerSessionsFile, o.Spec.Network); err != nil {
+					ctl.c.log().Warn("associating the requester's DID with the market network operator account", "err", err.Error())
+				}
+			}
+		}
 		if ctl.c.OnComponents != nil {
 			ctl.c.OnComponents(owner, components)
 		}
@@ -328,12 +361,37 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "waiting for the root vault to be Ready and synced"
 	case ctl.c.Listeners != nil && len(core) == 0:
 		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "the root vault is Ready; waiting for the core's members to report their listeners"
+	case !webAppReady && awaitingOperator != "":
+		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, awaitingOperator
 	case !webAppReady:
 		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "waiting for the "+WebAppComponent+" DenoPod to be ready and report its listener"
 	default:
 		st = ready(st, "the root vault is Ready and every member and component reported its listener")
 	}
 	return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+}
+
+func GatewayPds(v manifests.Gateway, stateDir string, n *v1alpha1.MarketNetworkValue) (manifests.RepoPds, error) {
+	p := manifests.RepoPds{StateDir: stateDir, Identity: RequesterIdentity, KcpServer: v.KcpServer, KcpWorkspace: v.IdentityWorkspace,
+		VaultServer: v.Requester.Vault.Server, VaultClient: PdsVaultClient, VaultKcpServer: v.KcpServer + "/clusters/" + v.GatewayWorkspace,
+		VaultMount: RequesterVaultMount}
+	extra := []string{"--associate-service-id", RequesterAssociate}
+	var ca string
+	if n != nil {
+		p.PlcDirectoryUrl, p.IngressProxyHost, ca = n.PlcDirectoryUrl, n.IngressProxyHost, n.CaBundleRef
+		if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
+			extra = append(extra, "--network-hosts", hosts)
+		}
+	}
+	var err error
+	if p.Trust, err = listFragment(ca); err != nil {
+		return p, err
+	}
+	if p.Read, err = listFragment(ca); err != nil {
+		return p, err
+	}
+	p.ExtraArgs, err = fragment(extra)
+	return p, err
 }
 
 func listJSON(items []string) (string, error) {
@@ -372,7 +430,7 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir, requesterStateDir st
 		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone, Vault: vault,
 		IdentityWorkspace: workspace + ":" + ComponentWorkspace,
 		Requester:         manifests.GatewayRequester{StateDir: requesterStateDir, Vault: requesterVault}}
-	var trust, read, requesterRead []string
+	var trust, read []string
 	var extra, requesterExtra []string
 	if n := o.Spec.Network; n != nil {
 		if n.CaBundleRef != "" {
@@ -443,19 +501,13 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir, requesterStateDir st
 			return manifests.Gateway{}, fmt.Errorf("appctl: spec.marketNetwork is a value of the %s profile only, not of %s", ProfileGatewayNetwork, o.Spec.Profile)
 		}
 		var args, read []string
-		for _, f := range [][2]string{{"--test-owner-sessions-file", m.OwnerSessionsFile}, {"--test-node-user-data-base-file", m.NodeUserDataBaseFile}} {
-			flag, file := f[0], f[1]
-			if file == "" {
-				continue
-			}
-			if !filepath.IsAbs(file) {
+		for _, file := range []string{m.OwnerSessionsFile, m.NodeUserDataBaseFile} {
+			if file != "" && !filepath.IsAbs(file) {
 				return manifests.Gateway{}, fmt.Errorf("appctl: spec.marketNetwork names %q, not an absolute path", file)
 			}
-			if flag == "--test-owner-sessions-file" {
-				requesterExtra, requesterRead = append(requesterExtra, "--test-operator-sessions-file", file), append(requesterRead, file)
-				continue
-			}
-			args, read = append(args, flag, file), append(read, file)
+		}
+		if m.NodeUserDataBaseFile != "" {
+			args, read = append(args, "--test-node-user-data-base-file", m.NodeUserDataBaseFile), append(read, m.NodeUserDataBaseFile)
 		}
 		if len(m.NodeGuestHostAliases) > 0 {
 			requesterExtra = append(requesterExtra, "--guest-host-aliases", strings.Join(m.NodeGuestHostAliases, ","))
@@ -468,9 +520,6 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir, requesterStateDir st
 		}
 	}
 	if v.Requester.ExtraArgs, err = fragment(requesterExtra); err != nil {
-		return manifests.Gateway{}, err
-	}
-	if v.Requester.ExtraRead, err = fragment(requesterRead); err != nil {
 		return manifests.Gateway{}, err
 	}
 	return v, nil
