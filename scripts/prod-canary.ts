@@ -82,6 +82,7 @@ interface Step {
 const steps: Step[] = [];
 const started = Date.now();
 let cluster: string | null = null;
+let deleteAccepted = false;
 let failure: string | null = null;
 let finished = false;
 
@@ -338,13 +339,20 @@ async function waitFor<T>(
   }
 }
 
-async function waitUnlisted(name: string): Promise<void> {
-  await waitFor(`cluster ${name} to be unlisted`, deleteTimeout, async () => {
-    const hit = (await listClusters()).find((c) => c.name === name);
-    if (!hit) return true;
-    if (hit.teardownBlocked) throw new CanaryError(`cluster ${name} teardown is blocked`);
-    return null;
-  });
+async function waitUnlisted(name: string): Promise<boolean> {
+  let blocked = false;
+  try {
+    await waitFor(`cluster ${name} to be unlisted`, deleteTimeout, async () => {
+      const hit = (await listClusters()).find((c) => c.name === name);
+      if (!hit) return true;
+      if (hit.teardownBlocked) blocked = true;
+      return null;
+    });
+  } catch (e) {
+    if (blocked && e instanceof CanaryError) throw new CanaryError(`${e.message}; the gateway reported its teardown blocked`);
+    throw e;
+  }
+  return blocked;
 }
 
 function kubectlWords(): string[] {
@@ -457,11 +465,12 @@ async function deleteAndVerify(): Promise<void> {
   if (a.status !== 200 && a.status !== 202) {
     throw new CanaryError(`deleteCluster answered ${a.status}: ${JSON.stringify(a.body)}`);
   }
+  deleteAccepted = true;
   note("deleteCluster", t, true, { phase: a.body.phase });
   t = Date.now();
-  await waitUnlisted(clusterName);
+  const blocked = await waitUnlisted(clusterName);
   cluster = null;
-  note("clusterUnlisted", t, true);
+  note("clusterUnlisted", t, true, blocked ? { teardownBlockedSeen: true } : undefined);
 }
 
 async function main(): Promise<void> {
@@ -494,7 +503,7 @@ async function main(): Promise<void> {
 }
 
 async function bestEffortDelete(): Promise<string | null> {
-  if (!cluster) return null;
+  if (!cluster || deleteAccepted) return null;
   try {
     const a = await xrpc("POST", `${CLUSTER_NSID}deleteCluster`, { body: { name: cluster } });
     if (a.status === 200 || a.status === 202 || a.status === 404) return null;

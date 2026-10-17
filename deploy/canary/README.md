@@ -54,8 +54,10 @@ canary needs only the PLC directory and the gateway.
 3. `kubectlApplyServerSide` of a busybox Job, then `getJob` until Succeeded; the
    container log must hold `canary-ok`. The cluster has no nodes, so this is the
    scale from zero onto a market RFP VM.
-4. `deleteCluster`, then `listClusters` until the cluster is unlisted; a
-   `teardownBlocked` cluster fails the run at once.
+4. `deleteCluster`, then `listClusters` until the cluster is unlisted, within
+   `--delete-timeout`. A `teardownBlocked` cluster is still waited for, because the
+   gateway keeps retrying the step; the step reports `teardownBlockedSeen`, and a
+   timeout names it. A failed run sends no second `deleteCluster` once one was accepted.
 5. With `--bidder-kubeconfig`: the ComputeVMs that appeared on the bidder during
    the Job must be gone after the delete. Without it the step reports `skipped`.
 
