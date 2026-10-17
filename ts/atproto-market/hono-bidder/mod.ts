@@ -88,7 +88,7 @@ const spec: MarketBidderAppSpec = {
       sessionClientId: o.oauthSessionClientId,
     },
   },
-  repo: { kind: "inproc", statePath: o.pdsStatePath },
+  repo: { kind: "pds", url: o.repoPdsUrl },
   providers,
   market: {
     serve: { addr: o.serveAddr, port: o.servePort, unix: o.serveUnix, tlsCertFile: o.tlsCertFile, tlsKeyFile: o.tlsKeyFile },

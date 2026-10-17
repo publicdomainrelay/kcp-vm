@@ -314,10 +314,10 @@ export default {
       description: "Path to load/save the Secp256k1 private key hex. Creates file with generated key if missing. Overridden by --private-key-hex if both set.",
       env: "REPO_PRIVATE_KEY_HEX_PATH",
     },
-    "pds-state-path": {
+    "repo-pds-url": {
       type: "string" as const,
-      description: "Path for PDS state persistence (Deno.Kv SQLite). Makes badgeBlueKeys associations survive restarts.",
-      env: "PDS_STATE_PATH",
+      description: "The bidder's own PDS DenoPod by kcp service name (hono-repo-pds); every repo read and write of the bidder goes there",
+      env: "REPO_PDS_URL",
     },
     "policy": POLICY_CLI_OPTION,
     "policy-args": POLICY_ARGS_CLI_OPTION,

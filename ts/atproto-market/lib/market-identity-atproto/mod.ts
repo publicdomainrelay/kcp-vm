@@ -397,7 +397,21 @@ export function startMarketIdentityReconciler(opts: MarketIdentityReconcilerOpti
       { phase: "AwaitingScan", did: repo.did, pendingAction: { kind: "scanQr", url: associationQrUrl(opts.qrOrigin, opts.localRepo.qrParam, repo.did) } },
       [{ type: CONDITION_ASSOCIATED, status: "False", reason: "AwaitingScan" }],
     );
-    const callerDid = await untilAborted(repo.associateCalled);
+    let polling = true;
+    const recordedElsewhere = (async () => {
+      while (polling && !signal.aborted) {
+        await sleep(Math.max(watchMs, 1_000)).catch(() => {});
+        const recorded = await repo.associations().catch(() => [] as string[]);
+        if (recorded.length) return recorded;
+      }
+      return new Promise<string[]>(() => {});
+    })();
+    const first = await untilAborted(Promise.race([repo.associateCalled, recordedElsewhere])).finally(() => polling = false);
+    if (Array.isArray(first)) {
+      logger.info("market_identity_association_recorded", { name, associations: first });
+      return await hold(first);
+    }
+    const callerDid = first;
     const callerHandle = await resolveHandle(callerDid);
     let asked = false;
     while (true) {

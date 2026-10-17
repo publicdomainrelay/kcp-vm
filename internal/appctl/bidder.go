@@ -318,11 +318,15 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		return err
 	}
 	allReady := len(pods) > 0
+	pdsAddress := ""
 	for i := range pods {
 		v := podViewOf(ws, &pods[i])
 		st.Components = append(st.Components, v.component())
 		st.Listeners = append(st.Listeners, v.Listeners...)
 		allReady = allReady && v.Ready
+		if v.Name == PdsComponent && v.Ready {
+			pdsAddress = v.Address
+		}
 		if v.Name == BidderComponent {
 			if did, _ := ctl.runStatus(v.RunID)["did"].(string); did != "" {
 				st.Did = did
@@ -331,6 +335,11 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 	}
 	if o.Spec.Kcp != nil {
 		st.Components = append(st.Components, ctl.guestComponents(ctx)...)
+	}
+	if o.Spec.Profile == BidderProfileNetwork {
+		if err := ctl.associateNetworkOperator(ctx, o.Spec, pdsAddress); err != nil {
+			ctl.c.log().Warn("associating the bidder's DID with the market network operator account", "err", err.Error())
+		}
 	}
 	switch {
 	case allReady && st.Did != "":

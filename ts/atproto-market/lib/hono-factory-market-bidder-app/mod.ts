@@ -17,11 +17,11 @@ import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@pub
 import {
   createATProto,
   createDelegatingAgent,
-  createLocalPDSAgent,
   createOAuthAgent,
+  createRepoPdsAgent,
   registerKeypairPlcDid,
 } from "@publicdomainrelay/atproto-helpers";
-import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
+import type { RepoPdsAgent } from "@publicdomainrelay/atproto-helpers";
 import { explicitRelayUrls, splitHostPort } from "@publicdomainrelay/market-network-common";
 import type { MarketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
@@ -99,7 +99,7 @@ export interface MarketBidderIdentitySpec {
   };
 }
 
-export type MarketBidderRepoSpec = { kind: "inproc"; statePath?: string } | { kind: "url" };
+export type MarketBidderRepoSpec = { kind: "pds"; url: string };
 
 export interface KcpProviderSpec {
   kind: "kcp";
@@ -241,7 +241,6 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   let keypair: Secp256k1Keypair | undefined;
   let ownPlcDid: string | undefined;
   let pdsHostname: string | undefined;
-  let localPdsPort = 0;
   let bidderServe: ServeHandle | undefined;
   let crawlRelayUrls: string[] = [];
   let localRelayUrls: string[] = [];
@@ -389,6 +388,37 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     return kp;
   }
 
+  async function heldRepoKeyHex(vault: IdentityVault, ref: { mount: string; path: string }): Promise<string> {
+    let waiting = false;
+    while (true) {
+      const held = await vault.read(ref).catch((err) => {
+        logger.warn("bidder_repo_key_read_failed", { mount: ref.mount, path: ref.path, error: String(err) });
+        return null;
+      });
+      if (typeof held?.repoKeyHex === "string" && held.repoKeyHex) return held.repoKeyHex;
+      if (!waiting) logger.info("bidder_repo_key_waiting", { mount: ref.mount, path: ref.path, hint: "the core writes the repo key into the bidder's OpenBao once" });
+      waiting = true;
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  }
+
+  async function repoPdsDid(url: string): Promise<string> {
+    let waiting = false;
+    while (true) {
+      try {
+        const res = await fetch(`${url.replace(/\/+$/, "")}/xrpc/com.atproto.server.describeServer`);
+        if (res.ok) {
+          const did = (await res.json() as { did?: string }).did;
+          if (did) return did;
+        } else await res.body?.cancel();
+      } catch (err) {
+        if (!waiting) logger.info("bidder_repo_pds_waiting", { url, error: String(err) });
+        waiting = true;
+      }
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  }
+
   function guestVault(): { kv: GuestKv; server: string; mount: string } {
     const vault = keyVault;
     if (!vault || !vaultServerRef) {
@@ -432,7 +462,9 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
     const given = await readPrivateKeyHex();
     let privateKeyHex: string;
-    if (!keyVault && mode !== "localRepo" && mode !== "oauthQr") {
+    if (mode === "localRepo") {
+      privateKeyHex = await heldRepoKeyHex(identityVault, refs.keys);
+    } else if (!keyVault && mode !== "oauthQr") {
       privateKeyHex = given ?? await generatedKeyHex();
     } else {
       const existing = await identityVault.read(refs.keys);
@@ -444,7 +476,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     keypair = await Secp256k1Keypair.import(privateKeyHex, { exportable: true });
     const attestationKp = await loadOrGenerateKeypair(privateKeyHex);
 
-    let localRepoAgent: LocalPDSAgent | undefined;
+    let repoAgent: RepoPdsAgent | undefined;
     const repo = spec.repo;
     identityHandle = startMarketIdentityReconciler({
       name: id.name,
@@ -456,26 +488,22 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
       vaultMount,
       autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
       oauthClientId: id.oauth?.sessionClientId,
-      localRepo: repo.kind === "inproc"
-        ? {
-          qrParam: "bdr",
-          open: async (repoKeyHex: string) => {
-            const pdsServe = createServe({ logger, listenersFile });
-            localRepoAgent = await createLocalPDSAgent({
-              logger,
-              keypair: await Secp256k1Keypair.import(repoKeyHex, { exportable: true }),
-              serve: pdsServe,
-              plcDirectoryUrl: network.plcDirectoryUrl,
-              ingressProxyHost: network.ingressProxyHost,
-              storagePath: repo.statePath,
-              associateServiceId: BIDDER_ASSOC_SERVICE,
-            });
-            await localRepoAgent.beginServe();
-            localPdsPort = pdsServe.tcpPort;
-            return bidderAssociatingRepo(localRepoAgent, BIDDER_ASSOC_SERVICE);
-          },
-        }
-        : undefined,
+      localRepo: {
+        qrParam: "bdr",
+        open: async () => {
+          const did = await repoPdsDid(repo.url);
+          repoAgent = createRepoPdsAgent({ pdsUrl: repo.url, did, keypair: keypair! });
+          logger.info("bidder_repo_pds", { url: repo.url, did });
+          const lister = repoAgent;
+          return bidderAssociatingRepo({
+            did,
+            associateCalled: new Promise<string>(() => {}),
+            approveAssociation: () => {},
+            rejectAssociation: () => {},
+            repoApi: { listRecords: (r, c, o) => lister.listRecordsPage(r, c, o) },
+          }, BIDDER_ASSOC_SERVICE);
+        },
+      },
       oauthBrowser: {
         open: async (): Promise<BrowserOAuthClient> => {
           const handle = identitySpec.handle ?? id.handle;
@@ -505,9 +533,9 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     const ready = await handle.ready();
 
     let agent: unknown;
-    if (ready.repo && localRepoAgent) {
-      agent = localRepoAgent;
-      pdsHostname = localRepoAgent.relay?.ingressHost || undefined;
+    if (ready.repo && repoAgent) {
+      agent = repoAgent;
+      pdsHostname = new URL(ingressUrlOf(keypair.did(), network.ingressProxyHost)).host + (splitHostPort(network.ingressProxyHost).port ? `:${splitHostPort(network.ingressProxyHost).port}` : "");
     } else {
       agent = createDelegatingAgent(ready.did, () => handle.agent());
       ownPlcDid = await registerKeypairPlcDid({ keypair, attestationDid: attestationKp.did(), plcDirectoryUrl: network.plcDirectoryUrl, logger });
@@ -723,7 +751,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
   async function announce(): Promise<void> {
     const at = atproto!;
-    const localPort = localPdsPort || bidderServe!.tcpPort;
+    const localPort = bidderServe!.tcpPort;
     if (localRelayUrls.length > 0 && localPort > 0) {
       const hostname = `127.0.0.1:${localPort}`;
       for (const url of localRelayUrls) {
