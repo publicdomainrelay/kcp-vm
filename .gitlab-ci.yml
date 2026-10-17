@@ -45,7 +45,7 @@ variables:
   before_script:
     - !reference [.toolchain, before_script]
     - export RUSTUP_HOME="$CI_STATE/rustup" CARGO_HOME="$CI_STATE/cargo" PATH="$CI_STATE/cargo/bin:$PATH"
-    - mkdir -p "$CI_STATE/release-build" "$CI_STATE/podman/run" && chmod 0700 "$CI_STATE/podman/run"
+    - mkdir -p "$CI_STATE/release-build"
     - |
       if [ ! -x "$CARGO_HOME/bin/rustup" ]; then
         init="$CI_STATE/release-build/rustup-init"
@@ -56,9 +56,8 @@ variables:
         rm -f "$init"
       fi
     - (cd rust && timeout -k 10 300 rustup toolchain install && rustc --version)
-    - export CONTAINER=podman XDG_RUNTIME_DIR="$CI_STATE/podman/run" CONTAINERS_STORAGE_CONF="$CI_STATE/podman/storage.conf" CONTAINERS_CONF="$CI_STATE/podman/containers.conf"
-    - printf '[storage]\ndriver = "overlay"\ngraphroot = "%s"\nrunroot = "%s"\n[storage.options.overlay]\nignore_chown_errors = "true"\n' "$CI_STATE/podman/storage" "$CI_STATE/podman/run/storage" >"$CONTAINERS_STORAGE_CONF"
-    - printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n[containers]\ncgroups = "disabled"\n' >"$CONTAINERS_CONF"
+    - export CONTAINER=podman
+    - . scripts/ci-podman-setup.sh
 
 integration:
   stage: test

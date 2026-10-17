@@ -52,11 +52,6 @@ runs:
           echo "CONTAINER=docker" >>"$GITHUB_ENV"
           exit 0
         fi
-        mkdir -p "$CI_STATE/podman/run" && chmod 0700 "$CI_STATE/podman/run"
-        export XDG_RUNTIME_DIR="$CI_STATE/podman/run"
-        export CONTAINERS_STORAGE_CONF="$CI_STATE/podman/storage.conf" CONTAINERS_CONF="$CI_STATE/podman/containers.conf"
-        printf '[storage]\ndriver = "overlay"\ngraphroot = "%s"\nrunroot = "%s"\n[storage.options.overlay]\nignore_chown_errors = "true"\n' "$CI_STATE/podman/storage" "$CI_STATE/podman/run/storage" >"$CONTAINERS_STORAGE_CONF"
-        printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n[containers]\ncgroups = "disabled"\n' >"$CONTAINERS_CONF"
+        . scripts/ci-podman-setup.sh
         for v in XDG_RUNTIME_DIR CONTAINERS_STORAGE_CONF CONTAINERS_CONF; do echo "$v=${!v}" >>"$GITHUB_ENV"; done
         echo "CONTAINER=podman" >>"$GITHUB_ENV"
-        podman version --format 'podman {{.Server.Version}}'
