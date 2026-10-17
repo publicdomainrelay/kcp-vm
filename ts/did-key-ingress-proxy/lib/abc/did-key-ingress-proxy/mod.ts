@@ -17,6 +17,7 @@ interface ActiveSubscription {
 }
 
 interface PendingRequest {
+  subdomain: string;
   resolve: (result: RelayResponse) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -34,6 +35,7 @@ export class RelayState {
   readonly reconnectGraceMs: number;
 
   private pendingRequests = new Map<string, PendingRequest>();
+  private lastResponseAt = new Map<string, number>();
   private reconnectQueues = new Map<string, ReconnectEntry>();
   private onSendFrame: SendFrame;
   private onCloseConnection: CloseConnection;
@@ -55,6 +57,7 @@ export class RelayState {
     if (!pending) return;
     clearTimeout(pending.timer);
     this.pendingRequests.delete(requestId);
+    this.lastResponseAt.set(pending.subdomain, Date.now());
     pending.resolve({ status, body, contentType });
   }
 
@@ -79,16 +82,21 @@ export class RelayState {
         // and re-register. Without this, every request to a dead subscriber
         // hangs for relayTimeoutMs forever.
         const deadWs = this.subscribers.get(subdomain);
-        if (deadWs) {
+        if (deadWs && !this.answeredWithin(subdomain, t)) {
           this.subscribers.delete(subdomain);
+          this.lastResponseAt.delete(subdomain);
           this.rejectSubscriberSubscriptions(subdomain);
           this.onCloseConnection(deadWs, 1011, `subscriber unresponsive after ${t}ms`);
         }
         reject(new Error(`relay timeout after ${t}ms`));
       }, t);
-      this.pendingRequests.set(requestId, { resolve, reject, timer });
+      this.pendingRequests.set(requestId, { subdomain, resolve, reject, timer });
       this.onSendFrame(subWs, frame);
     });
+  }
+
+  private answeredWithin(subdomain: string, ms: number): boolean {
+    return Date.now() - (this.lastResponseAt.get(subdomain) ?? 0) < ms;
   }
 
   drainToReconnectQueue(subdomain: string): void {
@@ -111,14 +119,15 @@ export class RelayState {
         // and re-register. Without this, every request to a dead subscriber
         // hangs for relayTimeoutMs forever.
         const deadWs = this.subscribers.get(subdomain);
-        if (deadWs) {
+        if (deadWs && !this.answeredWithin(subdomain, this.relayTimeoutMs)) {
           this.subscribers.delete(subdomain);
+          this.lastResponseAt.delete(subdomain);
           this.rejectSubscriberSubscriptions(subdomain);
           this.onCloseConnection(deadWs, 1011, `subscriber unresponsive after ${this.relayTimeoutMs}ms`);
         }
         reject(new Error(`relay timeout after ${this.relayTimeoutMs}ms`));
       }, this.relayTimeoutMs);
-      this.pendingRequests.set(requestId, { resolve, reject, timer });
+      this.pendingRequests.set(requestId, { subdomain, resolve, reject, timer });
       this.onSendFrame(raw, frame);
     }
     this.reconnectQueues.delete(subdomain);

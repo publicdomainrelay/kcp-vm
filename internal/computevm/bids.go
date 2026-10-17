@@ -3,6 +3,7 @@ package computevm
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +20,8 @@ const (
 	BidFinishEvery = time.Minute
 	BidLinkEvery   = 10 * time.Second
 	WonUnboundWait = time.Hour
+
+	acceptAnnotation = "socialweb.computer/accept"
 )
 
 var BidGVR = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "bids"}
@@ -107,12 +110,35 @@ func (ct *Controller) linkBids(ctx context.Context, vms []unstructured.Unstructu
 		}
 		return
 	}
+	byAccept := map[string]string{}
+	for name, vm := range loose {
+		if accept, _, _ := strings.Cut(vm.GetAnnotations()[acceptAnnotation], "#"); accept != "" {
+			byAccept[accept] = name
+		}
+	}
 	for i := range list.Items {
 		bid := &list.Items[i]
 		name, _, _ := unstructured.NestedString(bid.Object, "status", "computeVM")
+		unbound := name == ""
+		if unbound {
+			accept, _, _ := unstructured.NestedString(bid.Object, "status", "accept", "uri")
+			name = byAccept[accept]
+		}
 		vm := loose[name]
 		if vm == nil || bid.GetDeletionTimestamp() != nil {
 			continue
+		}
+		if unbound {
+			next := bid.DeepCopy()
+			if err := unstructured.SetNestedField(next.Object, name, "status", "computeVM"); err != nil {
+				continue
+			}
+			if _, err := ct.bids.UpdateStatus(ctx, next, metav1.UpdateOptions{}); err != nil {
+				if !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+					log.Warn("binding a Won Bid to the ComputeVM that carries its accept", "bid", bid.GetName(), "computevm", name, "err", err.Error())
+				}
+				continue
+			}
 		}
 		refs := append(vm.GetOwnerReferences(), metav1.OwnerReference{APIVersion: bid.GetAPIVersion(), Kind: "Bid", Name: bid.GetName(), UID: bid.GetUID()})
 		body, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": string(vm.GetUID()), "ownerReferences": refs}})

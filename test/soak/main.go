@@ -387,6 +387,8 @@ func main() {
 		os.Exit(runLoad(os.Args[2:]))
 	case "sample":
 		os.Exit(runSample(os.Args[2:]))
+	case "inspect":
+		os.Exit(runInspect(os.Args[2:]))
 	}
 	fmt.Fprintln(os.Stderr, "usage: soak load|sample [flags]")
 	os.Exit(2)
