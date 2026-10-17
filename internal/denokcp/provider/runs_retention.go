@@ -20,6 +20,7 @@ type runRemover interface {
 type runsKeeper interface {
 	Sweep(named func(string) bool, before time.Time) []string
 	CapLogs(capBytes int64) []string
+	Reap(named func(string) bool, startedBefore time.Time) []string
 }
 
 func (p *Provider) removeRunDirs(ctx context.Context, r any, kind, name string, ids ...string) {
@@ -65,10 +66,17 @@ func (p *Provider) keepRunsDir(ctx context.Context, reader *cacheReader, started
 		return
 	}
 	before := started
+	var reapBefore time.Time
 	t := time.NewTicker(RunsKeepEvery)
 	defer t.Stop()
 	for {
 		named := reader.runIDs(workPod, workRun, workEngine)
+		if !reapBefore.IsZero() {
+			if reaped := keeper.Reap(func(id string) bool { return named[id] }, reapBefore); len(reaped) > 0 {
+				p.opts.Log.Warn("live runs that no DenoPod, DenoRun or PolicyEngine names are stopped; a core adopts every run an object names and reaps the rest after a grace",
+					"runs", reaped, "startedBefore", reapBefore.UTC().Format(time.RFC3339))
+			}
+		}
 		if removed := keeper.Sweep(func(id string) bool { return named[id] }, before); len(removed) > 0 {
 			p.opts.Log.Info("run directories that no DenoPod, DenoRun or PolicyEngine names are removed",
 				"count", len(removed), "runs", removed, "lastActiveBefore", before.UTC().Format(time.RFC3339))
@@ -82,5 +90,6 @@ func (p *Provider) keepRunsDir(ctx context.Context, reader *cacheReader, started
 		case <-t.C:
 		}
 		before = time.Now().Add(-RunDirKeep)
+		reapBefore = time.Now().Add(-RunsKeepEvery)
 	}
 }

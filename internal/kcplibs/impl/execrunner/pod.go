@@ -41,7 +41,7 @@ type PodOptions struct {
 
 	TrustBundle func() []byte
 
-	Unit string
+	Holder Holder
 
 	EnforceMemory bool
 }
@@ -80,7 +80,7 @@ func NewPod(opts PodOptions) (*Pod, error) {
 		return nil, fmt.Errorf("execrunner: resolve RunsDir: %w", err)
 	}
 	opts.RunsDir = abs
-	return &Pod{opts: opts, sup: newSupervisor("pod", abs, "done.json", opts.Unit)}, nil
+	return &Pod{opts: opts, sup: newSupervisor("pod", abs, "done.json", opts.Holder)}, nil
 }
 
 func (p *Pod) Start(_ context.Context, req runner.PodRequest) (string, error) {

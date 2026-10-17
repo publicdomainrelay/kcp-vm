@@ -91,11 +91,13 @@ type supervisor struct {
 
 	seq atomic.Int64
 
-	unit string
+	holder Holder
 }
 
-func newSupervisor(prefix, runsDir, doneFile, unit string) *supervisor {
-	return &supervisor{prefix: prefix, runsDir: runsDir, doneFile: doneFile, unit: unit, runs: map[string]*process{}, envs: map[string]map[string]string{}, retainLimit: retainedRunsLimit}
+type Holder func() (int, error)
+
+func newSupervisor(prefix, runsDir, doneFile string, holder Holder) *supervisor {
+	return &supervisor{prefix: prefix, runsDir: runsDir, doneFile: doneFile, holder: holder, runs: map[string]*process{}, envs: map[string]map[string]string{}, retainLimit: retainedRunsLimit}
 }
 
 func (s *supervisor) nextID() string {
@@ -142,15 +144,15 @@ func (s *supervisor) start(entry processSpec) (string, error) {
 	if entry.dir == "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = append(detached(os.Environ()), env...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	if err := host.prepare(cmd, s.unit); err != nil {
+	if err := host.prepare(cmd); err != nil {
 		return abandon(err)
 	}
 	var lim *limiter
-	if entry.memoryMax > 0 {
-		if lim, err = newLimiter(cmd, id, entry.memoryMax); err != nil {
+	if entry.memoryMax > 0 || s.holder != nil {
+		if lim, err = newLimiter(cmd, id, entry.memoryMax, s.holder); err != nil {
 			return abandon(err)
 		}
 	}
@@ -231,6 +233,7 @@ func (s *supervisor) remove(id string) error {
 	delete(s.runs, id)
 	delete(s.envs, id)
 	s.mu.Unlock()
+	removePodCgroup(id)
 	return os.RemoveAll(filepath.Join(s.runsDir, id))
 }
 
@@ -311,7 +314,13 @@ func (s *supervisor) envOf(id string) map[string]string {
 	if run, ok := s.runs[id]; ok {
 		return run.env
 	}
-	return s.envs[id]
+	if env, ok := s.envs[id]; ok {
+		return env
+	}
+	if run, err := s.recover(id); err == nil && ownedByUs(run.pid, run.ticks) {
+		return host.environ(run.pid)
+	}
+	return nil
 }
 
 func (s *supervisor) resolve(id string) (*process, error) {

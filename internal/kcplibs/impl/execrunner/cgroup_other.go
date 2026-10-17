@@ -10,7 +10,7 @@ import (
 
 type limiter struct{}
 
-func newLimiter(*exec.Cmd, string, uint64) (*limiter, error) {
+func newLimiter(*exec.Cmd, string, uint64, Holder) (*limiter, error) {
 	return nil, fmt.Errorf("%w: a pod memory limit on %s", ErrUnsupported, runtime.GOOS)
 }
 
@@ -21,3 +21,5 @@ func (*limiter) oomKilled() bool { return false }
 func (*limiter) release() {}
 
 func ReleaseCgroups() {}
+
+func removePodCgroup(string) {}

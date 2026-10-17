@@ -385,7 +385,9 @@ func (s *server) members(name, inv string, pgid int) []int {
 		if pgid > 0 && p.pgid == pgid {
 			add(p.pid)
 			for _, c := range childrenOf(p.pid) {
-				add(c)
+				if env := procEnv(c, EnvDevsup, EnvUnit); env[EnvDevsup] == s.id && (env[EnvUnit] == "" || env[EnvUnit] == name) {
+					add(c)
+				}
 			}
 		}
 	}

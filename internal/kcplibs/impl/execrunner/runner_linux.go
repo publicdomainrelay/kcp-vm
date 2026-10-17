@@ -14,10 +14,23 @@ import (
 
 type osProcessHost struct{}
 
-func (osProcessHost) prepare(cmd *exec.Cmd, unit string) error {
-	cmd.Env = unitEnv(cmd.Env, unit)
+func (osProcessHost) prepare(cmd *exec.Cmd) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return nil
+}
+
+func (osProcessHost) environ(pid int) map[string]string {
+	body, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	if err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, kv := range strings.Split(string(body), "\x00") {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func (osProcessHost) killGroup(pid int) {

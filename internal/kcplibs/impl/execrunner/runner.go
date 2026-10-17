@@ -3,27 +3,30 @@ package execrunner
 import (
 	"errors"
 	"os/exec"
+	"slices"
+	"strings"
 )
-
-const UnitEnv = "SWC_UNIT"
 
 var ErrUnsupported = errors.New("execrunner: no process runner for this OS")
 
+var unitAttribution = []string{"SWC_UNIT", "SWC_DEVSUP", "INVOCATION_ID"}
+
 type processHost interface {
-	prepare(cmd *exec.Cmd, unit string) error
+	prepare(cmd *exec.Cmd) error
 	killGroup(pid int)
 	termGroup(pid int)
 	alive(pid int) bool
 	startTicks(pid int) uint64
+	environ(pid int) map[string]string
 }
 
 var host processHost = osProcessHost{}
 
-func unitEnv(env []string, unit string) []string {
-	if unit == "" {
-		return env
-	}
-	return append(env, UnitEnv+"="+unit)
+func detached(env []string) []string {
+	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(unitAttribution, name)
+	})
 }
 
 func processAlive(pid int) bool {
