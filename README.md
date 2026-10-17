@@ -287,7 +287,7 @@ sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) 
 
 - A production bidder gates which RFPs it answers with `bidder-policy` in its `config.json`, which the unit passes through `CONFIG_PATH_SOCIALWEB_COMPUTER`. Unset, the policy is this repository's default, `open` (`internal/appctl/bidder.go`), so a production bidder must name `tangled-vouch` there; `install bidder` does not write that key.
 - The guest image is pinned by sha256 in [`internal/versions/versions.json`](internal/versions/versions.json); the bidder verifies every file against that pin.
-- A bidder that signs in to its atproto account through a QR code uses the `prod-qr` profile. See [Sign in with OAuth](#sign-in-with-oauth).
+- A production bidder uses the `prod-qr` profile. It has its own PDS, the DenoPod `pds` in its own kcp, and writes every market record there, never to the handle's own repo. The handle's account is written once: the QR code associates the bidder's DID with it. See [Sign in with OAuth](#sign-in-with-oauth).
 
 `install bidder` options:
 
@@ -468,18 +468,21 @@ The credential file (mode 0600) exports `<ACCOUNT>_ATPROTO_HANDLE` and `<ACCOUNT
 ```bash
 # the web app user (alice) signs in to the gateway; do this after every fresh gateway deploy
 deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.aliceoa_bsky_social_source --account ALICE --url https://k8s.socialweb.computer/
-# the bidder signs in through the QR url its MarketIdentity reports; K is the bidder's kcp kubeconfig
+# the bidder's handle associates the bidder's own DID once, through the QR url its MarketIdentity reports;
+# K is the bidder's kcp kubeconfig
 U=$(kubectl --kubeconfig $K get marketidentity bidder -o jsonpath='{.status.pendingAction.url}')
-deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.bobvmbuilder_bsky_social_source --account BOB --url "$U"
+deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.bobvmbuilder_bsky_social_source --account BOB --url "$U" --click '^Yes, this is my bidder$'
 ```
 
-For the bidder, read the current QR url from the `MarketIdentity` object's `status.pendingAction.url` in the bidder's kcp (see [Inspect the kcp of an application](#inspect-the-kcp-of-an-application)). On an installed bidder host the kcp kubeconfig is readable by root only, so run `kubectl` through `sudo` with `K=/var/lib/socialweb-computer/swc-bidder/handles/<hash>/kcp/admin.kubeconfig`; the `MarketIdentity` appears a few seconds after `install bidder` returns, so retry on `NotFound`. Run `oauth-signin.ts` on a machine with Chrome, passing the url.
+The bidder's url is `<qrOrigin>/#bdr=<bidder DID>`. After the sign-in, `--click` presses the confirm button: the page calls the bidder's `associateConfirm` through the account's PDS, the bidder's `pds` DenoPod records the association as the AtprotoRecord object `association-...` in the bidder's kcp, and the page writes one `badgeBlueKeys` record into the account's repo. That is the only write to the account. The MarketIdentity then reads `Ready` with the account in `status.associations`, and a restart or an `upgrade` keeps the DID: the key is in the bidder's OpenBao and the repo in `<handle state>/pds`.
+
+For the bidder, read the current association url from the `MarketIdentity` object's `status.pendingAction.url` in the bidder's kcp (see [Inspect the kcp of an application](#inspect-the-kcp-of-an-application)). On an installed bidder host the kcp kubeconfig is readable by root only, so run `kubectl` through `sudo` with `K=/var/lib/socialweb-computer/swc-bidder/handles/<hash>/kcp/admin.kubeconfig`; the `MarketIdentity` appears a few seconds after `install bidder` returns, so retry on `NotFound`. Run `oauth-signin.ts` on a machine with Chrome, passing the url.
 
 `oauth-signin.ts` options: `--creds`, `--account`, and `--url` (all required), `--out` (the screenshot directory), `--done "<text>"` (wait for this text after consent), `--chrome` (the browser path, default `/usr/bin/google-chrome`), `--chrome-arg` (an extra browser flag; repeat it), `--sign-in-as` (type this identifier instead of the handle in the credential file) and `--cookie-file` (write the browser cookies to this file, mode 0600).
 
 A QR url expires after 5 minutes, so read the current one from the MarketIdentity status right before running the script.
 
-To force the bidder to sign in again, for example after the OAuth client scope changes on qr.fedfork.com:
+The association url does not expire; the session-transfer QR of the old `oauthQr` mode did. To force the bidder to sign in again, for example after the OAuth client scope changes on qr.fedfork.com (only an `oauthQr` identity has such a session):
 
 1. Delete `bidder/metadata/identity/bidder/session` in the bidder's OpenBao: log in with the certificate at `<handle state>/openbaoservers/bidder/openbao/tls` as the client `bidder` (its certificate is under `clients/bidder`).
 2. Restart the bidder unit, as its account: `sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) systemctl --user restart 'socialweb-computer-bidder@<handle>.service'`. The `MarketIdentity` reports `AwaitingScan` with a new url.
