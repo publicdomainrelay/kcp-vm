@@ -50,6 +50,9 @@ import { FEDPROXY_RBAC_NSID } from "@publicdomainrelay/fedproxy-rbac-common";
 import { oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueKeysRecord, loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
+import { BID_NSID, BIDS_FREE_NSID, COMPUTE_CONFIG_WIF_SIMPLE_NSID } from "@publicdomainrelay/market-lexicons";
+import { DEFAULT_BID_WRITE_RESERVE, PdsWriteBudget } from "@publicdomainrelay/pds-write-budget-abc";
+import { installPdsWriteObserver } from "@publicdomainrelay/pds-write-budget-fetch";
 import { BIDDER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { verifyRelayVisibility } from "@publicdomainrelay/relay-visibility-xrpc";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
@@ -122,6 +125,7 @@ export interface MarketBidderMarketSpec {
   bidWindowSec?: number;
   bidTtlSec?: number;
   bidQuota?: number;
+  bidWriteReserve?: number;
   computeVMQuota?: number;
   policy?: string;
   policyArgs?: unknown;
@@ -170,6 +174,7 @@ export class BidderPolicyError extends Error {
 export const GUEST_DENOPOD_KCP = "guest-kcp";
 
 const BIDDER_ASSOC_SERVICE = "bidder_associate";
+const BIDDER_ASSOCIATE_RKEY = "bidder_associate";
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 const AUTO_REFRESH_THRESHOLD_MS = 3_600_000;
 const DEFAULT_BID_WINDOW_SEC = 300;
@@ -268,6 +273,12 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     })()
     : undefined;
 
+  const writeBudget = new PdsWriteBudget({
+    reserve: spec.market.bidWriteReserve ?? DEFAULT_BID_WRITE_RESERVE,
+    bidCollections: [BID_NSID, BIDS_FREE_NSID, COMPUTE_CONFIG_WIF_SIMPLE_NSID],
+    sweepCollections: [OFFERING_NSID],
+  });
+
   async function marketLoop(): Promise<MarketLoopTally | undefined> {
     const root = spec.market.root;
     if (!root || id.prompt?.kind !== "kcp" || !id.prompt.server) return undefined;
@@ -283,12 +294,13 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     const write = statusFieldWrite(kcp, target, root.name, "market");
     const writer = createCoalescedStatusWriter<null>({
       write: () => {
-        const market: MarketLoopStatus = tally.view(new Date());
+        const market: MarketLoopStatus = { ...tally.view(new Date()), pdsWrites: writeBudget.view() };
         return write(market);
       },
       onError: (err) => logger.warn("bidder_market_status_failed", { root: root.name, error: String(err) }),
     });
     const tally = new MarketLoopTally(() => writer.set(null), prior as Partial<MarketLoopView> | undefined);
+    writeBudget.onChange(() => writer.set(null));
     logger.info("bidder_market_status_root", {
       root: root.name,
       workspace: id.prompt.workspace,
@@ -514,10 +526,13 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
         did: at.did,
         keyId: attestationKp.did(),
         service: "bidder_attestation",
-        writeRecord: (repo, collection, rkey, record) =>
-          typeof writer.createRecord === "function"
-            ? writer.createRecord(repo, collection, rkey, record)
-            : at.updateRecord(collection, rkey, record),
+        writeRecord: async (repo, collection, rkey, record) => {
+          const held = await at.getRecord(repo, collection, rkey).catch(() => null);
+          if (held) return { uri: held.uri, cid: held.cid };
+          return typeof writer.createRecord === "function"
+            ? await writer.createRecord(repo, collection, rkey, record) as { uri: string; cid: string }
+            : await at.updateRecord(collection, rkey, record);
+        },
       } as Parameters<typeof createBadgeBlueKeysRecord>[0]);
       logger.info("badge_blue_key_bound", { did: at.did, keyId: attestationKp.did(), service: "bidder_attestation" });
     } catch (err) {
@@ -525,13 +540,16 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     }
     if (!id.associateWith) return;
     try {
-      await at.createRecord(BADGE_BLUE_KEYS_NSID, {
-        $type: BADGE_BLUE_KEYS_NSID,
-        challenge: id.associateWith,
-        keyId: at.did,
-        service: "bidder_associate",
-        createdAt: new Date().toISOString(),
-      });
+      const held = await at.getRecord(at.did, BADGE_BLUE_KEYS_NSID, BIDDER_ASSOCIATE_RKEY).catch(() => null);
+      if (held?.value.challenge !== id.associateWith) {
+        await at.updateRecord(BADGE_BLUE_KEYS_NSID, BIDDER_ASSOCIATE_RKEY, {
+          $type: BADGE_BLUE_KEYS_NSID,
+          challenge: id.associateWith,
+          keyId: at.did,
+          service: "bidder_associate",
+          createdAt: new Date().toISOString(),
+        });
+      }
       logger.info("bidder_associated_with_operator", { operatorDid: id.associateWith, bidderDid: at.did });
     } catch (err) {
       logger.warn("bidder_associate_failed", { operatorDid: id.associateWith, error: String(err) });
@@ -619,6 +637,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     }
     const policyArgs = await resolveBidderPolicy(spec.market);
     installMarketNetworkFetch({ network });
+    installPdsWriteObserver(writeBudget);
 
     let signedIn: Awaited<ReturnType<typeof signIn>>;
     try {
@@ -632,6 +651,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
       badgeBlueSigner: signedIn.attestationKp,
       plcDirectory: createPlcDirectoryClient({ plcDirectoryUrl: network.plcDirectoryUrl }),
       agent: signedIn.agent as never,
+      writeBudget,
     });
     await bindKeys(signedIn.agent, signedIn.attestationKp);
 
@@ -693,6 +713,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
         }),
       acceptToContract,
       loop,
+      writeBudget,
       bids: bidLedger,
       ...(spec.market.bidTtlSec ? { bidRecordTtlMs: spec.market.bidTtlSec * 1_000 } : {}),
     });

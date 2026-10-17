@@ -237,7 +237,55 @@ type MarketLoopStatus struct {
 
 	KcpWait *MarketLatencyStatus `json:"kcpWait,omitempty"`
 
+	PdsWrites *PdsWriteStatus `json:"pdsWrites,omitempty"`
+
 	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+type PdsWriteStatus struct {
+	Since string `json:"since"`
+
+	Writes int64 `json:"writes"`
+
+	Points int64 `json:"points"`
+
+	RateLimited int64 `json:"rateLimited,omitempty"`
+
+	Reserve int64 `json:"reserve"`
+
+	ByCollection []PdsWriteCollection `json:"byCollection,omitempty"`
+
+	PerHour []PdsWriteHour `json:"perHour,omitempty"`
+
+	Limits []PdsLimitStatus `json:"limits,omitempty"`
+}
+
+type PdsWriteCollection struct {
+	Collection string `json:"collection"`
+
+	Writes int64 `json:"writes"`
+
+	Points int64 `json:"points"`
+}
+
+type PdsWriteHour struct {
+	Hour string `json:"hour"`
+
+	Points int64 `json:"points"`
+}
+
+type PdsLimitStatus struct {
+	Pds string `json:"pds"`
+
+	Limit int64 `json:"limit,omitempty"`
+
+	Remaining *int64 `json:"remaining,omitempty"`
+
+	ResetAt string `json:"resetAt,omitempty"`
+
+	PausedUntil string `json:"pausedUntil,omitempty"`
+
+	ObservedAt string `json:"observedAt"`
 }
 
 type MarketLatencyStatus struct {

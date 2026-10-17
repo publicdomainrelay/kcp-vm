@@ -1,7 +1,7 @@
 import type { DispatchRfpInput, RfpGate } from "@publicdomainrelay/market-atproto";
 import type { MarketLoopRecorder } from "@publicdomainrelay/market-abc";
 import type { BidClaim, BidEntry, BidLedger, BidRef } from "@publicdomainrelay/market-bidder-abc";
-import { bidOpen, DECLINE_CAPACITY } from "@publicdomainrelay/market-bidder-abc";
+import { bidOpen, DECLINE_CAPACITY, DECLINE_WRITE_BUDGET } from "@publicdomainrelay/market-bidder-abc";
 import { type BidRetentionOptions, createBidRetention } from "./bid-retention.ts";
 import type { HandlerResult } from "@publicdomainrelay/market-abc";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
@@ -21,6 +21,7 @@ export interface BidLoopOptions {
   bids?: BidLedger;
   retention?: Omit<BidRetentionOptions, "bids" | "selfDid" | "logger">;
   loop?: MarketLoopRecorder;
+  writeBudget?: { declineReason(): string | undefined };
   logger: StructuredLoggerInterface;
   listOwnBids(): Promise<OwnBidRecord[]>;
   knownAccept(acceptUri: string, acceptCid: string): boolean;
@@ -166,6 +167,13 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
         loop?.declined(DECLINE_CAPACITY, input.rfpUri, new Date());
         logger.warn("rfp_declined_capacity", { rfpUri: input.rfpUri, quota: full });
         return json({ ok: false, error: DECLINE_CAPACITY, message: `the quota of ${full} is used up` }, 503);
+      }
+      const short = opts.writeBudget?.declineReason();
+      if (short) {
+        loop?.rfpSeen();
+        loop?.declined(DECLINE_WRITE_BUDGET, input.rfpUri, new Date());
+        logger.warn("rfp_declined_write_budget", { rfpUri: input.rfpUri, reason: short });
+        return json({ ok: false, error: DECLINE_CAPACITY, message: short }, 503);
       }
       return await run();
     } finally {

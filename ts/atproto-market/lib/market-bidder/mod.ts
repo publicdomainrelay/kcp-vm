@@ -24,7 +24,6 @@ import {
   BADGE_BLUE_KEYS_NSID,
   ACCEPT_NSID,
   EVENT_NSID,
-  COMPUTE_EVENTS_VM_ONNETWORK_NSID,
   BIDDER_ASSOCIATION_NSID,
 } from "@publicdomainrelay/market-lexicons";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
@@ -56,6 +55,7 @@ import type {
 } from "@publicdomainrelay/market-bidder-abc";
 import { activeContractOf, TerminatedReceipts } from "@publicdomainrelay/market-bidder-abc";
 import { declineReasonOf, type HandlerResult, type MarketLoopRecorder } from "@publicdomainrelay/market-abc";
+import type { PdsWriteBudget } from "@publicdomainrelay/pds-write-budget-abc";
 export type {
   ActiveContract,
   CallbackFactoryDeps,
@@ -134,6 +134,7 @@ export interface MarketBidderConfig {
   bids?: BidLedger;
   bidRecordTtlMs?: number;
   bidRetentionScanMs?: number;
+  writeBudget?: PdsWriteBudget;
 }
 
 export interface MarketBidder {
@@ -190,15 +191,18 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const terminatedReceipts = new TerminatedReceipts();
   const contractStore = config.contractStore;
   const loop = config.loop;
+  config.writeBudget?.trackContracts(() => activeContracts.size);
   const bidLoop = createBidLoop({
     selfDid: atproto.did,
     claimant: `pid-${Deno.pid}-${crypto.randomUUID().slice(0, 8)}`,
     bids: config.bids,
     loop,
+    writeBudget: config.writeBudget,
     logger,
     retention: {
       ttlMs: config.bidRecordTtlMs,
       intervalMs: config.bidRetentionScanMs,
+      sharedUris: atproto.sharedRecordUris,
       deleteRecord: atproto.deleteRecord,
       listOwnBidRecords: async (cursor) => {
         const pdsUrl = await resolvePds(atproto.idResolver, atproto.did);
@@ -521,6 +525,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       acceptToContract,
       createRecord: atproto.createRecord,
       createRepoRecord: atproto.createRepoRecord,
+      createSharedRecord: atproto.createSharedRecord,
       createSignedRepoRecord: atproto.createSignedRepoRecord,
       deleteRecord: atproto.deleteRecord,
       callService: atproto.callService,
@@ -621,43 +626,6 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
           : undefined,
       });
       serve.app.route("/", factory.createApp() as never);
-
-      // Guest event endpoint -- VM calls back at boot with accept ref from accept.json.
-      serve.app.post("/v1/on-network", async (c) => {
-        let body: { acceptUri?: string; acceptCid?: string; address?: string; createdAt?: string };
-        try { body = await c.req.json(); } catch {
-          return c.json({ error: "InvalidRequest" }, 400);
-        }
-        if (!body.acceptUri || !body.acceptCid) {
-          return c.json({ error: "InvalidRequest", message: "missing acceptUri or acceptCid" }, 400);
-        }
-        const acceptKey = `${body.acceptUri}#${body.acceptCid}`;
-        const guestEntry = acceptToContract.get(acceptKey);
-        if (!guestEntry) {
-          log("warn", "guest.onNetwork: unknown accept ref", { acceptKey });
-          return c.json({ error: "UnknownAccept", message: "accept ref not found -- VM may have been provisioned before receipt was created" }, 404);
-        }
-        const nowIso = body.createdAt ?? new Date().toISOString();
-        const { uri, cid } = await atproto.createRepoRecord(
-          COMPUTE_EVENTS_VM_ONNETWORK_NSID,
-          { $type: COMPUTE_EVENTS_VM_ONNETWORK_NSID, address: body.address, createdAt: nowIso },
-        );
-        // Wrap in market.event with proper receipt strongRef
-        const { uri: eventUri, cid: eventCid, record: eventRecord } = await atproto.createSignedRepoRecord(
-          EVENT_NSID, {
-            $type: EVENT_NSID,
-            receipt: { $type: "com.atproto.repo.strongRef", uri: guestEntry.receiptUri, cid: guestEntry.receiptCid },
-            payload: { $type: "com.atproto.repo.strongRef", uri, cid },
-          }, atproto.did);
-        log("info", "guest.onNetwork recorded", { receiptKey: guestEntry.receiptKey, uri, address: body.address });
-        // Submit to requester if submitEventUrl exists
-        if (guestEntry.submitEventUrl) {
-          atproto.callService(guestEntry.submitEventUrl, "com.publicdomainrelay.temp.market.submitEvent", "com.publicdomainrelay.temp.market.submitEvent", {
-            uri: eventUri, cid: eventCid, record: eventRecord,
-          }).catch((err: unknown) => log("error", "guest.onNetwork submitEvent failed", { error: String(err) }));
-        }
-        return c.json({ ok: true, uri, cid, eventUri, eventCid });
-      });
     }
 
     if (eventStreams) {

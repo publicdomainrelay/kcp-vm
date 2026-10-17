@@ -1,11 +1,12 @@
 import type { BidEntry, BidLedger } from "@publicdomainrelay/market-bidder-abc";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
+import { isRateLimitError } from "@publicdomainrelay/pds-write-budget-abc";
 
 export const DEFAULT_BID_RECORD_TTL_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_BID_RETENTION_SCAN_MS = 10 * 60 * 1000;
 export const DEFAULT_BID_RETENTION_PAGES = 50;
 export const DEFAULT_BID_RETENTION_FIRST_MS = 30_000;
-export const DEFAULT_BID_RETENTION_DELETES = 1000;
+export const DEFAULT_BID_RETENTION_DELETES = 100;
 
 export interface OwnBidRecordPage {
   records: Array<{ uri: string; cid: string; value: Record<string, unknown> }>;
@@ -22,6 +23,7 @@ export interface BidRetentionOptions {
   listOwnBidRecords(cursor: string | undefined): Promise<OwnBidRecordPage>;
   deleteRecord(collection: string, rkey: string): Promise<void>;
   keepBidUri?(uri: string): boolean;
+  sharedUris?(): ReadonlySet<string>;
   logger: StructuredLoggerInterface;
   now?: () => number;
 }
@@ -29,7 +31,9 @@ export interface BidRetentionOptions {
 export interface BidRetentionReport {
   scanned: number;
   deleted: number;
+  dependents: number;
   kept: number;
+  halted?: boolean;
 }
 
 export interface BidRetention {
@@ -62,7 +66,7 @@ export function createBidRetention(opts: BidRetentionOptions): BidRetention {
     const at = parseAtUri(uri);
     if (!at || at.did !== opts.selfDid) return;
     await opts.deleteRecord(at.collection, at.rkey).catch((err: unknown) => {
-      if (!/404|not ?found|RecordNotFound/i.test(String(err))) throw err;
+      if (isRateLimitError(err) || !/404|not ?found|RecordNotFound/i.test(String(err))) throw err;
       opts.logger.warn("bid_record_already_absent", { uri, error: String(err) });
     });
   }
@@ -76,36 +80,67 @@ export function createBidRetention(opts: BidRetentionOptions): BidRetention {
     return Number.isFinite(created) && now() - created >= ttlMs;
   }
 
+  function addDependents(into: Set<string>, record: { value: Record<string, unknown> }): void {
+    for (const uri of [refOf(record.value.payload), refOf(record.value.bidConfig)]) if (uri) into.add(uri);
+  }
+
   async function run(): Promise<BidRetentionReport> {
-    const report: BidRetentionReport = { scanned: 0, deleted: 0, kept: 0 };
+    const report: BidRetentionReport = { scanned: 0, deleted: 0, kept: 0, dependents: 0 };
     const byRfp = new Map<string, BidEntry>();
     for (const e of await opts.bids.list()) byRfp.set(e.rfp.uri, e);
+    const records: OwnBidRecordPage["records"] = [];
     let cursor: string | undefined;
-    for (let page = 0; page < maxPages && report.deleted < maxDeletes; page++) {
+    for (let page = 0; page < maxPages; page++) {
       const out = await opts.listOwnBidRecords(cursor);
-      for (const record of out.records) {
-        report.scanned++;
-        const rfpUri = refOf(record.value.rfp);
-        const entry = rfpUri ? byRfp.get(rfpUri) : undefined;
-        if (opts.keepBidUri?.(record.uri) || !due(record, entry)) {
-          report.kept++;
-          continue;
-        }
-        try {
-          await removeOwn(record.uri);
-          await removeOwn(refOf(record.value.payload));
-          await removeOwn(refOf(record.value.bidConfig));
-          report.deleted++;
-        } catch (err) {
-          report.kept++;
-          opts.logger.warn("bid_record_retention_failed", { bidUri: record.uri, error: String(err) });
-        }
-        if (report.deleted >= maxDeletes) break;
-      }
+      records.push(...out.records);
       cursor = out.cursor;
       if (!cursor) break;
     }
-    if (report.deleted > 0) opts.logger.info("bid_records_removed", { ...report, ttlMs });
+    const live = new Set<string>();
+    const dueRecords: OwnBidRecordPage["records"] = [];
+    for (const record of records) {
+      report.scanned++;
+      const rfpUri = refOf(record.value.rfp);
+      const entry = rfpUri ? byRfp.get(rfpUri) : undefined;
+      if (opts.keepBidUri?.(record.uri) || !due(record, entry)) {
+        report.kept++;
+        addDependents(live, record);
+      } else {
+        dueRecords.push(record);
+      }
+    }
+    const orphaned = new Set<string>();
+    let halted = false;
+    for (const record of dueRecords) {
+      if (halted || report.deleted >= maxDeletes) {
+        addDependents(live, record);
+        continue;
+      }
+      try {
+        await removeOwn(record.uri);
+        report.deleted++;
+        addDependents(orphaned, record);
+      } catch (err) {
+        report.kept++;
+        addDependents(live, record);
+        halted = isRateLimitError(err);
+        opts.logger.warn("bid_record_retention_failed", { bidUri: record.uri, error: String(err), halted });
+      }
+    }
+    const shared = opts.sharedUris?.() ?? new Set<string>();
+    for (const uri of orphaned) {
+      if (halted) break;
+      if (live.has(uri) || shared.has(uri)) continue;
+      try {
+        await removeOwn(uri);
+        report.dependents++;
+      } catch (err) {
+        halted = isRateLimitError(err);
+        opts.logger.warn("bid_record_retention_failed", { uri, error: String(err), halted });
+      }
+    }
+    if (halted) report.halted = true;
+    if (report.deleted > 0 || report.dependents > 0) opts.logger.info("bid_records_removed", { ...report, ttlMs });
     return report;
   }
 

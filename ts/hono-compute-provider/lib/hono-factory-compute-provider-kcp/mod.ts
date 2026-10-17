@@ -2,6 +2,7 @@ import { Hono } from "@hono/hono";
 import { createFactory } from "@hono/hono/factory";
 import { EVENT_NSID, ON_NETWORK_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/compute-provider-common";
 import {
+  type StrongRef,
   type ComputeAtproto,
   type ComputeProvider,
   type ComputeProviderCtx,
@@ -48,6 +49,7 @@ export const PROVIDER_MARKET_FIELDS: ReadonlyArray<keyof ComputeVMMarket> = ["on
 export const GUEST_MARKET_FIELDS: ReadonlyArray<keyof ComputeVMMarket> = ["address", "reportedAt", "hostKeys"];
 
 const REPORT_RETRY_MS = 5_000;
+const REPORT_RETRY_MAX_MS = 300_000;
 
 export interface ComputeProviderKcpFactoryOptions extends ComputeProviderCtx {
   atproto: ComputeAtproto;
@@ -103,19 +105,22 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
   const latest = new Map<string, ComputeVM>();
   const published = new Set<string>();
   const inFlight = new Set<string>();
+  const onNetworkWrites = new Map<string, { payload?: StrongRef; eventSigned?: boolean }>();
+  const failures = new Map<string, number>();
+  const notBefore = new Map<string, number>();
 
   async function publishOnNetwork(name: string, vm: ComputeVM, report: ComputeVMMarket): Promise<boolean> {
     const contract = vm.spec?.contract;
-    if (!contract?.receiptUri || !contract.receiptCid) {
-      logger.info("guest_onnetwork_waits_for_contract", { name, address: report.address });
-      return false;
-    }
-    const ref = await atproto.createRecord(ON_NETWORK_NSID, {
+    if (!contract?.receiptUri || !contract.receiptCid) return false;
+    const written = onNetworkWrites.get(name) ?? {};
+    onNetworkWrites.set(name, written);
+    written.payload ??= await atproto.createRecord(ON_NETWORK_NSID, {
       $type: ON_NETWORK_NSID,
       address: report.address,
       createdAt: report.reportedAt ?? new Date().toISOString(),
     });
-    if (opts.createSignedRepoRecord) {
+    const ref = written.payload;
+    if (opts.createSignedRepoRecord && !written.eventSigned) {
       const { uri: eventUri, cid: eventCid, record: eventRecord } = await opts.createSignedRepoRecord(
         EVENT_NSID,
         {
@@ -125,6 +130,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
         },
         atproto.getAgentDid(),
       );
+      written.eventSigned = true;
       if (contract.submitEventUrl && opts.callService) {
         opts.callService(contract.submitEventUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_NSID, {
           uri: eventUri,
@@ -151,7 +157,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
   }
 
   function attempt(key: string, name: string, work: () => Promise<boolean>): void {
-    if (published.has(key) || inFlight.has(key)) return;
+    if (published.has(key) || inFlight.has(key) || Date.now() < (notBefore.get(key) ?? 0)) return;
     inFlight.add(key);
     work().catch((err: unknown) => {
       logger.warn("guest_report_publish_failed", { name, report: key, error: String(err) });
@@ -160,9 +166,15 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
       inFlight.delete(key);
       if (done) {
         published.add(key);
+        failures.delete(key);
+        notBefore.delete(key);
         return;
       }
-      const retry = setTimeout(() => consider(name), REPORT_RETRY_MS);
+      const count = (failures.get(key) ?? 0) + 1;
+      failures.set(key, count);
+      const delayMs = Math.min(REPORT_RETRY_MAX_MS, REPORT_RETRY_MS * 2 ** (count - 1));
+      notBefore.set(key, Date.now() + delayMs);
+      const retry = setTimeout(() => consider(name), delayMs);
       Deno.unrefTimer(retry);
     });
   }
@@ -171,14 +183,23 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     const vm = latest.get(name);
     const report = vm?.status?.market;
     if (!vm || !report || hasEnded(vm) || isReleasing(vm)) return;
-    if (report.address && !report.onNetworkUri) attempt(`${name}#onNetwork`, name, () => publishOnNetwork(name, vm, report));
+    if (report.address && !report.onNetworkUri) {
+      const contract = vm.spec?.contract;
+      if (contract?.receiptUri && contract.receiptCid) {
+        attempt(`${name}#onNetwork`, name, () => publishOnNetwork(name, vm, report));
+      } else {
+        logger.info("guest_onnetwork_waits_for_contract", { name, address: report.address });
+      }
+    }
     if (report.hostKeys?.length && !report.hostKeysUri) attempt(`${name}#hostKeys`, name, () => publishHostKeys(name, report));
   }
 
   function onChange(change: ComputeVMChange): void {
     if (!change.after) {
       latest.delete(change.name);
+      onNetworkWrites.delete(change.name);
       for (const key of [...published]) if (key.startsWith(`${change.name}#`)) published.delete(key);
+      for (const table of [failures, notBefore]) for (const key of [...table.keys()]) if (key.startsWith(`${change.name}#`)) table.delete(key);
       return;
     }
     latest.set(change.name, change.after);

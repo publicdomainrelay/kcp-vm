@@ -59,6 +59,11 @@
       "description": "Deno KV store path; unset keeps Deno's default location under DENO_DIR",
       "env": "PDS_KV_PATH"
     },
+    "write-limit-file": {
+      "type": "string",
+      "description": "Path of a JSON file {points, windowSec}; while the file exists, repo writes are rate limited like a hosted PDS (create 3, update 2, delete 1 points) with ratelimit headers and 429 plus retry-after; delete the file to switch the limit off",
+      "env": "PDS_WRITE_LIMIT_FILE"
+    },
     "port-file": {
       "type": "string",
       "description": "File the bound TCP port is written to once listening (used with port 0)",

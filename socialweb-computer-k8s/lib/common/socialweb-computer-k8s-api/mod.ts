@@ -602,6 +602,7 @@ export interface MarketLoopStatus {
   recentDeclines?: MarketDecline[];
   rfpToBid?: MarketLatencyStatus;
   kcpWait?: MarketLatencyStatus;
+  pdsWrites?: PdsWriteStatus;
   updatedAt?: string;
 }
 
@@ -628,6 +629,37 @@ export interface MarketLatencyStatus {
   p50Us: number;
   p95Us: number;
   maxUs: number;
+}
+
+export interface PdsWriteStatus {
+  since: string;
+  writes: number;
+  points: number;
+  rateLimited?: number;
+  reserve: number;
+  byCollection?: PdsWriteCollection[];
+  perHour?: PdsWriteHour[];
+  limits?: PdsLimitStatus[];
+}
+
+export interface PdsWriteCollection {
+  collection: string;
+  writes: number;
+  points: number;
+}
+
+export interface PdsWriteHour {
+  hour: string;
+  points: number;
+}
+
+export interface PdsLimitStatus {
+  pds: string;
+  limit?: number;
+  remaining?: number;
+  resetAt?: string;
+  pausedUntil?: string;
+  observedAt: string;
 }
 
 export interface MarketRequester {
@@ -872,7 +904,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-10.marketbidders.socialweb.computer",
+  schema: "v1alpha1-11.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -883,7 +915,7 @@ export const MARKET_REQUESTER_RESOURCE: ApiResource = {
   listKind: "MarketRequesterList",
   plural: "marketrequesters",
   singular: "marketrequester",
-  schema: "v1alpha1-8.marketrequesters.socialweb.computer",
+  schema: "v1alpha1-9.marketrequesters.socialweb.computer",
   export: "applications",
 };
 
@@ -905,7 +937,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-11.gateways.socialweb.computer",
+  schema: "v1alpha1-12.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -916,7 +948,7 @@ export const SSH_GATEWAY_RESOURCE: ApiResource = {
   listKind: "SshGatewayList",
   plural: "sshgateways",
   singular: "sshgateway",
-  schema: "v1alpha1-6.sshgateways.socialweb.computer",
+  schema: "v1alpha1-7.sshgateways.socialweb.computer",
   export: "applications",
 };
 
@@ -1014,6 +1046,10 @@ export type ApiTypeName =
   | "NodeSpec"
   | "NodeStatus"
   | "ObjectMeta"
+  | "PdsLimitStatus"
+  | "PdsWriteCollection"
+  | "PdsWriteHour"
+  | "PdsWriteStatus"
   | "PendingActionKind"
   | "QuotaUsage"
   | "RecordRef"
@@ -2557,6 +2593,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "kcpWait": {
         "ref": "MarketLatencyStatus"
       },
+      "pdsWrites": {
+        "ref": "PdsWriteStatus"
+      },
       "recentDeclines": {
         "items": {
           "ref": "MarketDecline"
@@ -3206,6 +3245,111 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "ObjectMeta": {
     "open": true,
+    "type": "object"
+  },
+  "PdsLimitStatus": {
+    "properties": {
+      "limit": {
+        "type": "integer"
+      },
+      "observedAt": {
+        "type": "string"
+      },
+      "pausedUntil": {
+        "type": "string"
+      },
+      "pds": {
+        "type": "string"
+      },
+      "remaining": {
+        "type": "integer"
+      },
+      "resetAt": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "pds",
+      "observedAt"
+    ],
+    "type": "object"
+  },
+  "PdsWriteCollection": {
+    "properties": {
+      "collection": {
+        "type": "string"
+      },
+      "points": {
+        "type": "integer"
+      },
+      "writes": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "collection",
+      "writes",
+      "points"
+    ],
+    "type": "object"
+  },
+  "PdsWriteHour": {
+    "properties": {
+      "hour": {
+        "type": "string"
+      },
+      "points": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "hour",
+      "points"
+    ],
+    "type": "object"
+  },
+  "PdsWriteStatus": {
+    "properties": {
+      "byCollection": {
+        "items": {
+          "ref": "PdsWriteCollection"
+        },
+        "type": "array"
+      },
+      "limits": {
+        "items": {
+          "ref": "PdsLimitStatus"
+        },
+        "type": "array"
+      },
+      "perHour": {
+        "items": {
+          "ref": "PdsWriteHour"
+        },
+        "type": "array"
+      },
+      "points": {
+        "type": "integer"
+      },
+      "rateLimited": {
+        "type": "integer"
+      },
+      "reserve": {
+        "type": "integer"
+      },
+      "since": {
+        "type": "string"
+      },
+      "writes": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "since",
+      "writes",
+      "points",
+      "reserve"
+    ],
     "type": "object"
   },
   "PendingActionKind": {
@@ -4871,6 +5015,78 @@ export function assertMarketLatencyStatus(value: unknown): asserts value is Mark
 
 export function parseMarketLatencyStatus(value: unknown): MarketLatencyStatus {
   assertMarketLatencyStatus(value);
+  return value;
+}
+
+export function validatePdsWriteStatus(value: unknown): ApiIssue[] {
+  return validate("PdsWriteStatus", value);
+}
+
+export function isPdsWriteStatus(value: unknown): value is PdsWriteStatus {
+  return validate("PdsWriteStatus", value).length === 0;
+}
+
+export function assertPdsWriteStatus(value: unknown): asserts value is PdsWriteStatus {
+  const issues = validate("PdsWriteStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("PdsWriteStatus", issues);
+}
+
+export function parsePdsWriteStatus(value: unknown): PdsWriteStatus {
+  assertPdsWriteStatus(value);
+  return value;
+}
+
+export function validatePdsWriteCollection(value: unknown): ApiIssue[] {
+  return validate("PdsWriteCollection", value);
+}
+
+export function isPdsWriteCollection(value: unknown): value is PdsWriteCollection {
+  return validate("PdsWriteCollection", value).length === 0;
+}
+
+export function assertPdsWriteCollection(value: unknown): asserts value is PdsWriteCollection {
+  const issues = validate("PdsWriteCollection", value);
+  if (issues.length > 0) throw new ApiValidationError("PdsWriteCollection", issues);
+}
+
+export function parsePdsWriteCollection(value: unknown): PdsWriteCollection {
+  assertPdsWriteCollection(value);
+  return value;
+}
+
+export function validatePdsWriteHour(value: unknown): ApiIssue[] {
+  return validate("PdsWriteHour", value);
+}
+
+export function isPdsWriteHour(value: unknown): value is PdsWriteHour {
+  return validate("PdsWriteHour", value).length === 0;
+}
+
+export function assertPdsWriteHour(value: unknown): asserts value is PdsWriteHour {
+  const issues = validate("PdsWriteHour", value);
+  if (issues.length > 0) throw new ApiValidationError("PdsWriteHour", issues);
+}
+
+export function parsePdsWriteHour(value: unknown): PdsWriteHour {
+  assertPdsWriteHour(value);
+  return value;
+}
+
+export function validatePdsLimitStatus(value: unknown): ApiIssue[] {
+  return validate("PdsLimitStatus", value);
+}
+
+export function isPdsLimitStatus(value: unknown): value is PdsLimitStatus {
+  return validate("PdsLimitStatus", value).length === 0;
+}
+
+export function assertPdsLimitStatus(value: unknown): asserts value is PdsLimitStatus {
+  const issues = validate("PdsLimitStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("PdsLimitStatus", issues);
+}
+
+export function parsePdsLimitStatus(value: unknown): PdsLimitStatus {
+  assertPdsLimitStatus(value);
   return value;
 }
 

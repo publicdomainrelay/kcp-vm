@@ -417,7 +417,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
 
   async function createBidConfig(nowIso: string): Promise<StrongRef> {
     const agentDid = atproto.getAgentDid();
-    return await atproto.createRecord(WIF_SIMPLE_NSID, {
+    return await atproto.createSharedRecord(WIF_SIMPLE_NSID, {
       $type: WIF_SIMPLE_NSID,
       accept_path: acceptPathVm,
       issuer_uri: guestOidcIssuer(ctx.getIssuerUrl()),

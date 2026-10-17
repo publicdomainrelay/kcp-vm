@@ -348,6 +348,12 @@ export default {
       env: "COMPUTEVM_QUOTA",
       default: 0,
     },
+    "bid-write-reserve": {
+      type: "number" as const,
+      description: "PDS write points the bidder keeps back for finishing its live contracts, on top of 21 points per live contract; below that the bidder declines new RFPs with reason writeBudget and its bid cleanup stops",
+      env: "BID_WRITE_RESERVE",
+      default: 500,
+    },
     "bid-ttl-sec": {
       type: "number" as const,
       description: "Seconds a finished Bid object lives before the TTL controller removes it, and after which the bidder removes its own market.bid record",

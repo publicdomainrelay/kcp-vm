@@ -53,7 +53,6 @@ import {
 import {
   COMPUTE_VM_NSID,
   COMPUTE_EVENTS_VM_DELETE_NSID,
-  COMPUTE_EVENTS_VM_ONNETWORK_NSID,
   COMPUTE_EVENTS_VM_TERMINATED_NSID,
   COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
   VM_TERMINATED_REASONS,
@@ -89,6 +88,11 @@ interface TerminationTarget {
   receiptUri: string;
   receiptCid: string;
   submitEventUrl?: string;
+}
+
+interface EventMemo {
+  payload?: { uri: string; cid: string };
+  event?: { uri: string; cid: string; record: Record<string, unknown> };
 }
 
 interface TerminationFields {
@@ -127,6 +131,7 @@ export interface VmBidderDeps {
   onContractChange?: (event: ContractEvent) => void | Promise<void>;
   saveTombstone?: (tombstone: Tombstone) => Promise<void>;
   createRepoRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
+  createSharedRecord?: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
   createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
   resolve: RecordResolver;
@@ -167,7 +172,6 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     createRepoRecord, createSignedRepoRecord, callService, resolve,
   } = deps;
 
-  const registered = new Set<string>();
   const tombstones = deps.terminatedReceipts ?? new TerminatedReceipts();
   const terminating = new Map<string, Promise<void>>();
 
@@ -177,14 +181,17 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     writePayload: () => Promise<{ uri: string; cid: string }>,
     logFields: Record<string, unknown>,
     cbLog: Logger,
+    memo: EventMemo = {},
   ): Promise<boolean> => {
     try {
-      const { uri: payloadUri, cid: payloadCid } = await writePayload();
-      const { uri: eventUri, cid: eventCid, record: eventRecord } = await createSignedRepoRecord(EVENT_NSID, {
+      memo.payload ??= await writePayload();
+      const { uri: payloadUri, cid: payloadCid } = memo.payload;
+      memo.event ??= await createSignedRepoRecord(EVENT_NSID, {
         $type: EVENT_NSID,
         receipt: strongRef(target.receiptUri, target.receiptCid),
         payload: strongRef(payloadUri, payloadCid),
       }, did);
+      const { uri: eventUri, cid: eventCid, record: eventRecord } = memo.event;
       cbLog("info", `${label} event created on PDS (firehose)`, { receiptKey: target.key, ...logFields, eventUri });
       if (!target.submitEventUrl) return true;
       const res = await callService(target.submitEventUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, {
@@ -217,6 +224,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
   };
 
   const reportedHostKeys = new Map<string, VmHostKey[]>();
+  const hostKeysMemos = new Map<string, { keys: VmHostKey[]; memo: EventMemo }>();
 
   const acceptHostKeys = async (report: GuestHostKeysReport): Promise<GuestHostKeysAck> => {
     const checked = await checkHostKeys(report.keys);
@@ -247,28 +255,28 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         return { ok: false, status: 409, reason: "host keys already reported for this receipt" };
       }
       reportedHostKeys.set(contract.receiptUri, checked.keys);
-      let hostKeysUri: string | undefined;
+      const held = hostKeysMemos.get(contract.receiptUri);
+      const memo: EventMemo = held && sameHostKeys(held.keys, checked.keys) ? held.memo : {};
+      hostKeysMemos.set(contract.receiptUri, { keys: checked.keys, memo });
       const published = await publishContractEvent(
         { key, receiptUri: contract.receiptUri, receiptCid: contract.receiptCid, submitEventUrl: contract.submitEventUrl },
         "vm.hostKeys",
-        async () => {
-          const ref = await createRepoRecord(COMPUTE_EVENTS_VM_HOST_KEYS_NSID, {
+        () =>
+          createRepoRecord(COMPUTE_EVENTS_VM_HOST_KEYS_NSID, {
             $type: COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
             keys: checked.keys,
             observedAt: report.observedAt,
             createdAt: new Date().toISOString(),
-          });
-          hostKeysUri = ref.uri;
-          return ref;
-        },
+          }),
         { providerId, fingerprints: checked.keys.map((k) => k.fingerprint) },
         log,
+        memo,
       );
       if (!published) {
         reportedHostKeys.delete(contract.receiptUri);
         return { ok: false, status: 502, reason: "vm.hostKeys could not be published" };
       }
-      return { ok: true, uri: hostKeysUri };
+      return { ok: true, uri: memo.payload?.uri };
     }
     log("warn", "vm_hostkeys_no_contract", { providerId: report.id });
     return { ok: false, status: 404, reason: "no contract holds this guest" };
@@ -458,7 +466,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       const bidConfigRef = { uri: configRef.uri, cid: configRef.cid };
       cbLog("info", "bidder created bid config", { configUri: configRef.uri });
 
-      const { uri: payloadUri, cid: payloadCid } = await createRepoRecord(
+      const { uri: payloadUri, cid: payloadCid } = await (deps.createSharedRecord ?? createRepoRecord)(
         "com.publicdomainrelay.temp.market.bids.free",
         { $type: "com.publicdomainrelay.temp.market.bids.free", cost: 0, createdAt: nowIso },
       );
@@ -523,7 +531,6 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     if (rfpRef && deps.bids) deps.bids.won(rfpRef.uri, { uri: acceptUri, cid: acceptCid }, nowIso).catch(bidStatusFailed);
 
     let providerIdPromise: Promise<string | number | undefined> = Promise.resolve(undefined);
-    let provisionIp: string | undefined;
     let provisionFailure: string | undefined;
 
     if (rfpRef) {
@@ -590,7 +597,6 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
             _accept: { uri: acceptUri, cid: acceptCid },
           };
           const result = await computeProvider.provision(vmWithBundle as Parameters<ComputeProvider["provision"]>[0], issuerDid);
-          provisionIp = (result.metadata?.ip) as string | undefined;
           cbLog("info", "bidder provisioned VM", { providerId: result.providerId, metadata: result.metadata });
           return result.providerId;
         })(),
@@ -687,41 +693,6 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         await saveChange({ type: "provisioned", ...contractEventFields(rk, contract), providerId }, cbLog);
       }
       if (rfpRef && deps.bids) deps.bids.boundTo(rfpRef.uri, String(providerId)).catch(bidStatusFailed);
-
-      // Always emit vm.onNetwork via firehose (record on bidder PDS, firehose distributes).
-      // Previously gated on submitEventUrl which is empty with --no-ingress-proxy.
-      if (providerId && !registered.has(rk)) {
-        registered.add(rk);
-        const nowIso = new Date().toISOString();
-
-        createRepoRecord(COMPUTE_EVENTS_VM_ONNETWORK_NSID, {
-          $type: COMPUTE_EVENTS_VM_ONNETWORK_NSID,
-          address: provisionIp,
-          createdAt: nowIso,
-        }).then(({ uri: vmOnNetworkUri, cid: vmOnNetworkCid }) => {
-          return createSignedRepoRecord(EVENT_NSID, {
-            $type: EVENT_NSID,
-            receipt: strongRef(receiptUri, receiptCid),
-            payload: strongRef(vmOnNetworkUri, vmOnNetworkCid),
-          }, did);
-        }).then(({ uri: eventUri, cid: eventCid, record: eventRecord }) => {
-          cbLog("info", "vm.onNetwork event created on PDS (firehose)", { receiptKey: rk, ip: provisionIp, eventUri });
-
-          // Best-effort: also push via submitEvent XRPC if endpoint available.
-          const submitEventUrl = (accept as { submitEvent?: string }).submitEvent;
-          if (submitEventUrl) {
-            callService(submitEventUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, {
-              uri: eventUri, cid: eventCid, record: eventRecord,
-            }).then(() => {
-              cbLog("info", "vm.onNetwork event submitted to requester", { receiptKey: rk });
-            }).catch((err: unknown) => {
-              cbLog("error", "failed to submit vm.onNetwork event", { receiptKey: rk, error: String(err) });
-            });
-          }
-        }).catch((err: unknown) => {
-          cbLog("error", "vm.onNetwork record creation failed", { receiptKey: rk, error: String(err) });
-        });
-      }
     });
 
     cbLog("info", "bidder created receipt for VM", {
@@ -900,6 +871,7 @@ export function createComputeProviderHooks(opts: {
         terminatedReceipts: deps.terminatedReceipts,
         saveTombstone: deps.saveTombstone,
         createRepoRecord: deps.createRepoRecord,
+        createSharedRecord: deps.createSharedRecord,
         createSignedRepoRecord: deps.createSignedRepoRecord,
         callService: deps.callService,
         resolve: deps.resolve,

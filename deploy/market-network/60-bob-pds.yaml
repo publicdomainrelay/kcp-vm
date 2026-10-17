@@ -13,6 +13,7 @@ env:
   PDS_CRAWLERS: https://relay.default.relay.svc.kcp.local
   PDS_SUBSCRIBE_REPOS_FORMAT: json
   PDS_PRIVATE_KEY_HEX: "{{.BobPDSPrivateKeyHex}}"
+  PDS_WRITE_LIMIT_FILE: "{{.StateDir}}/bob-pds/write-limit.json"
 permissions:
   net: true
   env: true

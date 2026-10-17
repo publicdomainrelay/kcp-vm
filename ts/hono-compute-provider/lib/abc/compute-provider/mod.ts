@@ -29,6 +29,7 @@ export interface ProvisionResult {
 export interface ComputeAtproto {
   getAgentDid(): string;
   createRecord(collection: string, record: Record<string, unknown>): Promise<StrongRef>;
+  createSharedRecord(collection: string, record: Record<string, unknown>): Promise<StrongRef>;
   deleteRecord(collection: string, rkey: string): Promise<void>;
 }
 

@@ -206,6 +206,8 @@ export const DEFAULT_BID_WINDOW_MS = 300_000;
 
 export const DECLINE_CAPACITY = "capacity";
 
+export const DECLINE_WRITE_BUDGET = "writeBudget";
+
 export class BidCapacityError extends Error {
   constructor(readonly resource: string, cause?: unknown) {
     super(`no capacity: the quota of ${resource} is used up`, { cause });
@@ -251,6 +253,7 @@ export interface CallbackFactoryDeps {
   saveTombstone?: (tombstone: Tombstone) => Promise<void>;
   createRecord: (collection: string, record: Record<string, unknown>) => Promise<StrongRef>;
   createRepoRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
+  createSharedRecord?: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
   createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   deleteRecord: (collection: string, rkey: string) => Promise<void>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;

@@ -5,6 +5,7 @@ import { createRepoFactory } from "@publicdomainrelay/hono-factory-atproto-repo-
 import type { RepoFactory } from "@publicdomainrelay/hono-factory-atproto-repo-deno";
 import { createLogger, rawStructuredLogger, type Logger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
+import { pdsWriteLimitFile } from "@publicdomainrelay/hono-factory-pds-write-limit-file";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 const defaultLog = rawStructuredLogger("hono-pds");
@@ -130,6 +131,7 @@ if (import.meta.main) {
     portFile: options.portFile as string | undefined,
     listenersFile: options.listenersFile as string | undefined,
   });
+  if (options.writeLimitFile) serve.app.use("*", pdsWriteLimitFile({ path: options.writeLimitFile as string }));
   serve.app.route("/", repo.app as never);
 
   function shutdown() {

@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-11.gateways.socialweb.computer
+  name: v1alpha1-12.gateways.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -459,6 +459,80 @@ spec:
                       - p50Us
                       - p95Us
                       - maxUs
+                  pdsWrites:
+                    type: object
+                    properties:
+                      since:
+                        type: string
+                      writes:
+                        type: integer
+                        format: int64
+                      points:
+                        type: integer
+                        format: int64
+                      rateLimited:
+                        type: integer
+                        format: int64
+                      reserve:
+                        type: integer
+                        format: int64
+                      byCollection:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            collection:
+                              type: string
+                            writes:
+                              type: integer
+                              format: int64
+                            points:
+                              type: integer
+                              format: int64
+                          required:
+                            - collection
+                            - writes
+                            - points
+                      perHour:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            hour:
+                              type: string
+                            points:
+                              type: integer
+                              format: int64
+                          required:
+                            - hour
+                            - points
+                      limits:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            pds:
+                              type: string
+                            limit:
+                              type: integer
+                              format: int64
+                            remaining:
+                              type: integer
+                              format: int64
+                            resetAt:
+                              type: string
+                            pausedUntil:
+                              type: string
+                            observedAt:
+                              type: string
+                          required:
+                            - pds
+                            - observedAt
+                    required:
+                      - since
+                      - writes
+                      - points
+                      - reserve
                   updatedAt:
                     type: string
       additionalPrinterColumns:

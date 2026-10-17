@@ -1963,6 +1963,11 @@
           "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
         ]
       },
+      "ts/atproto-market/lib/abc/pds-write-budget": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/http-retry-common@0"
+        ]
+      },
       "ts/atproto-market/lib/abc/requester": {
         "dependencies": [
           "jsr:@publicdomainrelay/cloud-init-common@0",
@@ -2285,6 +2290,11 @@
           "jsr:@publicdomainrelay/trust-graph-abc@0"
         ]
       },
+      "ts/atproto-market/lib/pds-write-budget-fetch": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/pds-write-budget-abc@0"
+        ]
+      },
       "ts/atproto-market/lib/relay-visibility-xrpc": {
         "dependencies": [
           "jsr:@publicdomainrelay/logger@0"
@@ -2583,6 +2593,11 @@
       "ts/hono-compute-provider/lib/rbac-atproto": {
         "dependencies": [
           "jsr:@publicdomainrelay/oidc-issuer-abc@0"
+        ]
+      },
+      "ts/hono-pds/lib/hono-factory-pds-write-limit-file": {
+        "dependencies": [
+          "jsr:@hono/hono@4"
         ]
       },
       "ts/policy-engine/hono-policy-engine": {

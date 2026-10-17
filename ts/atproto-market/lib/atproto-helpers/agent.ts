@@ -26,6 +26,7 @@ import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
 import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
 import { fetchWithRetry } from "@publicdomainrelay/http-retry-fetch";
 import { retryingFetch } from "./misc.ts";
+import { WRITE_POINTS, type PdsWriteBudget, type WriteAction } from "@publicdomainrelay/pds-write-budget-abc";
 
 export interface AtprotoAgentLike {
   did: string;
@@ -44,6 +45,7 @@ export interface CreateATProtoOpts {
   badgeBlueSigner: AttestationKeypair;
   plcDirectory: PlcClient;
   agent: AtprotoAgentLike;
+  writeBudget?: PdsWriteBudget;
 }
 
 export interface ATProto {
@@ -57,6 +59,8 @@ export interface ATProto {
   getRecord(did: string, collection: string, rkey: string): Promise<{ uri: string; cid: string; value: Record<string, unknown> } | null>;
   listRecords(did: string, collection: string, opts?: { limit?: number }): Promise<{ records: Array<{ uri: string; cid: string; value: Record<string, unknown> }> }>;
   createRecord(collection: string, record: Record<string, unknown>): Promise<StrongRef>;
+  createSharedRecord(collection: string, record: Record<string, unknown>): Promise<StrongRef>;
+  sharedRecordUris(): ReadonlySet<string>;
   updateRecord(collection: string, rkey: string, record: Record<string, unknown>): Promise<StrongRef>;
   createRepoRecord(collection: string, record: Record<string, unknown>): Promise<{ uri: string; cid: string }>;
   createSignedRepoRecord(collection: string, record: Record<string, unknown>, issuer?: string): Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
@@ -77,16 +81,47 @@ function makeLogger(logger: StructuredLoggerInterface): Logger {
 }
 
 export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
-  const { logger, badgeBlueSigner, plcDirectory, agent } = opts;
+  const { logger, badgeBlueSigner, plcDirectory, agent, writeBudget } = opts;
   const l = makeLogger(logger);
   const did = agent.did;
   const signer = agent.signer;
   const idResolver = new IdResolver();
 
+  function gate(collection: string, action: WriteAction): void {
+    if (writeBudget) writeBudget.check(writeBudget.classOf(collection, action), WRITE_POINTS[action]);
+  }
+
+  const shared = new Map<string, { key: string; ref: Promise<StrongRef>; uri?: string }>();
+
+  function createSharedRecord(collection: string, record: Record<string, unknown>): Promise<StrongRef> {
+    const { createdAt: _createdAt, ...content } = record;
+    const key = JSON.stringify(content);
+    const current = shared.get(collection);
+    if (current?.key === key) return current.ref;
+    const entry: { key: string; ref: Promise<StrongRef>; uri?: string } = { key, ref: createRecord(collection, record) };
+    shared.set(collection, entry);
+    entry.ref.then(
+      (ref) => {
+        entry.uri = ref.uri;
+      },
+      () => {
+        if (shared.get(collection) === entry) shared.delete(collection);
+      },
+    );
+    return entry.ref;
+  }
+
+  function sharedRecordUris(): ReadonlySet<string> {
+    const uris = new Set<string>();
+    for (const entry of shared.values()) if (entry.uri) uris.add(entry.uri);
+    return uris;
+  }
+
   async function createRecord(
     collection: string,
     record: Record<string, unknown>,
   ): Promise<StrongRef> {
+    gate(collection, "create");
     const rkey = TID.next().toString();
     if (agent.createRecord) {
       const { uri, cid } = await agent.createRecord(did, collection, rkey, record);
@@ -106,6 +141,7 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     rkey: string,
     record: Record<string, unknown>,
   ): Promise<StrongRef> {
+    gate(collection, "update");
     if (agent.putRecord) {
       const { uri, cid } = await agent.putRecord(did, collection, rkey, record);
       return { $type: "com.atproto.repo.strongRef", uri, cid } as StrongRef;
@@ -123,6 +159,7 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     collection: string,
     record: Record<string, unknown>,
   ): Promise<{ uri: string; cid: string }> {
+    gate(collection, "create");
     const rkey = TID.next().toString();
     if (agent.createRecord) {
       const { uri, cid } = await agent.createRecord(did, collection, rkey, record);
@@ -138,6 +175,7 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     record: Record<string, unknown>,
     issuer?: string,
   ): Promise<{ uri: string; cid: string; record: Record<string, unknown> }> {
+    gate(collection, "create");
     const rkey = TID.next().toString();
     const att = attestationFor(badgeBlueSigner, issuer);
     const entry = await att.sign({ record: record as RecordMap, repository: did }) as InlineAttestation;
@@ -152,6 +190,7 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
   }
 
   async function deleteRecord(collection: string, rkey: string): Promise<void> {
+    gate(collection, "delete");
     await agent.applyWrites(did, [{ action: "delete", collection, rkey }]);
   }
 
@@ -234,10 +273,15 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     attestationKp: badgeBlueSigner,
     idResolver,
     plcClient: plcDirectory,
-    applyWrites: (d: string, writes: WriteOp[]) => agent.applyWrites(d, writes),
+    applyWrites: (d: string, writes: WriteOp[]) => {
+      for (const w of writes) gate(w.collection, w.action);
+      return agent.applyWrites(d, writes);
+    },
     getRecord: (d: string, collection: string, rkey: string) => agent.getRecord(d, collection, rkey),
     listRecords: (d: string, collection: string, opts?: { limit?: number }) => agent.listRecords(d, collection, opts),
     createRecord,
+    createSharedRecord,
+    sharedRecordUris,
     updateRecord,
     createRepoRecord,
     createSignedRepoRecord,

@@ -98,6 +98,7 @@ const spec: MarketBidderAppSpec = {
     bidWindowSec: o.bidWindowSec,
     bidTtlSec: o.bidTtlSec,
     bidQuota: o.bidQuota,
+    bidWriteReserve: o.bidWriteReserve,
     computeVMQuota: o.computevmQuota,
     policy: o.policy,
     policyArgs: o.policyArgs,
