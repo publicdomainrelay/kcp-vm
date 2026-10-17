@@ -54,7 +54,7 @@ func (n *networks) declareOperatorVouches(ctx context.Context, apps []v1alpha1.N
 					at: id.CreationTimestamp.UTC().Format("2006-01-02T15:04:05Z")})
 			}
 		case v1alpha1.ApplicationKindGateway:
-			gateways = append(gateways, rec.BaseWorkspace)
+			gateways = append(gateways, rec.BaseWorkspace+":"+ComponentWorkspace)
 		}
 	}
 	for _, ws := range gateways {
@@ -77,7 +77,7 @@ func (ctl *Controller) applyOperatorVouch(ctx context.Context, ws string, op ope
 	}
 	obj := v1alpha1.AtprotoRecord{ObjectMeta: metav1.ObjectMeta{Name: operatorVouchPrefix + op.app},
 		Spec: v1alpha1.AtprotoRecordSpec{Repo: OperatorRepo, Collection: VouchNSID, Rkey: op.did, Record: record}}
-	u, err := toUnstructured(obj, "AtprotoRecord")
+	u, err := toUnstructured(&obj, "AtprotoRecord")
 	if err != nil {
 		return err
 	}
