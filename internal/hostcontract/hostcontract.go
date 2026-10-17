@@ -435,7 +435,8 @@ func pastaUserns(f Facts) Result {
 	if f.PastaErr != "" {
 		fix := "check kernel.unprivileged_userns_clone and user.max_user_namespaces"
 		if f.AppArmorRestricts {
-			fix = installFix(RoleBidder) + " loads /etc/apparmor.d/" + AppArmorProfileName + " for <state>/runtime/*/pasta"
+			fix = "sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 (root; persist it in /etc/sysctl.d), or " + installFix(RoleBidder) +
+				" loads /etc/apparmor.d/" + AppArmorProfileName + " for <state>/runtime/*/pasta"
 		}
 		return fail(CheckPastaUserns, "the embedded pasta did not create a user+net namespace and exec through /bin/sh: "+f.PastaErr, fix)
 	}
@@ -543,7 +544,7 @@ func SubidProblems(subuid, subgid, account string, uid int) []string {
 func subids(f Facts) Result {
 	if p := SubidProblems(f.Subuid, f.Subgid, f.Account, f.UID); len(p) > 0 {
 		return fail(CheckSubids, strings.Join(p, "; "),
-			installFix(RoleBidder)+" reserves one contiguous range in both files above every existing entry; remove the other tool's overlapping entry or re-run install")
+			installFix(RoleBidder)+" reserves one contiguous range in both files above every existing entry; or keep exactly one range by hand: usermod --del-subuids/--del-subgids the extra ones, then usermod --add-subuids/--add-subgids <first>-<last> (65536 ids per VM, 16 VMs need 1048576)")
 	}
 	r, _ := AccountRange(f.Subuid, f.Account, f.UID)
 	return ok(CheckSubids, fmt.Sprintf("%d-%d (%d VM slots) in /etc/subuid and /etc/subgid, overlapping nothing", r.Start, r.End()-1, r.Count/VMSlotIDs))

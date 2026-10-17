@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -549,6 +550,11 @@ func runRequest(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 	pos, pass := splitWords(rest)
 	if len(pos) > 0 {
 		return a.fail(exitRefused, "run request: unexpected %q; request-vm-ssh options go after --", strings.Join(pos, " "))
+	}
+	for _, tool := range []string{"ssh", "ssh-keygen"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			return a.fail(exitRefused, "run request: %s is not on PATH; install the OpenSSH client (apt install openssh-client, dnf install openssh-clients)", tool)
+		}
 	}
 	r, err := newRequestRun(a, vals)
 	if err != nil {

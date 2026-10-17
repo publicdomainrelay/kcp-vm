@@ -180,7 +180,7 @@ func runBidder(ctx context.Context, a *app, vals clicfg.Values, rest []string) i
 		if backend == hostsvc.BackendSystemdUser && cachedGuestImage(r.vals.String("state-dir")) {
 			r.a.log.Info("the pinned guest image is already in the store, so no source is asked of the published artifacts")
 		} else {
-			src, err := r.guestImageSource(ctx)
+			src, err := publishedGuestImageSource(ctx, r.vals.String("guest-image-release-base"))
 			if err != nil {
 				return a.fail(exitRefused, "run bidder: %v", err)
 			}
@@ -249,7 +249,7 @@ func cachedGuestImage(stateDir string) bool {
 	return true
 }
 
-func (r *bidderRun) guestImageSource(ctx context.Context) (string, error) {
+func publishedGuestImageSource(ctx context.Context, base string) (string, error) {
 	version, commit := buildstamp.Identity()
 	target := vmruntime.ImageTarget()
 	pin, err := guestimage.PinFor(target)
@@ -257,7 +257,7 @@ func (r *bidderRun) guestImageSource(ctx context.Context) (string, error) {
 		return "", err
 	}
 	src, err := guestimagerelease.Source(ctx, guestimagerelease.Options{
-		Base:           r.vals.String("guest-image-release-base"),
+		Base:           base,
 		Target:         target,
 		Version:        version,
 		Commit:         commit,

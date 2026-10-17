@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -30,8 +31,14 @@ func FrontControlPath(stateDir, dataDir, cluster string) string {
 	if apiserverfront.CheckSocketPath(p) == nil {
 		return p
 	}
-	sum := sha256.Sum256([]byte(cluster))
-	return filepath.Join(stateDir, frontSocketDir, hex.EncodeToString(sum[:])[:16]+".sock")
+	sum := sha256.Sum256([]byte(stateDir + "\x00" + cluster))
+	name := hex.EncodeToString(sum[:])[:16] + ".sock"
+	if run := os.Getenv("XDG_RUNTIME_DIR"); run != "" {
+		if q := filepath.Join(run, "swc", name); apiserverfront.CheckSocketPath(q) == nil {
+			return q
+		}
+	}
+	return filepath.Join(stateDir, frontSocketDir, name)
 }
 
 func FrontStatePath(dataDir string) string { return filepath.Join(dataDir, FrontStateName) }

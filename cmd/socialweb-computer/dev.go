@@ -378,6 +378,11 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 	if readyTimeout < 0 {
 		return upReport{}, a.fail(exitRefused, "dev up: ready-timeout: %s is negative", readyTimeout)
 	}
+	if composes && vals.Int("bidders") > 0 {
+		if err := a.vmHostPreflight(ctx, vals); err != nil {
+			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
+		}
+	}
 	var kcpExe, kineExe devinstance.Executable
 	pgExe, err := a.postgresRoot(vals, profile)
 	if err != nil {
@@ -440,7 +445,13 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 	}
 	var networkSpec v1alpha1.MarketNetworkSpec
 	if composes {
-		vm := appctl.BidderVMDefaults{GuestImageSource: vals.String("guest-image-source"), VmHostBackend: vals.String("vm-host-backend")}
+		imageSource := vals.String("guest-image-source")
+		if imageSource == "" {
+			if imageSource, err = publishedGuestImageSource(ctx, vals.String("guest-image-release-base")); err != nil {
+				return upReport{}, a.fail(exitRefused, "dev up: %v", err)
+			}
+		}
+		vm := appctl.BidderVMDefaults{GuestImageSource: imageSource, VmHostBackend: vals.String("vm-host-backend")}
 		if networkSpec, err = appctl.NetworkSpec(l.ID, vals.Int("bidders"), vals.Bool("with-gateway"), networkOverlay, vm); err != nil {
 			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}

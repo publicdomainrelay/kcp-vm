@@ -116,6 +116,7 @@ func gatherProbe(ctx context.Context, f *Facts, o Options, socket string) {
 		f.ProbeErr = err.Error()
 		return
 	}
+	defer os.Remove(dir)
 	suffix := randomSuffix()
 	out := filepath.Join(dir, suffix+".log")
 	defer os.Remove(out)
