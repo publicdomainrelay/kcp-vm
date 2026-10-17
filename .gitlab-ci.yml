@@ -69,9 +69,13 @@ integration:
     SOCIALWEB_IT_LIVE_SLOT: none
     SOCIALWEB_IT_RUN_ROOT: /var/tmp/swcci
   script:
-    - export SOCIALWEB_IT_GUEST_IMAGE="https://socialweb-computer-kcp.sfo3.digitaloceanspaces.com/main/$CI_COMMIT_SHA/guest-image/firecracker-x86_64"
+    - spaces="https://socialweb-computer-kcp.sfo3.digitaloceanspaces.com"
+    - published="${SOCIALWEB_CI_ARTIFACTS:-$spaces/${CI_COMMIT_TAG:+releases/$CI_COMMIT_TAG}}"
+    - '[ -n "${SOCIALWEB_CI_ARTIFACTS:-}${CI_COMMIT_TAG:-}" ] || published="$spaces/main/$CI_COMMIT_SHA"'
+    - echo "published artifacts $published"
+    - export SOCIALWEB_IT_GUEST_IMAGE="$published/guest-image/firecracker-x86_64"
     - export SOCIALWEB_IT_PUBLISH="/var/tmp/swcci/bin-$CI_JOB_ID" SOCIALWEB_IT_ARTIFACTS="$CI_PROJECT_DIR/it-artifacts"
-    - deno run -A --no-config --no-lock scripts/ci-seed-downloads.ts "https://socialweb-computer-kcp.sfo3.digitaloceanspaces.com/main/$CI_COMMIT_SHA/binaries"
+    - deno run -A --no-config --no-lock scripts/ci-seed-downloads.ts "$published/binaries"
     - timeout -k 30 5280 go test -tags integration -count=1 -v -timeout 87m ./test/integration/ 2>&1 | tee "$TMPDIR/it.log"
     - grep -E '^(--- |ok|FAIL)' "$TMPDIR/it.log"
   after_script:
