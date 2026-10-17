@@ -144,6 +144,9 @@ func IdentitySpecOf(id v1alpha1.ApplicationIdentity) v1alpha1.MarketIdentitySpec
 	if s.Association == "" {
 		s.Association = v1alpha1.AssociationRequireApproval
 	}
+	if s.Mode == v1alpha1.MarketIdentityModeLocalRepo && s.Association != v1alpha1.AssociationSkip {
+		s.AssociateWith = id.Handle
+	}
 	return s
 }
 

@@ -60,7 +60,7 @@ apps:
       - {name: associate-with, to: options}
       - {name: guest-tls-port, to: network.guestTlsUrl}
       - {name: private-key-hex-path, to: state}
-      - {name: pds-state-path, to: state}
+      - {name: repo-pds-url, to: profile}
       - {name: policy, to: spec.policy}
       - {name: policy-args, to: options}
       - {name: only-remote-policy-exec, to: options}

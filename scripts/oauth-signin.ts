@@ -3,7 +3,7 @@ import puppeteer from "npm:puppeteer-core@23";
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
 
 const args = parseArgs(Deno.args, {
-  string: ["creds", "account", "url", "out", "done", "chrome", "sign-in-as", "cookie-file", "chrome-arg"],
+  string: ["creds", "account", "url", "out", "done", "chrome", "sign-in-as", "cookie-file", "chrome-arg", "click"],
   collect: ["chrome-arg"],
 });
 const fail = (msg: string): never => {
@@ -97,6 +97,15 @@ try {
   if (args["cookie-file"]) {
     const jar = await page.cookies();
     await Deno.writeTextFile(args["cookie-file"] as string, JSON.stringify(jar), { mode: 0o600 });
+  }
+  if (args.click) {
+    await page.waitForFunction((src: string) => {
+      const want = new RegExp(src, "i");
+      return [...document.querySelectorAll("button")].some((b) => want.test((b as HTMLElement).innerText.trim()) && !(b as HTMLButtonElement).disabled);
+    }, { timeout: 60_000 }, args.click as string);
+    console.log(JSON.stringify({ step: "click", clicked: await clickButton(args.click as string) }));
+    await pause(4000);
+    await step("clicked");
   }
   if (args.done) await page.waitForFunction((t: string) => document.body.innerText.includes(t), { timeout: 60_000 }, args.done);
   await step("done");

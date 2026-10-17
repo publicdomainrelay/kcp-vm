@@ -23,6 +23,8 @@ const (
 	BidderComponent       = "bidder"
 	BidderApp             = "market-bidder"
 	BidderIdentity        = "bidder"
+	PdsComponent          = "pds"
+	PdsVaultClient        = "pds"
 	DefaultPolicy         = "open"
 	BidderProfileProdQr   = "prod-qr"
 	BidderProfileNetwork  = "market-network"
@@ -36,11 +38,7 @@ var BidderProfiles = []string{BidderProfileProdQr, BidderProfileNetwork, BidderP
 
 func BidderIdentityMode(profile string) (v1alpha1.MarketIdentityMode, error) {
 	switch profile {
-	case BidderProfileProdQr:
-		return v1alpha1.MarketIdentityModeOAuthQr, nil
-	case BidderProfileNetwork:
-		return v1alpha1.MarketIdentityModePdsAccount, nil
-	case BidderProfileDevLocal:
+	case BidderProfileProdQr, BidderProfileNetwork, BidderProfileDevLocal:
 		return v1alpha1.MarketIdentityModeLocalRepo, nil
 	}
 	return "", fmt.Errorf("appctl: MarketBidder profile %q: want one of %s", profile, strings.Join(BidderProfiles, ", "))
@@ -191,6 +189,18 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir, guestStateDir string
 	return v, nil
 }
 
+func BidderPds(v manifests.MarketBidder, stateDir string, n *v1alpha1.MarketNetworkValue) (manifests.RepoPds, error) {
+	p := manifests.RepoPds{StateDir: stateDir, Identity: BidderIdentity, KcpServer: v.Kcp.Server, KcpWorkspace: v.Kcp.Workspace,
+		VaultServer: v.Vault.Server, VaultClient: PdsVaultClient, VaultKcpServer: v.Vault.KcpServer, VaultMount: BidderVaultClient,
+		VaultMountClient: BidderVaultClient,
+		PlcDirectoryUrl:  n.PlcDirectoryUrl, IngressProxyHost: n.IngressProxyHost, Trust: v.Trust, Read: v.Read}
+	var err error
+	if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
+		p.ExtraArgs, err = fragment([]string{"--network-hosts", hosts})
+	}
+	return p, err
+}
+
 func ready(status v1alpha1.ApplicationStatus, msg string) v1alpha1.ApplicationStatus {
 	status.Phase, status.Message = v1alpha1.ApplicationPhaseReady, msg
 	return status
@@ -277,6 +287,9 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		if err := BidderReads(&values); err != nil {
 			return err
 		}
+		if values.Pds, err = BidderPds(values, ComponentStateDir(ctl.c.Layout.StateDir, PdsComponent), o.Spec.Network); err != nil {
+			return err
+		}
 		st.Message = "applying the " + o.Spec.Profile + " components"
 		ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
 		pods, err := ctl.applyProfile(ctx, BidderSet, o.Spec.Profile, owner, true, &values)
@@ -306,11 +319,15 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		return err
 	}
 	allReady := len(pods) > 0
+	pdsAddress := ""
 	for i := range pods {
 		v := podViewOf(ws, &pods[i])
 		st.Components = append(st.Components, v.component())
 		st.Listeners = append(st.Listeners, v.Listeners...)
 		allReady = allReady && v.Ready
+		if v.Name == PdsComponent && v.Ready {
+			pdsAddress = v.Address
+		}
 		if v.Name == BidderComponent {
 			if did, _ := ctl.runStatus(v.RunID)["did"].(string); did != "" {
 				st.Did = did
@@ -319,6 +336,11 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 	}
 	if o.Spec.Kcp != nil {
 		st.Components = append(st.Components, ctl.guestComponents(ctx)...)
+	}
+	if o.Spec.Profile == BidderProfileNetwork {
+		if err := ctl.associateNetworkOperator(ctx, o.Spec, pdsAddress); err != nil {
+			ctl.c.log().Warn("associating the bidder's DID with the market network operator account", "err", err.Error())
+		}
 	}
 	switch {
 	case allReady && st.Did != "":

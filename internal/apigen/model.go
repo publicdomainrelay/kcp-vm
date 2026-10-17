@@ -1,6 +1,7 @@
 package apigen
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -96,6 +97,7 @@ type Model struct {
 
 var (
 	conditionType  = reflect.TypeOf(metav1.Condition{})
+	rawJSONType    = reflect.TypeOf(json.RawMessage{})
 	objectMetaType = reflect.TypeOf(metav1.ObjectMeta{})
 	typeMetaType   = reflect.TypeOf(metav1.TypeMeta{})
 	apiPkgPath     = reflect.TypeOf(v1alpha1.APIResource{}).PkgPath()
@@ -271,6 +273,9 @@ func (b *builder) property(f reflect.StructField) (Property, bool, error) {
 func (b *builder) schema(t reflect.Type) (*Schema, error) {
 	if t == conditionType {
 		return b.model.Named[RefCondition], nil
+	}
+	if t == rawJSONType {
+		return &Schema{Type: TypeObject, PreserveUnknown: true}, nil
 	}
 	switch t.Kind() {
 	case reflect.Pointer:

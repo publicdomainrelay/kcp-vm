@@ -299,73 +299,78 @@ export interface CreateLocalPDSAgentOpts {
   serve: ServeHandle;
   plcDirectoryUrl: string;
   ingressProxyHost: string;
-  /** Dispatcher serves TLS (self-signed trusted via DENO_CERT) -- use https/wss. */
   tls?: boolean;
   storagePath?: string;
-  /** Service ID for associateConfirm route + DID doc. Default: "requester_associate". */
-  associateServiceId?: string;
+  associateServiceId: string;
+  onAssociate(callerDid: string): Promise<void>;
 }
 
-export interface LocalPDSAgent extends AtprotoAgentLike {
+export interface LocalPDSAgent {
+  did: string;
   repoApi: RepoApi;
   serve: ServeHandle;
   relay: IngressRef;
   beginServe(): Promise<void>;
   stop(): void;
-  /** Resolves with the caller's DID when the webapp calls associateConfirm. */
-  readonly associateCalled: Promise<string>;
-  /** CLI calls this to approve the association and respond to the webapp. */
-  approveAssociation(): void;
-  /** CLI calls this to reject the association. */
-  rejectAssociation(err: Error): void;
 }
 
-export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promise<LocalPDSAgent> {
-  const { logger, keypair, serve, plcDirectoryUrl, ingressProxyHost, storagePath } = opts;
-  const associateServiceId = opts.associateServiceId ?? "requester_associate";
+export const REPO_OWNER_WRITE_METHODS = [
+  "com.atproto.repo.createRecord",
+  "com.atproto.repo.putRecord",
+  "com.atproto.repo.deleteRecord",
+  "com.atproto.repo.applyWrites",
+];
+
+function b64urlDecode(s: string): Uint8Array {
+  const std = s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "=");
+  return Uint8Array.from(atob(std), (ch) => ch.charCodeAt(0));
+}
+
+export async function verifyRepoOwnerToken(authHeader: string | undefined, keyDid: string, did: string, lxm: string): Promise<boolean> {
+  const token = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (!token) return false;
+  const parts = token.split(".");
+  if (parts.length !== 3) return false;
+  try {
+    const header = JSON.parse(new TextDecoder().decode(b64urlDecode(parts[0])));
+    const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(parts[1])));
+    if (header.alg !== "ES256K" || payload.iss !== did || payload.aud !== did || payload.lxm !== lxm) return false;
+    if (typeof payload.exp !== "number" || payload.exp < Math.floor(Date.now() / 1000)) return false;
+    const { verifySignature } = await import("@atproto/crypto");
+    return await verifySignature(keyDid, new TextEncoder().encode(`${parts[0]}.${parts[1]}`), b64urlDecode(parts[2]));
+  } catch {
+    return false;
+  }
+}
+
+export async function localPdsGenesis(keypair: Secp256k1Keypair, ingressProxyHost: string, associateServiceId: string) {
   const signingKeyDid = keypair.did();
-  // DID-doc service endpoints advertise the canonical host without any internal
-  // port (production has none); the relay subdomain alone routes via dispatcher.
   const epHost = ingressProxyHost.replace(/:\d+$/, "");
-
-  const plc = new PlcClient({ baseUrl: plcDirectoryUrl });
-
-  const attestationKp = await (async () => {
-    const exportBytes = await keypair.export();
-    const hex = Array.from(exportBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-    const { loadOrGenerateKeypair } = await import("@publicdomainrelay/market-atproto");
-    return loadOrGenerateKeypair(hex);
-  })();
-
+  const sub = signingKeyDid.replace(/:/g, "-").toLowerCase();
+  const exportBytes = await keypair.export();
+  const hex = Array.from(exportBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const { loadOrGenerateKeypair } = await import("@publicdomainrelay/market-atproto");
+  const attestationKp = await loadOrGenerateKeypair(hex);
+  const endpoint = `https://${sub}.${epHost}`;
   const { did, op } = await createGenesisOp({
     rotationKeys: [signingKeyDid],
-    verificationMethods: {
-      atproto: signingKeyDid,
-      attestation: attestationKp.did(),
-    },
-    alsoKnownAs: [
-      `at://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
-    ],
+    verificationMethods: { atproto: signingKeyDid, attestation: attestationKp.did() },
+    alsoKnownAs: [`at://${sub}.${epHost}`],
     services: {
-      atproto_pds: {
-        type: "AtprotoPersonalDataServer",
-        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
-      },
-      pdr_temp_market: {
-        type: "PDRTempMarket",
-        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
-      },
-      pdr_temp_compute_event: {
-        type: "PDRTempComputeEvent",
-        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
-      },
-      [associateServiceId]: {
-        type: "PDRRequesterAssociate",
-        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
-      },
+      atproto_pds: { type: "AtprotoPersonalDataServer", endpoint },
+      pdr_temp_market: { type: "PDRTempMarket", endpoint },
+      pdr_temp_compute_event: { type: "PDRTempComputeEvent", endpoint },
+      [associateServiceId]: { type: "PDRRequesterAssociate", endpoint },
     },
     sign: (bytes) => keypair.sign(bytes),
   });
+  return { did, op, attestationKp };
+}
+
+export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promise<LocalPDSAgent> {
+  const { logger, keypair, serve, plcDirectoryUrl, ingressProxyHost, storagePath, associateServiceId } = opts;
+  const plc = new PlcClient({ baseUrl: plcDirectoryUrl });
+  const { did, op, attestationKp } = await localPdsGenesis(keypair, ingressProxyHost, associateServiceId);
 
   logger.info("localPDS plc registering", { did });
   try {
@@ -396,9 +401,15 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
     ],
     publicKeyDid: keypair.did(),
     attestationKeyDid: attestationKp.did(),
+    readOnly: true,
   });
 
-  serve.app.route("/", app as never);
+  for (const method of REPO_OWNER_WRITE_METHODS) {
+    serve.app.use(`/xrpc/${method}`, async (c: { req: { header(name: string): string | undefined }; set(k: string, v: unknown): void }, next: () => Promise<void>) => {
+      if (await verifyRepoOwnerToken(c.req.header("Authorization"), keypair.did(), did, method)) c.set("oauthUserDid", did);
+      await next();
+    });
+  }
 
   const xrpcRelay = createIngress({
     logger,
@@ -417,65 +428,121 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
   });
   serve.addRelay(xrpcRelay);
 
-  // -- association confirmation (webapp calls this when user scans QR) --
   const idResolver = new IdResolver({ plcUrl: plcDirectoryUrl });
-  let resolveAssociateCalled!: (callerDid: string) => void;
-  const associateCalled = new Promise<string>((r) => { resolveAssociateCalled = r; });
-  let resolveAssociationApproved!: () => void;
-  let rejectAssociationApproved!: (err: Error) => void;
-  const associationApproved = new Promise<void>((resolve, reject) => {
-    resolveAssociationApproved = resolve;
-    rejectAssociationApproved = reject;
-  });
-
   serve.app.post(`/xrpc/${ASSOCIATE_CONFIRM_NSID}`, async (c: { req: { header(name: string): string | undefined }; json(obj: unknown, status?: number): Response }) => {
     const authHeader = c.req.header("Authorization");
     if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    let callerDid: string;
     try {
-      const relayHost = xrpcRelay.ingressHost;
       const auth = await verifyServiceAuth({
         authHeader,
-        hostname: relayHost || ingressProxyHost,
+        hostname: xrpcRelay.ingressHost || ingressProxyHost,
         lxm: ASSOCIATE_CONFIRM_NSID,
         serviceIds: [associateServiceId, "pdr_temp_market"],
         extraAudienceDids: [did],
         idResolver,
       });
-      resolveAssociateCalled(auth.issuerDid);
-      await associationApproved;
-      const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
-      await api.applyWrites(did, [{
-        action: "create",
-        collection: BADGE_BLUE_KEYS_NSID,
-        rkey: TID.next().toString(),
-        record: {
-          $type: BADGE_BLUE_KEYS_NSID,
-          keyId: auth.issuerDid,
-          challenge: did,
-          service: associateServiceId,
-          createdAt: new Date().toISOString(),
-        },
-      }]);
-      return c.json({ ok: true, requesterDid: did });
+      callerDid = auth.issuerDid;
     } catch (err) {
       return c.json({ error: String(err) }, 401);
     }
+    try {
+      await opts.onAssociate(callerDid);
+      logger.info("localPDS association recorded", { did, callerDid });
+      return c.json({ ok: true, requesterDid: did });
+    } catch (err) {
+      logger.warn("localPDS association refused", { did, callerDid, error: String(err) });
+      return c.json({ error: "AssociationRefused", message: err instanceof Error ? err.message : String(err) }, 403);
+    }
   });
+
+  serve.app.route("/", app as never);
 
   return {
     did,
-    signer,
     repoApi: api,
     serve,
     relay: xrpcRelay,
-    applyWrites: (d: string, writes: WriteOp[]) => api.applyWrites(d, writes),
-    getRecord: (d: string, collection: string, rkey: string) => api.getRecord(d, collection, rkey) as Promise<{ uri: string; cid: string; value: Record<string, unknown> } | null>,
-    listRecords: (d: string, collection: string, opts?: { limit?: number }) => api.listRecords(d, collection, opts) as Promise<{ records: Array<{ uri: string; cid: string; value: Record<string, unknown> }> }>,
     beginServe: () => serve.beginServe(),
     stop: () => serve.shutdown(),
-    associateCalled,
-    approveAssociation: () => { resolveAssociationApproved(); },
-    rejectAssociation: (err: Error) => { rejectAssociationApproved(err); },
+  };
+}
+
+export interface RepoPdsAgentOpts {
+  pdsUrl: string;
+  did: string;
+  keypair: Secp256k1Keypair;
+}
+
+export interface RepoPdsAgent extends AtprotoAgentLike {
+  listRecordsPage(repo: string, collection: string, opts?: { limit?: number; cursor?: string }): Promise<{ records: Array<{ uri: string; cid: string; value: Record<string, unknown> }>; cursor?: string }>;
+}
+
+export function createRepoPdsAgent(opts: RepoPdsAgentOpts): RepoPdsAgent {
+  const base = opts.pdsUrl.replace(/\/+$/, "");
+  const did = opts.did;
+  const signer = { did: () => did, sign: (bytes: Uint8Array) => opts.keypair.sign(bytes) };
+  async function post(method: string, body: unknown): Promise<Record<string, unknown>> {
+    const token = await signServiceAuth(signer as never, { aud: did, lxm: method });
+    const res = await retryingFetch(`${base}/xrpc/${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`${method} on ${base}: ${res.status} ${await res.text()}`);
+    return await res.json() as Record<string, unknown>;
+  }
+  async function listRecordsPage(repo: string, collection: string, o?: { limit?: number; cursor?: string }) {
+    const params = new URLSearchParams({ repo, collection, limit: String(Math.min(o?.limit ?? 100, 100)) });
+    if (o?.cursor) params.set("cursor", o.cursor);
+    const res = await retryingFetch(`${base}/xrpc/com.atproto.repo.listRecords?${params}`);
+    if (!res.ok) throw new Error(`listRecords on ${base}: ${res.status} ${await res.text()}`);
+    return await res.json() as { records: Array<{ uri: string; cid: string; value: Record<string, unknown> }>; cursor?: string };
+  }
+  return {
+    did,
+    signer,
+    async applyWrites(repo: string, writes: WriteOp[]) {
+      const data = await post("com.atproto.repo.applyWrites", {
+        repo,
+        writes: writes.map((w) => ({
+          $type: `com.atproto.repo.applyWrites#${w.action}`,
+          collection: w.collection,
+          rkey: w.rkey,
+          ...(w.action !== "delete" ? { value: (w as { record: unknown }).record } : {}),
+        })),
+      }) as { commit?: { rev?: string; cid?: string } };
+      const rev = data.commit?.rev ?? "";
+      return { repo, commit: data.commit?.cid ?? rev, rev, since: null, blocks: new Uint8Array(), ops: [], prevData: null } as unknown as CommitEvent;
+    },
+    async getRecord(repo: string, collection: string, rkey: string) {
+      const params = new URLSearchParams({ repo, collection, rkey });
+      const res = await retryingFetch(`${base}/xrpc/com.atproto.repo.getRecord?${params}`);
+      if (!res.ok) return null;
+      const data = await res.json() as { uri: string; cid?: string; value: Record<string, unknown> };
+      return { uri: data.uri, cid: data.cid ?? "", value: data.value };
+    },
+    async listRecords(repo: string, collection: string, o?: { limit?: number }) {
+      const all: Array<{ uri: string; cid: string; value: Record<string, unknown> }> = [];
+      const target = o?.limit ?? 100;
+      let cursor: string | undefined;
+      do {
+        const page = await listRecordsPage(repo, collection, { limit: target - all.length, cursor });
+        all.push(...page.records);
+        cursor = page.cursor;
+      } while (cursor && all.length < target);
+      return { records: all };
+    },
+    listRecordsPage,
+    getServiceAuth: (aud: string, lxm?: string) => signServiceAuth(signer as never, { aud, lxm }),
+    async createRecord(repo: string, collection: string, rkey: string, record: Record<string, unknown>) {
+      const data = await post("com.atproto.repo.createRecord", { repo, collection, rkey, record }) as { uri: string; cid: string };
+      return { uri: data.uri, cid: data.cid ?? "" };
+    },
+    async putRecord(repo: string, collection: string, rkey: string, record: Record<string, unknown>) {
+      const data = await post("com.atproto.repo.putRecord", { repo, collection, rkey, record }) as { uri: string; cid: string };
+      return { uri: data.uri, cid: data.cid ?? "" };
+    },
   };
 }
 

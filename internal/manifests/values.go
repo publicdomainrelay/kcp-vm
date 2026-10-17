@@ -49,6 +49,24 @@ type MarketBidder struct {
 	Read             string
 	ExtraArgs        string
 	ProviderArgs     string
+	Pds              RepoPds
+}
+
+type RepoPds struct {
+	StateDir         string `json:",omitempty"`
+	Identity         string `json:",omitempty"`
+	KcpServer        string `json:",omitempty"`
+	KcpWorkspace     string `json:",omitempty"`
+	VaultServer      string `json:",omitempty"`
+	VaultClient      string `json:",omitempty"`
+	VaultKcpServer   string `json:",omitempty"`
+	VaultMount       string `json:",omitempty"`
+	VaultMountClient string `json:",omitempty"`
+	PlcDirectoryUrl  string `json:",omitempty"`
+	IngressProxyHost string `json:",omitempty"`
+	Trust            string
+	Read             string
+	ExtraArgs        string
 }
 
 type BidderGuest struct {
@@ -124,6 +142,7 @@ type Gateway struct {
 	IdentityWorkspace string `json:",omitempty"`
 	Vault             GatewayVault
 	Requester         GatewayRequester
+	Pds               RepoPds
 }
 
 type GatewayRequester struct {

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"strings"
@@ -30,6 +31,7 @@ const (
 	BidderVaultServer = "bidder"
 	BidderVaultClient = "bidder"
 	identityKeysPath  = "identity/bidder/keys"
+	RepoKeyField      = "repoKeyHex"
 	passwordBytes     = 24
 )
 
@@ -106,7 +108,11 @@ func (ctl *Controller) bidderPassword(ctx context.Context) (string, manifests.Bi
 			return "", manifests.BidderVault{}, err
 		}
 		password = hex.EncodeToString(buf)
-		if err := client.PutKV(ctx, path, map[string]any{"password": password}); err != nil {
+		if data == nil {
+			data = map[string]any{}
+		}
+		data["password"] = password
+		if err := client.PutKV(ctx, path, data); err != nil {
 			return "", manifests.BidderVault{}, err
 		}
 		ctl.c.log().Info("the bidder's account password is in its own OpenBao", "server", BidderVaultServer, "path", path)
@@ -168,7 +174,7 @@ func EnsurePdsAccount(ctx context.Context, pdsURL, caFile, handle, password stri
 
 func (ctl *Controller) bidderVault(ctx context.Context, spec v1alpha1.MarketBidderSpec, stateDir string) (manifests.BidderVault, error) {
 	var vault manifests.BidderVault
-	if spec.Identity.Mode == v1alpha1.MarketIdentityModePdsAccount {
+	if spec.Identity.Mode == v1alpha1.MarketIdentityModePdsAccount || spec.Profile == BidderProfileNetwork {
 		password, v, err := ctl.bidderPassword(ctx)
 		if err != nil {
 			return v, err
@@ -185,8 +191,58 @@ func (ctl *Controller) bidderVault(ctx context.Context, spec v1alpha1.MarketBidd
 		}
 		vault = manifests.BidderVault{Server: BidderVaultServer, Client: BidderVaultClient}
 	}
+	if spec.Identity.Mode == v1alpha1.MarketIdentityModeLocalRepo {
+		if err := ctl.ensureRepoKey(ctx); err != nil {
+			return vault, err
+		}
+	}
 	vault.KcpServer = strings.TrimSuffix(ctl.restCfg.Host, "/") + "/clusters/" + ctl.c.workspace()
 	return vault, nil
+}
+
+var secp256k1N, _ = new(big.Int).SetString("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141", 16)
+
+func NewRepoKeyHex() (string, error) {
+	for {
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			return "", err
+		}
+		k := new(big.Int).SetBytes(buf)
+		if k.Sign() > 0 && k.Cmp(secp256k1N) < 0 {
+			return hex.EncodeToString(buf), nil
+		}
+	}
+}
+
+func (ctl *Controller) ensureRepoKey(ctx context.Context) error {
+	client, _, c, err := ctl.vaultClient(ctx, BidderVaultServer, BidderVaultClient)
+	if err != nil {
+		return err
+	}
+	defer client.RevokeSelf(context.Background())
+	path := c.KVMount + "/data/" + identityKeysPath
+	data, err := client.GetKV(ctx, path)
+	var re *openbao.ResponseError
+	if err != nil && !(errors.As(err, &re) && re.Status == http.StatusNotFound) {
+		return err
+	}
+	if k, _ := data[RepoKeyField].(string); k != "" {
+		return nil
+	}
+	key, err := NewRepoKeyHex()
+	if err != nil {
+		return err
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data[RepoKeyField] = key
+	if err := client.PutKV(ctx, path, data); err != nil {
+		return err
+	}
+	ctl.c.log().Info("the bidder's repo key is in its own OpenBao", "server", BidderVaultServer, "path", path)
+	return nil
 }
 
 func (ctl *Controller) deleteVaults(ctx context.Context, owner string) (int, error) {

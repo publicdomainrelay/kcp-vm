@@ -167,7 +167,10 @@ export function setCondition(
 }
 
 export function bidderAssociationCaller(value: Record<string, unknown>, did: string, serviceId: string): string | null {
-  return value.challenge === did && value.service === serviceId && typeof value.keyId === "string" ? value.keyId : null;
+  if (value.service !== serviceId) return null;
+  if (value.keyId === did && typeof value.challenge === "string") return value.challenge;
+  if (value.challenge === did && typeof value.keyId === "string") return value.keyId;
+  return null;
 }
 
 export function requesterAssociationCaller(value: Record<string, unknown>, did: string, serviceId: string): string | null {

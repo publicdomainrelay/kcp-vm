@@ -3785,6 +3785,40 @@ because it bounds a mechanism the rest of this document leans on.
     VMs outlive the core, and HCS owns them. This replaces the plan's pre-installed vault service.
   - Decision from the user (2026-10-16): the Windows desktop is never rebooted, shut down or signed out. A
     reboot-only proof is `blocked` and its closest no-reboot equivalent is measured and labelled.
+- **An application owns its PDS: the PDS is a DenoPod in its own kcp (plan 0018, opened 2026-10-17).**
+  Bob's bsky.social account hit the hosted cap of 35000 write points per 24 hours because the prod bidder
+  (MarketIdentity mode oauthQr) wrote every market record into Bob's own repo. Every MarketBidder profile is
+  now mode localRepo, and the market-bidder set renders `pds@<profile>` from `deploy/apps/repo-pds`
+  (manifests.RepoPds, field Pds, so the gateway set can render the same DenoPod for alice). The core writes
+  the repo key once into the application's OpenBao (`identity/bidder/keys`, field repoKeyHex); the DenoPod
+  pds (`hono-repo-pds`) reads it with its own client `pds`, registers the did:plc of the key, serves the
+  repo on port 0 (`pds.default.app.svc.kcp.local`) and on the did-key-ingress-proxy subdomain of its key
+  (the DID document's `atproto_pds` endpoint), and accepts a repo write only with a service-auth token
+  signed by the repo key (aud and iss the repo DID); createAccount and getServiceAuth are off. The bidder
+  DenoPod holds the same key, signs its records and service-auth tokens with it, and reads and writes its
+  repo only through the pds DenoPod. Records the application declares are AtprotoRecord objects (kind in
+  export marketidentities) in git, in its manifest set (`deploy/apps/market-bidder/records.yaml`), applied
+  with the profile: spec {repo, collection, rkey, record}, record an open object. Two substitutions only:
+  the render-time template values of the root object, and runtime references, a value that is exactly
+  `{valueFrom: {kind | resource, name, fieldPath, workspace?, namespace?, apiVersion?}}` (fieldPath dotted
+  with `[n]`; workspace absent is the record's own, set it is read through `/clusters/<workspace>`). The
+  pds DenoPod keeps a record Pending with condition ReferencesResolved False, reason MissingReference,
+  naming each missing or unreadable (404, 403) reference, writes it once all resolve, rewrites it when a
+  referenced value changes, reports uri and cid, and deletes it with the object (finalizer
+  atprotorecord.socialweb.computer/repo). The association: the operator scans
+  `<qrOrigin>/#bdr=<bidder DID>`, the frontend calls associateConfirm through the operator's PDS, the pds
+  DenoPod decides with the MarketIdentity spec (associateWith is the bidder's handle, so the operator
+  account is approved at once) and records the approval in `spec.approvedAssociations`; the declared
+  record `association` (challenge from `spec.approvedAssociations[0]`, keyId from `status.did`) then
+  resolves and is written, the call answers, and the frontend writes one record into the operator's repo
+  (one createRecord, 3 points, once per bidder DID).
+  The requester's policy reads the bidder's own repo for the operator (`resolveOperatorDid`). In a market
+  network the bidder's core plays the operator's browser once with the bidder account on the bob PDS.
+  Open: the readings of the live proof; the gateway requester side (M2); whether prod requesters find the
+  new bidder DID through the relay index or need it in the Gateway's bidderDids (the operator's vouches name
+  Bob, not the bidder DID). The pds writes the canonical association shape {challenge: operator, keyId:
+  the application's DID} for every service; the policy context and the MarketIdentity read it first and
+  the old inverted shape second.
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,

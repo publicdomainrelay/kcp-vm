@@ -1,0 +1,106 @@
+plan: "0018"
+title: "An application owns its PDS: the PDS is a DenoPod in the application's own kcp and its records are kcp objects"
+status: doing
+note: >
+  Shared branch: task/own-pds on GitHub origin. The shared pieces (the AtprotoRecord kind, the repo-pds
+  DenoPod manifest set deploy/apps/repo-pds, the hono-repo-pds entry and its record reconciler, the
+  association flow) land there first; the bidder side (M1) and the gateway requester side (M2) build on
+  them on the same branch. Rebase on it often. Pushes: a58553ac (AtprotoRecord kind, deploy/apps/repo-pds,
+  RepoPds values, bidder profiles map to localRepo, the core keeps the repo key in the bidder's OpenBao),
+  2fbeca24 (hono-repo-pds), 9f4e8508 (bidder side), 6dd6e1be (canonical association shape), 37cb52d0
+  (RepoPds.VaultMountClient), 5370e006 (no serviceAccount); later shas are in the git log of task/own-pds.
+source: >
+  2026-10-17: Bob's bsky.social account (bobvmbuilder) hit the hosted PDS cap of 35000 write points per
+  24 hours, and every prod contract then failed with 429. The prod bidder (profile prod-qr, MarketIdentity
+  mode oauthQr) wrote every market record (Bid, bids.free, wif.simple, receipts, events, payloads) into
+  Bob's own bsky.social repo. docs/ARCHITECTURE.md section 15 "Bidder PDS write budget" cut the cost per
+  contract from 35.4 to 23.4 points; that only moves the cap. The cap belongs to Bob's account, not to the
+  bidder.
+principle: >
+  An application that writes market records owns the repo they live in. The repo is a PDS DenoPod in the
+  application's own kcp, rendered from the application's root object by its manifest set, bound to port 0
+  and found by service name (pds.default.app.svc.kcp.local). Its key is in the application's own OpenBao.
+  Every record the application declares (an association, a vouch, any operator-declared record) is an
+  AtprotoRecord object in that kcp, and the PDS DenoPod reconciles the object into the repo. The
+  operator's real account is written once, to associate the application's DID with it. The RFP flow is
+  unchanged: the PDS only changes where the records live.
+state_rules:
+  - Read AGENTS.md first. status is one of todo, doing, done, blocked. The lead flips statuses.
+items:
+  - id: M0-SHARED-PDS-DENOPOD
+    title: "The shared pieces: the AtprotoRecord kind, the repo-pds DenoPod, its record reconciler, the association flow"
+    depends_on: []
+    decision: >
+      api/v1alpha1 AtprotoRecord (export marketidentities, so the existing marketidentities binding covers
+      it): spec {repo (the PDS DenoPod name, pds), collection, rkey, record (an open object)}, status {phase
+      Pending|Applied|Failed, observedGeneration, did, uri, cid, message, conditions (ReferencesResolved)},
+      finalizer atprotorecord.socialweb.computer/repo. Records live in git, in the application's manifest
+      set (deploy/apps/<app>/records.yaml), applied with the profile like any object. Two substitutions
+      only: render-time Go template values of the root object ({{.Kcp.Server}} and the like), and runtime
+      references: a record value that is exactly {valueFrom: {kind or resource, name, fieldPath, workspace?,
+      namespace?, apiVersion?}} is the field of that kcp object (kind MarketIdentity, AtprotoRecord, DenoPod or
+      any socialweb.computer kind; resource names the plural, apiVersion an outside kind; workspace absent is
+      the record's own workspace, set it is read through /clusters/<workspace>; fieldPath is dotted with
+      [n] indexes). The reconciler keeps the record Pending with condition ReferencesResolved False, reason
+      MissingReference, naming every missing or unreadable reference (404, 403), writes it once all
+      resolve, and rewrites it when a referenced value changes. That is the ordering: objects wait on each
+      other's status. deploy/apps/repo-pds/pds.values.yaml renders the DenoPod pds from manifests.RepoPds
+      (field Pds of a set's values; any set can render it), deploy/apps/repo-pds/rbac.yaml its account
+      pds. The entry hono-repo-pds reads the repo key from the application's OpenBao (the core creates it
+      once), registers the did:plc, serves the repo on port 0 and on the did-key-ingress-proxy subdomain of
+      its key, accepts writes only from a service-auth token signed by the repo key, and reconciles the
+      AtprotoRecord objects whose spec.repo is pds. associateConfirm decides with the MarketIdentity spec
+      (associateWith, approved and rejected lists), records an approval in spec.approvedAssociations, and
+      answers once a declared record {challenge: caller, keyId: own DID, service} is in the repo; the
+      bidder's record is deploy/apps/market-bidder/records.yaml (challenge from
+      spec.approvedAssociations[0], keyId from status.did of MarketIdentity bidder).
+    files: ["api/v1alpha1/types_atprotorecord.go", "deploy/apps/repo-pds", "ts/atproto-market/hono-repo-pds", "ts/atproto-market/lib/hono-factory-repo-pds", "ts/atproto-market/lib/atproto-record-kcp"]
+    done_when: "a market network bidder runs with the pds DenoPod; deleting an AtprotoRecord object deletes its record from the repo; the pds DenoPod reports its listeners in its status."
+    status: doing
+  - id: M1-BIDDER-OWN-PDS
+    title: "Bob's bidder writes its market records to its own PDS DenoPod"
+    depends_on: [M0-SHARED-PDS-DENOPOD]
+    decision: >
+      Every MarketBidder profile (prod-qr, market-network, dev-local) maps to MarketIdentity mode localRepo,
+      and the market-bidder set renders pds@<profile>. The bidder DenoPod uses the pds DenoPod by service
+      name for every repo read and write; the in-process PDS of the bidder is gone. The MarketIdentity
+      associateWith is the bidder's handle, so the scan by that account (bobvmbuilder) is approved without
+      a second step. In the market network the core plays the operator's browser once: it signs in as the
+      bidder's account on the network's bob PDS and runs the same associateConfirm call.
+    done_when: "on a market network, run request ends exec ok against a bidder whose records are all in its pds DenoPod, and the operator account's PDS takes zero writes for the contract."
+    status: doing
+  - id: M2-GATEWAY-REQUESTER-OWN-PDS
+    title: "The gateway's requester (Alice) writes its market records to its own PDS DenoPod"
+    depends_on: [M0-SHARED-PDS-DENOPOD]
+    decision: >
+      The gateway set renders deploy/apps/repo-pds/pds.values.yaml with the Pds field of manifests.Gateway,
+      a pds client in the gateway's vault, and the requester's RFP, compute.vm, accept and vouch records go
+      to it. The vouch records the requester's policy reads (sh.tangled.graph.vouch) are AtprotoRecord
+      objects. Alice's bsky.social account is written once, to associate the requester DID.
+    done_when: "a prod contract posts no record to alice's bsky.social repo."
+    status: todo
+  - id: ACC18-PDS-IS-A-DENOPOD
+    title: "The PDS is a DenoPod in the application's own kcp"
+    depends_on: [M1-BIDDER-OWN-PDS]
+    done_when: "units list / the MarketBidder status shows the DenoPod pds Running with its listeners; the bidder finds it as pds.default.app.svc.kcp.local."
+    status: todo
+  - id: ACC18-ZERO-OPERATOR-WRITES
+    title: "Zero writes to the operator's bsky.social repo per contract"
+    depends_on: [M1-BIDDER-OWN-PDS]
+    done_when: "the operator account's repo has the same record count before and after a contract (market network bob PDS; prod bobvmbuilder on bsky.social)."
+    status: todo
+  - id: ACC18-KEY-SURVIVES
+    title: "The repo key and the DID survive a restart and an upgrade"
+    depends_on: [M1-BIDDER-OWN-PDS]
+    done_when: "the bidder's DID is the same after a restart of the bidder core and after `socialweb-computer upgrade`; the key is read from the bidder's OpenBao, never created twice."
+    status: todo
+  - id: ACC18-ASSOCIATION-ONCE
+    title: "The association is done once and the requester checks it"
+    depends_on: [M1-BIDDER-OWN-PDS]
+    done_when: "one association write to the operator's repo per bidder DID; a restart does not ask again; the requester's policy resolves the bidder's operator from the association record (requester-tangled-vouch)."
+    status: todo
+  - id: ACC18-GATEWAY-SAME-PATTERN
+    title: "The gateway requester uses the same PDS DenoPod pattern"
+    depends_on: [M2-GATEWAY-REQUESTER-OWN-PDS]
+    done_when: "the gateway's kcp shows its own pds DenoPod and AtprotoRecord objects; alice's bsky.social repo takes no write per contract."
+    status: todo
