@@ -161,6 +161,17 @@ func (n *networks) applyServices(ctx context.Context, owner string, values *mani
 	if !ok {
 		return fmt.Errorf("appctl: deploy/sets.yaml names no %s set", NetworkSet)
 	}
+	if values.Ports.Dispatcher != 0 && values.Ports.DispatcherTLS != 0 {
+		values.DispatcherPort, values.GuestTLSPort = values.Ports.Dispatcher, values.Ports.DispatcherTLS
+		set.Phases = slices.Clone(set.Phases)
+		for i := range set.Phases {
+			after := slices.Clone(set.Phases[i].After)
+			for j := range after {
+				after[j].Capture = nil
+			}
+			set.Phases[i].After = after
+		}
+	}
 	ap, err := kcpapply.New(n.ctl.restCfg, kcpapply.Options{WaitTimeout: ApplyTimeout, FieldManager: FieldManager,
 		Labels: map[string]string{OwnerLabel: owner}, Log: n.ctl.c.log()})
 	if err != nil {
