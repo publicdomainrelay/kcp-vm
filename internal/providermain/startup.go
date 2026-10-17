@@ -32,7 +32,7 @@ func Startup(ctx context.Context, registry clusterprovider.Clusters, units *clus
 				"decision", "not running here; the next pass owns it")
 			continue
 		}
-		if _, err := units.EnsureStore(ctx, key); err != nil {
+		if err := units.StartStore(ctx, key); err != nil {
 			return fmt.Errorf("clusterprovider: the Postgres object of %s before adoption: %w", key, err)
 		}
 		decision := "adopted: every member keeps running; the passes verify and re-place only what is missing or restarted"

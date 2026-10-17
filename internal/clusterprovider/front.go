@@ -16,6 +16,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/apiserverfront"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 )
 
 const (
@@ -56,6 +57,13 @@ func waitFront(ctx context.Context, control string) error {
 	}, func() error { return &errNotReady{what: "the apiserver front at " + control, last: last} })
 }
 
+func waitSlotUp(ctx context.Context, spec clusterstack.Spec) error {
+	if err := waitK3s(ctx, spec.BindAddress, spec.K3sSecurePort); err != nil {
+		return err
+	}
+	return waitK3sControllers(ctx, spec.ServerAdminKubeconfig())
+}
+
 func WaitSlot(ctx context.Context, spec clusterstack.Spec) error {
 	if err := waitK3s(ctx, spec.BindAddress, spec.K3sSecurePort); err != nil {
 		return err
@@ -71,7 +79,7 @@ func slotClient(spec clusterstack.Spec) (kubernetes.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
-	return kubernetes.NewForConfig(cfg)
+	return kubernetes.NewForConfig(kcpserver.Throughput(cfg))
 }
 
 func CheckAdvertisedEndpoints(ctx context.Context, spec clusterstack.Spec) error {

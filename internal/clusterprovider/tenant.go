@@ -19,6 +19,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 )
 
 var ErrNoBootstrap = errors.New("clusterprovider: the tenant bootstrap needs a tenant credential and a grant path")
@@ -121,7 +122,7 @@ func (p *Provider) Bootstrap(ctx context.Context, ref Ref, cl *v1alpha1.Cluster)
 	if err != nil {
 		return err
 	}
-	dyn, err := dynamic.NewForConfig(cfg)
+	dyn, err := dynamic.NewForConfig(kcpserver.Throughput(cfg))
 	if err != nil {
 		return fmt.Errorf("clusterprovider: a dynamic client for %s: %w", ref.Name, err)
 	}

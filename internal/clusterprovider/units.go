@@ -52,6 +52,7 @@ const (
 	frontStopGrace      = 10
 	memberOutputTail    = 1 << 20
 	unitPoll            = 500 * time.Millisecond
+	placePoll           = 100 * time.Millisecond
 )
 
 var ErrMemberLost = errors.New("clusterprovider: a member unit was lost while it was being placed")
@@ -322,7 +323,7 @@ func encodeObj(o any, kind string) (*unstructured.Unstructured, error) {
 	return u, nil
 }
 
-func (h *UnitsHost) EnsureStore(ctx context.Context, key string) (Store, error) {
+func (h *UnitsHost) StartStore(ctx context.Context, key string) error {
 	name := StoreName(key)
 	cur, err := h.pgs.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -330,17 +331,34 @@ func (h *UnitsHost) EnsureStore(ctx context.Context, key string) (Store, error) 
 			Spec: v1alpha1.PostgresSpec{Databases: []string{PostgresDatabase, PostgresVaultDatabase}}}
 		u, err := encodeObj(&o, "Postgres")
 		if err != nil {
-			return Store{}, err
+			return err
 		}
 		if _, err := h.pgs.Create(ctx, u, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-			return Store{}, fmt.Errorf("clusterprovider: creating the Postgres object %s of %s: %w", name, key, err)
+			return fmt.Errorf("clusterprovider: creating the Postgres object %s of %s: %w", name, key, err)
 		}
 		h.c.Log.Info("cluster provider: the cluster's store is a Postgres object", "cluster", key, "postgres", name,
 			"unit", h.StoreUnit(key))
 	} else if err != nil {
-		return Store{}, err
+		return err
 	} else if cur.GetDeletionTimestamp() != nil {
-		return Store{}, fmt.Errorf("clusterprovider: the Postgres object %s of %s is being deleted", name, key)
+		return fmt.Errorf("clusterprovider: the Postgres object %s of %s is being deleted", name, key)
+	}
+	if _, cached := h.Store(key); !cached {
+		if u, err := h.pgs.Get(ctx, name, metav1.GetOptions{}); err == nil {
+			if o, derr := decodeObj[v1alpha1.Postgres](u); derr == nil && o.Status.Phase == v1alpha1.PostgresPhaseReady && o.Status.SocketDir != "" {
+				h.mu.Lock()
+				h.stores[key] = Store{Object: name, Unit: h.StoreUnit(key), SocketDir: o.Status.SocketDir, User: o.Status.User}
+				h.mu.Unlock()
+			}
+		}
+	}
+	return nil
+}
+
+func (h *UnitsHost) EnsureStore(ctx context.Context, key string) (Store, error) {
+	name := StoreName(key)
+	if err := h.StartStore(ctx, key); err != nil {
+		return Store{}, err
 	}
 	deadline := time.Now().Add(h.c.StoreTimeout)
 	for {
@@ -762,7 +780,7 @@ func (h *UnitsHost) place(ctx context.Context, key, member string, cur *v1alpha1
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(unitPoll):
+		case <-time.After(placePoll):
 		}
 	}
 }
@@ -884,7 +902,7 @@ func stepNeeds(steps []procgroup.Step, i int) []int {
 	case procgroup.ComponentCloudControllerManager, procgroup.ComponentExternalSecretsWebhook:
 		names = []procgroup.Component{procgroup.ComponentK3s}
 	case procgroup.ComponentExternalSecrets:
-		names = []procgroup.Component{procgroup.ComponentK3s, procgroup.ComponentExternalSecretsWebhook, procgroup.ComponentOpenBao}
+		names = []procgroup.Component{procgroup.ComponentK3s, procgroup.ComponentOpenBao}
 	case procgroup.ComponentApiserverLink:
 		names = []procgroup.Component{procgroup.ComponentApiserverFront, procgroup.ComponentK3s}
 	case procgroup.ComponentOpenBaoLink:

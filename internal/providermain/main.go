@@ -133,6 +133,7 @@ func buildInputs(cfg Config) (inputs, error) {
 		return inputs{}, fmt.Errorf("reading %s: %w", cfg.KCPKubeconfig, err)
 	}
 	kcpserver.FollowTokenFile(restCfg)
+	kcpserver.Throughput(restCfg)
 	registry, err := clusterprovider.NewRegistry(clusterprovider.RegistryOptions{
 		Host:       cfg.KCPHost,
 		RestConfig: restCfg,
@@ -292,7 +293,13 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 			if err != nil {
 				return err
 			}
-			return units.EnsureFront(ctx, cluster, st)
+			if err := units.EnsureFront(ctx, cluster, st); err != nil {
+				return err
+			}
+			if _, err := units.EnsureStore(ctx, cluster); err != nil {
+				return fmt.Errorf("the store: %w", err)
+			}
+			return nil
 		},
 		Identity:    clusterprovider.GuardFor(guardDeps(cfg, tokens, units, log)),
 		NewInstance: minter,
@@ -437,7 +444,7 @@ func tenantClients(registry clusterprovider.Clusters, mint func(context.Context,
 		if err != nil {
 			return nil, err
 		}
-		return kubernetes.NewForConfig(cfg)
+		return kubernetes.NewForConfig(kcpserver.Throughput(cfg))
 	}
 }
 
@@ -527,7 +534,7 @@ func adminForCluster(stateDir string) clusterprovider.AdminClient {
 		if apiserver != "" {
 			cfg.Host = apiserver
 		}
-		return kubernetes.NewForConfig(cfg)
+		return kubernetes.NewForConfig(kcpserver.Throughput(cfg))
 	}
 }
 

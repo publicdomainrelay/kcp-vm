@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 
@@ -35,6 +36,7 @@ const (
 	DefaultUser     = "socialweb"
 	DefaultInterval = 3 * time.Second
 	RetryAfter      = 3 * time.Second
+	PendingInterval = 200 * time.Millisecond
 	ProbeTimeout    = 5 * time.Second
 	ConditionReady  = "Ready"
 	OutputCap       = 64 << 20
@@ -391,6 +393,49 @@ func (ct *Controller) Pass(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+func (ct *Controller) pending(ctx context.Context) bool {
+	list, err := ct.pgs.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false
+	}
+	for i := range list.Items {
+		if list.Items[i].GetDeletionTimestamp() != nil {
+			continue
+		}
+		phase, _, _ := unstructured.NestedString(list.Items[i].Object, "status", "phase")
+		switch v1alpha1.PostgresPhase(phase) {
+		case v1alpha1.PostgresPhaseReady, v1alpha1.PostgresPhaseFailed, v1alpha1.PostgresPhaseDeleting:
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func (ct *Controller) watch(ctx context.Context, wake chan<- struct{}) {
+	for ctx.Err() == nil {
+		w, err := ct.pgs.Watch(ctx, metav1.ListOptions{})
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(RetryAfter):
+			}
+			continue
+		}
+		for ev := range w.ResultChan() {
+			if ev.Type != watch.Added {
+				continue
+			}
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
+		w.Stop()
+	}
+}
+
 func (ct *Controller) Run(ctx context.Context) error {
 	interval := ct.c.Interval
 	if interval == 0 {
@@ -398,16 +443,21 @@ func (ct *Controller) Run(ctx context.Context) error {
 	}
 	ct.c.log().Info("the Postgres controller runs in the core", "workspace", ct.c.Workspace, "dataRoot", ct.c.DataRoot,
 		"socketRoot", ct.c.SocketRoot)
-	t := time.NewTicker(interval)
-	defer t.Stop()
+	wake := make(chan struct{}, 1)
+	go ct.watch(ctx, wake)
 	for {
 		if err := ct.Pass(ctx); err != nil {
 			ct.c.log().Warn("a reconcile pass failed; servers keep running", "err", err.Error())
 		}
+		wait := interval
+		if ct.pending(ctx) {
+			wait = PendingInterval
+		}
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
+		case <-time.After(wait):
+		case <-wake:
 		}
 	}
 }

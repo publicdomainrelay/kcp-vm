@@ -13,6 +13,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/esovault"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantnet"
 )
 
@@ -32,7 +33,7 @@ func tenantAddOns(cfg Config, log *slog.Logger) func(context.Context, string, *r
 		if err != nil {
 			return err
 		}
-		dyn, err := dynamic.NewForConfig(restCfg)
+		dyn, err := dynamic.NewForConfig(kcpserver.Throughput(rest.CopyConfig(restCfg)))
 		if err != nil {
 			return fmt.Errorf("clusterprovider: a dynamic client for %s's tenant add-ons: %w", cluster, err)
 		}

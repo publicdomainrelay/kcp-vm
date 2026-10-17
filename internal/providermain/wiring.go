@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -446,14 +447,18 @@ func (p *Provider) one(ctx context.Context, ref clusterprovider.Ref) error {
 			"nothing is brought up for it", "cluster", ref.Name, "key", key, "home", ref.Home)
 		return p.reapOne(ctx, key)
 	}
-	if _, err := p.store(ctx, key); err != nil {
-		return err
+	if p.units != nil {
+		if err := p.units.StartStore(ctx, key); err != nil {
+			return err
+		}
 	}
 	done, ok := p.bringUpSlot(ctx)
 	if !ok {
 		return ctx.Err()
 	}
-	p.pass(ctx, ref, key)
+	if p.pass(ctx, ref, key) {
+		p.pass(ctx, ref, key)
+	}
 	done()
 	p.scale(ctx, key, ref.Name, true)
 	return nil
@@ -510,7 +515,7 @@ func (p *Provider) scale(ctx context.Context, key, name string, running bool) {
 	p.log.Info("cluster provider: node scale", args...)
 }
 
-func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string) {
+func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string) bool {
 	pass, err := p.provider.Reconcile(ctx, ref)
 	if pass.Result.Phase != "" {
 		args := []any{
@@ -535,6 +540,7 @@ func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string
 		p.log.Error("cluster provider: the pass failed", "cluster", ref.Name, "key", key,
 			"error", err.Error())
 	}
+	return slices.Contains(pass.Result.Ops, materialiser.OpSpawn)
 }
 
 func (p *Provider) store(ctx context.Context, cluster string) (string, error) {

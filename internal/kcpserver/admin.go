@@ -60,7 +60,17 @@ func FrontRestConfig(kubeconfig string) (*rest.Config, error) {
 		return nil, err
 	}
 	host, _, _ := strings.Cut(strings.TrimSuffix(a.Server, "/"), "/clusters/")
-	return &rest.Config{Host: host, BearerToken: a.Token, TLSClientConfig: rest.TLSClientConfig{CAData: a.CA}}, nil
+	return Throughput(&rest.Config{Host: host, BearerToken: a.Token, TLSClientConfig: rest.TLSClientConfig{CAData: a.CA}}), nil
+}
+
+const (
+	ClientQPS   = 50
+	ClientBurst = 100
+)
+
+func Throughput(cfg *rest.Config) *rest.Config {
+	cfg.QPS, cfg.Burst = ClientQPS, ClientBurst
+	return cfg
 }
 
 type HTTPAdmin struct {

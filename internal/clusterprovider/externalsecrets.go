@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/client-go/dynamic"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
@@ -131,10 +133,13 @@ func prepareExternalSecrets(steps []procgroup.Step, cfg StackConfig, spec cluste
 	if !cfg.Stack.Has(procgroup.ComponentK3s) {
 		return nil, fmt.Errorf("%w (stack %v, cluster %s)", ErrNoExternalSecretsSeam, cfg.Stack, cluster)
 	}
-	idx := -1
+	idx, ctlIdx := -1, -1
 	for i, s := range steps {
-		if s.Name == procgroup.ComponentExternalSecretsWebhook {
+		switch s.Name {
+		case procgroup.ComponentExternalSecretsWebhook:
 			idx = i
+		case procgroup.ComponentExternalSecrets:
+			ctlIdx = i
 		}
 	}
 	if idx < 0 {
@@ -153,27 +158,27 @@ func prepareExternalSecrets(steps []procgroup.Step, cfg StackConfig, spec cluste
 	}
 	dataDir := spec.DataDir
 	webhookPort := spec.ExternalSecrets.WebhookPort
-	steps[idx].Prepare = func(ctx context.Context, ps procgroup.Spec) (procgroup.Spec, error) {
+	install := func(ctx context.Context) error {
 		minted, err := MintTenantCredentialForClusterAs(ctx, cfg.StateDir, cluster, apiserver,
 			eso.ControllerUser, []string{eso.ControllerGroup}, DefaultCredentialValidity)
 		if err != nil {
-			return ps, fmt.Errorf("clusterprovider: minting the credential the External Secrets "+
+			return fmt.Errorf("clusterprovider: minting the credential the External Secrets "+
 				"controller of %s authenticates with: %w", cluster, err)
 		}
 		if err := writeScopedKubeconfig(clusterstack.ExternalSecretsKubeconfig(dataDir), minted,
 			externalSecretsKubeconfigContext, ErrExternalSecretsKubeconfigUnwritable); err != nil {
-			return ps, err
+			return err
 		}
 		caPEM, err := eso.EnsureWebhookTLS(eso.WebhookTLSPaths{
 			CertDir: clusterstack.ExternalSecretsCertDir(dataDir),
 			CAKey:   clusterstack.ExternalSecretsCAKey(dataDir),
 		}, time.Now())
 		if err != nil {
-			return ps, err
+			return err
 		}
 		dyn, err := admin(ctx, cluster, apiserver)
 		if err != nil {
-			return ps, fmt.Errorf("clusterprovider: the admin client that installs the External "+
+			return fmt.Errorf("clusterprovider: the admin client that installs the External "+
 				"Secrets CRDs into %s: %w", cluster, err)
 		}
 		if err := eso.InstallBeside(ctx, dyn, eso.BesideOptions{
@@ -183,10 +188,20 @@ func prepareExternalSecrets(steps []procgroup.Step, cfg StackConfig, spec cluste
 			WebhookCAPEM:    caPEM,
 			FieldManager:    AddOnFieldManager,
 		}); err != nil {
-			return ps, fmt.Errorf("clusterprovider: installing the tenant half of the External "+
+			return fmt.Errorf("clusterprovider: installing the tenant half of the External "+
 				"Secrets controller of %s: %w", cluster, err)
 		}
-		return ps, nil
+		return nil
+	}
+	var once sync.Once
+	var installErr error
+	shared := func(ctx context.Context, ps procgroup.Spec) (procgroup.Spec, error) {
+		once.Do(func() { installErr = install(ctx) })
+		return ps, installErr
+	}
+	steps[idx].Prepare = shared
+	if ctlIdx >= 0 {
+		steps[ctlIdx].Prepare = shared
 	}
 	return steps, nil
 }
@@ -204,7 +219,7 @@ func adminDynamicFromDataDir(stateDir string) func(context.Context, string, stri
 		if apiserver != "" {
 			cfg.Host = apiserver
 		}
-		return dynamic.NewForConfig(cfg)
+		return dynamic.NewForConfig(kcpserver.Throughput(cfg))
 	}
 }
 

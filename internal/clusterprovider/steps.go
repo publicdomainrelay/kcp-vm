@@ -182,7 +182,7 @@ func gate(c procgroup.Component, spec clusterstack.Spec, bao, api portallocator.
 				Port: spec.AdvertisePort, LinkTarget: spec.AdvertisePort, Front: api, SlotListen: []int{spec.K3sSecurePort}}); err != nil {
 				return err
 			}
-			if err := WaitSlot(ctx, spec); err != nil {
+			if err := waitSlotUp(ctx, spec); err != nil {
 				return err
 			}
 			if _, err := (apiserverfront.Client{Path: spec.FrontControl}).Set(ctx, SlotBackend(spec)); err != nil {

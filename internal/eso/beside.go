@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -199,6 +200,39 @@ func ControllerBindingObject() unstructured.Unstructured {
 	}}
 }
 
+const applyParallel = 8
+
+func runParallel(ctx context.Context, jobs []func(context.Context) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	sem := make(chan struct{}, applyParallel)
+	var (
+		wg    sync.WaitGroup
+		once  sync.Once
+		first error
+	)
+	for _, job := range jobs {
+		wg.Add(1)
+		go func(job func(context.Context) error) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			if err := job(ctx); err != nil {
+				once.Do(func() {
+					first = err
+					cancel()
+				})
+			}
+		}(job)
+	}
+	wg.Wait()
+	return first
+}
+
 func InstallBeside(ctx context.Context, dyn dynamic.Interface, o BesideOptions) error {
 	if o.BundlePath == "" || o.LegacyNamespace == "" || o.FieldManager == "" {
 		return errors.New("eso: the beside install needs the pinned bundle, the namespace the " +
@@ -219,22 +253,24 @@ func InstallBeside(ctx context.Context, dyn dynamic.Interface, o BesideOptions) 
 	if err := Retire(ctx, dyn, split.Retired); err != nil {
 		return err
 	}
+	jobs := make([]func(context.Context) error, 0, len(split.Kept)+1+len(webhooks))
 	for i := range split.Kept {
-		if err := applyBundleObject(ctx, dyn, &split.Kept[i], o.FieldManager); err != nil {
-			return err
-		}
+		u := &split.Kept[i]
+		jobs = append(jobs, func(ctx context.Context) error { return applyBundleObject(ctx, dyn, u, o.FieldManager) })
 	}
 	binding := ControllerBindingObject()
-	if err := applyBundleObject(ctx, dyn, &binding, o.FieldManager); err != nil {
-		return err
-	}
+	jobs = append(jobs, func(ctx context.Context) error { return applyBundleObject(ctx, dyn, &binding, o.FieldManager) })
 	for i := range webhooks {
-		if err := replaceServiceRegistration(ctx, dyn, webhooks[i].GetName()); err != nil {
-			return err
-		}
-		if err := applyBundleObject(ctx, dyn, &webhooks[i], o.FieldManager); err != nil {
-			return err
-		}
+		u := &webhooks[i]
+		jobs = append(jobs, func(ctx context.Context) error {
+			if err := replaceServiceRegistration(ctx, dyn, u.GetName()); err != nil {
+				return err
+			}
+			return applyBundleObject(ctx, dyn, u, o.FieldManager)
+		})
+	}
+	if err := runParallel(ctx, jobs); err != nil {
+		return err
 	}
 	var crds []string
 	for _, u := range split.Kept {
