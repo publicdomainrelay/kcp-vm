@@ -3808,9 +3808,9 @@ because it bounds a mechanism the rest of this document leans on.
   network the bidder's core plays the operator's browser once with the bidder account on the bob PDS.
   Open: the readings of the live proof; the gateway requester side (M2); whether prod requesters find the
   new bidder DID through the relay index or need it in the Gateway's bidderDids (the operator's vouches name
-  Bob, not the bidder DID); two readers of the association record disagree on its shape
-  (`operator-discovery-badge-blue-keys` wants keyId = subject, the policy context and the bidder's
-  MarketIdentity want challenge = subject; the pds writes the second).
+  Bob, not the bidder DID). The pds writes the canonical association shape {challenge: operator, keyId:
+  the application's DID} for every service; the policy context and the MarketIdentity read it first and
+  the old inverted shape second.
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,

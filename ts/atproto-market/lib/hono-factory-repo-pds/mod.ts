@@ -106,8 +106,8 @@ export function createRepoPdsApp(spec: RepoPdsSpec, ports: { logger: StructuredL
     }
     const name = `association-${(await sha256Hex(callerDid)).slice(0, 16)}`;
     await records!.declare(name, BADGE_BLUE_KEYS_NSID, name, {
-      keyId: callerDid,
-      challenge: pds!.did,
+      keyId: pds!.did,
+      challenge: callerDid,
       service: spec.associateServiceId,
       createdAt: new Date().toISOString(),
     }, { "socialweb.computer/association": "true" });

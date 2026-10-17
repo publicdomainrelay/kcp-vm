@@ -244,9 +244,10 @@ export class PolicyEvalCtxImpl implements PolicyEvalCtx {
       const records = await this.#listRecords(did, BADGE_BLUE_KEYS_NSID, 100);
       for (const r of records) {
         const v = r.value;
-        if (v.challenge !== did) continue;
         const service = v.service;
         if (service !== BIDDER_ASSOCIATE && service !== REQUESTER_ASSOCIATE) continue;
+        if (v.keyId === did && typeof v.challenge === "string" && v.challenge.startsWith("did:")) return v.challenge;
+        if (v.challenge !== did) continue;
         const keyId = v.keyId;
         if (typeof keyId === "string" && keyId.startsWith("did:")) return keyId;
       }
