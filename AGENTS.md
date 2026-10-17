@@ -269,6 +269,16 @@ A prod deployment does not preserve anything.
   `dev-work`, at most 2, deleted with `down`): `create`, `setup`, `push <publish-dir>`, then
   `swc -- <args>` or `it <TestRegex> <publish-dir>` run as test-0001 there. A droplet needs no live slot.
   Measurements: `docs/ARCHITECTURE.md` section 15, "Live capacity and iteration time".
+- The shared Linux dev VM `dev-linux-1` (build host and live host; run all from the Mac or any host with
+  doctl and the Johns-Air key; the droplet exists only while the lead keeps it):
+  1. Push your branch to GitHub, then `scripts/dev-droplet.sh sync dev-linux-1 origin/<branch>` (a clone
+     of the public repository in `/home/dev/socialweb-computer-kcp`, as user `dev`).
+  2. `scripts/dev-droplet.sh build dev-linux-1 <work>` writes the binary and the mirror to `/var/tmp/<work>`.
+  3. `scripts/dev-droplet.sh ssh dev-linux-1 '<cmd>'` runs a command as root; `go build`, `deno task check`
+     run as `dev` (`runuser -u dev -- bash -lc 'cd socialweb-computer-kcp && <cmd>'`).
+  4. Live runs as test-0001: `SOCIALWEB_PUBLISH_DIR=/var/tmp/<work> scripts/dev-droplet.sh swc dev-linux-1 -- dev up ...`
+     with your own instance name; the guest image is in `/var/lib/socialweb-computer/guest-image`.
+  5. Always `dev down` your network; never `scripts/dev-droplet.sh down` (it deletes every dev-work droplet).
 
 ## The loop
 

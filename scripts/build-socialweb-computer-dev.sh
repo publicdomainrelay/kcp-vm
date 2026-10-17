@@ -105,14 +105,22 @@ blob_of() {
   for plat in "${stage_plats[@]}"; do
     key="${plat/\//_}"
     missing=()
+    loose=()
     for asset in $(jq -r --arg p "$plat" '.platforms[$p].assets[]' "$versions"); do
       from_tree "$asset" "$plat" && continue
-      [ -f "$(blob_of "$plat" "$asset")" ] || missing+=(--asset "$asset")
+      [ -f "$(blob_of "$plat" "$asset")" ] && continue
+      if [ "$asset" = socialweb-computer-k8s-downloads ] && [ "$(. /etc/os-release && echo "$ID")" != fedora ]; then
+        loose+=(--asset "$asset")
+      else
+        missing+=(--asset "$asset")
+      fi
     done
-    if [ ${#missing[@]} -gt 0 ]; then
-      say "stage ${missing[*]} for $plat into $shared_blobs (once per versions.json entry of the asset)"
+    if [ ${#missing[@]} -gt 0 ] || [ ${#loose[@]} -gt 0 ]; then
+      say "stage ${missing[*]} ${loose[*]} for $plat into $shared_blobs (once per versions.json entry of the asset)"
       rm -rf "$shared_blobs/.stage"
-      "$root/scripts/stage-assets.sh" --cache "$cache/assets" --blobs "$shared_blobs/.stage" --platform "$plat" "${missing[@]}"
+      [ ${#missing[@]} -eq 0 ] || "$root/scripts/stage-assets.sh" --cache "$cache/assets" --blobs "$shared_blobs/.stage" --platform "$plat" "${missing[@]}"
+      # ponytail: the meshd bytes follow the compiler packages, so only Fedora matches the pin; elsewhere the downloads asset is staged unpinned (the gateway's /downloads would not match the pin), add a pinned Fedora build when a non-Fedora host needs the web app downloads
+      [ ${#loose[@]} -eq 0 ] || "$root/scripts/stage-assets.sh" --cache "$cache/assets" --blobs "$shared_blobs/.stage" --platform "$plat" "${loose[@]}" --print-pins >/dev/null
       mkdir -p "$shared_blobs/$key"
       for f in "$shared_blobs/.stage/$key"/*.tar.zst; do
         mv -f "$f" "$(blob_of "$plat" "$(basename "$f" .tar.zst)")"
