@@ -122,10 +122,17 @@ func writeClaim(ctx context.Context, id *v1alpha1.MarketIdentity, operatorPds, c
 	}
 	operator, _ := sess["did"].(string)
 	access, _ := sess["accessJwt"].(string)
+	rkey := service + "-" + strings.ReplaceAll(did, ":", "-")
+	q := url.Values{"repo": {operator}, "collection": {BadgeBlueKeysNSID}, "rkey": {rkey}}
+	if held, err := xrpcCall(ctx, http.MethodGet, pds+"/xrpc/com.atproto.repo.getRecord?"+q.Encode(), ca, "", nil); err == nil {
+		if v, _ := held["value"].(map[string]any); v != nil && v["nonce"] == nonce {
+			return "", nil
+		}
+	}
 	rec := map[string]any{"$type": BadgeBlueKeysNSID, "keyId": did, "challenge": operator, "service": service, "nonce": nonce,
 		"name": namePrefix + did[len(did)-8:], "createdAt": time.Now().UTC().Format(time.RFC3339)}
 	if _, err := xrpcCall(ctx, http.MethodPost, pds+"/xrpc/com.atproto.repo.putRecord", ca, access,
-		map[string]any{"repo": operator, "collection": BadgeBlueKeysNSID, "rkey": service + "-" + strings.ReplaceAll(did, ":", "-"), "record": rec}); err != nil {
+		map[string]any{"repo": operator, "collection": BadgeBlueKeysNSID, "rkey": rkey, "record": rec}); err != nil {
 		return "", err
 	}
 	return operator, nil
