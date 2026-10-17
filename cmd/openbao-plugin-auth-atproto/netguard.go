@@ -51,8 +51,15 @@ func (c *configEntry) trustedAddr(hostport string) (string, bool) {
 	if addr, ok := c.TrustedHosts[hostport]; ok {
 		return addr, true
 	}
-	if host, _, err := net.SplitHostPort(hostport); err == nil {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
 		if addr, ok := c.TrustedHosts[host]; ok {
+			return addr, true
+		}
+	}
+	for name, addr := range c.TrustedHosts {
+		if suffix, ok := strings.CutPrefix(name, "*"); ok && strings.HasPrefix(suffix, ".") && strings.HasSuffix(host, suffix) {
 			return addr, true
 		}
 	}
