@@ -178,8 +178,19 @@ func TestARentedVMSurvivesABidderKillAndRestart(t *testing.T) {
 			if err := n.signal("KILL", core); err != nil {
 				return err
 			}
-			_, _, err = n.waitBidderBack(0, pid, restartBackWait)
-			return err
+			for deadline := time.Now().Add(restartBackWait); ; {
+				if again, err := n.bidderCore(0); err == nil && again != core {
+					break
+				}
+				if time.Now().After(deadline) {
+					return fmt.Errorf("the bidder's core %d did not come back inside %s", core, restartBackWait)
+				}
+				time.Sleep(time.Second)
+			}
+			if now, _, err := n.bidderProcess(0); err != nil || now != pid {
+				return fmt.Errorf("the bidder process %d did not outlive its core (the network's deno runtime runs it): now %d, %v", pid, now, err)
+			}
+			return nil
 		}},
 	}
 	for _, c := range cases {
