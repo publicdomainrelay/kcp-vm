@@ -10,6 +10,7 @@ import {
   findVmContract,
   releaseCompute,
   requestCompute,
+  resubmitRelease,
 } from "@publicdomainrelay/compute-request-xrpc";
 import type { ComputeRequestHandlers, ContractState } from "@publicdomainrelay/compute-request-abc";
 import { isTerminated } from "@publicdomainrelay/compute-request-abc";
@@ -19,7 +20,17 @@ import { parseSecretsFile, type SecretEntry } from "@publicdomainrelay/secrets-c
 import type { UserDataPatch } from "@publicdomainrelay/cloud-init-common";
 import type { IdentityVault, VaultRef } from "@publicdomainrelay/market-identity-abc";
 import type { MarketLoopRecorder } from "@publicdomainrelay/market-abc";
-import { type AccountPdsProvider, type ContractDisposition, type ContractProfile, type ProfilePreparation, withContractConditions } from "@publicdomainrelay/requester-controller-abc";
+import {
+  type AccountPdsProvider,
+  CONTRACT_TTL_ANNOTATION,
+  type ContractDisposition,
+  type ContractProfile,
+  type ProfilePreparation,
+  releaseAcknowledged,
+  releaseRetryDeadline,
+  releaseRetryDelayMs,
+  withContractConditions,
+} from "@publicdomainrelay/requester-controller-abc";
 import { ExecutionState, type KcpClient, kcpResourceClient, type KcpCondition } from "@publicdomainrelay/kcp-client-abc";
 import { isNotFound } from "@publicdomainrelay/kcp-client-common";
 import { createCoalescedStatusWriter } from "@publicdomainrelay/kcp-client-rest";
@@ -268,16 +279,61 @@ export function startContractRunner(
       return;
     }
     stepTo("releasing");
-    await writeStatus("Releasing", "submitting vm.delete to the winner");
-    state = await releaseCompute(pds, state, { logger, capabilities });
+    await writeStatus("Releasing", state.release?.event ? "resending the vm.delete event to the winner" : "submitting vm.delete to the winner");
+    state = await releaseCompute(pds, state, { logger, capabilities, plcUrl: env.plcUrl });
     await handle?.dispose().catch(() => undefined);
-    const ok = state.release?.ok === true;
-    if (!ok) failedStep(state.error ?? `vm.delete status ${state.release?.status}`);
-    stepTo(ok ? "released" : "releaseFailed");
-    await writeStatus(
-      ok ? "Released" : "Failed",
-      ok ? `vm.delete accepted (${state.release?.status})` : `vm.delete failed: ${state.error ?? state.release?.status}`,
-    );
+    await retryRelease(pds);
+  }
+
+  async function retryRelease(pds: Awaited<ReturnType<AccountPdsProvider["pdsFor"]>>): Promise<void> {
+    if (!state) return;
+    const deadline = releaseRetryDeadline(latest?.metadata?.creationTimestamp ?? initial.metadata?.creationTimestamp, initial.metadata?.annotations?.[CONTRACT_TTL_ANNOTATION], Date.now());
+    const stopWatch = new AbortController();
+    const terminated = awaitComputeTermination(pds, state, {
+      signal: stopWatch.signal,
+      eventStreams: env.eventStreams as never,
+      plcUrl: env.plcUrl,
+      logger,
+    }).then((s) => (s && isTerminated(s) ? s : new Promise<never>(() => {}))).catch(() => new Promise<never>(() => {}));
+    try {
+      for (let attempt = 1;; attempt++) {
+        if (releaseAcknowledged(state.release?.status)) {
+          stepTo("released");
+          await writeStatus("Released", `vm.delete accepted (${state.release?.status}) after ${attempt} attempt(s)`);
+          return;
+        }
+        const reason = state.error ?? `vm.delete answered ${state.release?.status ?? "nothing"}`;
+        if (!state.release?.event) {
+          failedStep(reason);
+          stepTo("releaseFailed");
+          await writeStatus("Failed", `vm.delete failed before its event was written: ${reason}`);
+          return;
+        }
+        const waitMs = Math.min(releaseRetryDelayMs(attempt), Math.max(0, deadline - Date.now()));
+        logger.warn("requester_release_retry", { attempt, reason, nextInMs: waitMs, deadline: new Date(deadline).toISOString(), eventUri: state.release.event.uri });
+        await writeStatus("Releasing", `attempt ${attempt}: ${reason}; the same vm.delete event is sent again in ${Math.round(waitMs / 1000)}s, until ${new Date(deadline).toISOString()} or a terminated ack`);
+        const ack = await Promise.race([
+          terminated,
+          untilAny([stopping.signal], waitMs, new Promise<void>(() => {})).then(() => null),
+        ]);
+        if (ack) {
+          state = ack;
+          stepTo("released");
+          await writeStatus("Released", `the bidder reported the guest terminated (${ack.termination?.reason}) after ${attempt} vm.delete attempt(s)`);
+          return;
+        }
+        if (stopping.signal.aborted) return;
+        if (Date.now() >= deadline) {
+          failedStep(reason);
+          stepTo("releaseFailed");
+          await writeStatus("Failed", `vm.delete was not acknowledged by ${new Date(deadline).toISOString()} (the contract TTL) after ${attempt} attempt(s): ${reason}`);
+          return;
+        }
+        state = await resubmitRelease(pds, state, { logger, plcUrl: env.plcUrl });
+      }
+    } finally {
+      stopWatch.abort();
+    }
   }
 
   async function adoptFlow(): Promise<void> {
@@ -315,7 +371,7 @@ export function startContractRunner(
     const pds = await env.pds.pdsFor(spec.ownerDid);
     const profile = env.profiles.find((p) => p.appliesTo(spec));
     const heldAlready = state?.receipt !== undefined &&
-      (phaseNow === "Failed" || (phaseNow === "Held" && state.vmAddress !== undefined && (!spec.secretsRef || secretsFetchedAt !== undefined)));
+      (phaseNow === "Failed" || (phaseNow === "Releasing" && state.release?.event !== undefined) || (phaseNow === "Held" && state.vmAddress !== undefined && (!spec.secretsRef || secretsFetchedAt !== undefined)));
     if (heldAlready && state) {
       logger.info("requester_contract_held_resume", { phase: phaseNow, receiptUri: state.receipt?.uri });
       await holdUntilEnded(pds, [], null);

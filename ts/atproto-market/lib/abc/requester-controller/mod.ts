@@ -146,3 +146,31 @@ export interface ContractFacts {
   releaseRequested: boolean;
   deleted: boolean;
 }
+
+export const DEFAULT_RELEASE_RETRY_BOUND_MS = 24 * 60 * 60 * 1000;
+
+export const RELEASE_RETRY_FIRST_MS = 5_000;
+
+export const RELEASE_RETRY_MAX_MS = 5 * 60 * 1000;
+
+const DURATION_UNIT_MS: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+
+export function durationMs(text: string | undefined): number | undefined {
+  const m = /^(\d+)([smhd])$/.exec((text ?? "").trim());
+  return m ? Number(m[1]) * DURATION_UNIT_MS[m[2]] : undefined;
+}
+
+export function releaseRetryDeadline(createdAt: string | undefined, ttl: string | undefined, now: number): number {
+  const created = createdAt ? Date.parse(createdAt) : NaN;
+  const bound = durationMs(ttl) ?? DEFAULT_RELEASE_RETRY_BOUND_MS;
+  return (Number.isFinite(created) ? created : now) + bound;
+}
+
+export function releaseRetryDelayMs(attempt: number): number {
+  const n = Math.max(1, attempt);
+  return Math.min(RELEASE_RETRY_FIRST_MS * 2 ** Math.min(n - 1, 16), RELEASE_RETRY_MAX_MS);
+}
+
+export function releaseAcknowledged(status: number | undefined): boolean {
+  return status !== undefined && status >= 200 && status < 300;
+}

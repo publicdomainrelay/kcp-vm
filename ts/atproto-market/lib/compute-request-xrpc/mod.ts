@@ -2268,6 +2268,58 @@ export interface ReleaseComputeOptions {
   logger?: StructuredLoggerInterface;
   capabilities?: GuestCapability[];
   reason?: string;
+  plcUrl?: string;
+}
+
+async function submitRelease(
+  pds: ContractReleaser,
+  state: ContractState,
+  target: NonNullable<ReturnType<typeof releaseTargetOf>>,
+  release: { event: { uri: string; cid: string }; payload: { uri: string; cid: string } },
+  record: Record<string, unknown>,
+  log: FlowLog,
+): Promise<ContractState> {
+  const bidder = await pds.resolveBidderEndpoint(target.submitEventRef);
+  if (!bidder) {
+    log("vm_delete_target_unresolvable", { submitEventRef: target.submitEventRef });
+    return patchContract(state, { release: { ...release, ok: false }, error: `vm.delete target unresolvable: ${target.submitEventRef}` });
+  }
+  log("submitting_vm_delete", { submitEventRef: target.submitEventRef, eventUri: release.event.uri });
+  const r = await pds.callBidder(bidder.targetUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, bidder.audDid, {
+    uri: release.event.uri,
+    cid: release.event.cid,
+    record,
+  });
+  log("vm_delete_result", { status: r.status, ok: r.ok });
+  const done = { release: { ...release, ok: r.ok, status: r.status } };
+  return r.ok
+    ? advanceContract(state, "released", done, nowIso())
+    : patchContract(state, { ...done, error: `vm.delete answered ${r.status}` });
+}
+
+export async function resubmitRelease(
+  pds: ContractReleaser,
+  state: ContractState,
+  opts: ReleaseComputeOptions = {},
+): Promise<ContractState> {
+  const log = flowLog(opts.logger);
+  const release = state.release;
+  const target = releaseTargetOf(state);
+  if (!release || !target) return state;
+  try {
+    const [repo, collection, rkey] = release.event.uri.replace(/^at:\/\//, "").split("/");
+    const pdsUrl = await pdsUrlOf(sharedIdResolver(opts.plcUrl), repo);
+    if (!pdsUrl) throw new Error(`no PDS resolves for ${repo}`);
+    const rec = await getRecordFrom(pdsUrl, repo, collection, rkey);
+    if (!rec || rec.cid !== release.event.cid) {
+      throw new Error(`the vm.delete event ${release.event.uri} is not readable at cid ${release.event.cid}`);
+    }
+    log("resubmitting_vm_delete", { eventUri: release.event.uri, lastStatus: release.status ?? null });
+    return await submitRelease(pds, state, target, { event: release.event, payload: release.payload }, rec.value, log);
+  } catch (err) {
+    log("vm_delete_error", { error: String(err) });
+    return patchContract(state, { error: `vm.delete resend failed: ${String(err)}` });
+  }
 }
 
 async function deleteRbacRecords(
@@ -2294,6 +2346,7 @@ export async function releaseCompute(
   opts: ReleaseComputeOptions = {},
 ): Promise<ContractState> {
   const log = flowLog(opts.logger);
+  if (state.release?.event && !isTerminated(state)) return await resubmitRelease(pds, state, opts);
   await deleteRbacRecords(pds, state, opts.capabilities ?? [], log);
   if (isTerminated(state)) {
     log("vm_delete_skipped", {
@@ -2349,38 +2402,12 @@ export async function releaseCompute(
       pds.attestationKp,
       pds.did,
     );
-    const bidder = await pds.resolveBidderEndpoint(target.submitEventRef);
-    if (!bidder) {
-      log("vm_delete_target_unresolvable", { submitEventRef: target.submitEventRef });
-      next = patchContract(state, {
-        error: `vm.delete target unresolvable: ${target.submitEventRef}`,
-      });
-    } else {
-      log("submitting_vm_delete", { submitEventRef: target.submitEventRef, eventUri: event.uri });
-      const r = await pds.callBidder(
-        bidder.targetUrl,
-        SUBMIT_EVENT_NSID,
-        SUBMIT_EVENT_LXM,
-        bidder.audDid,
-        {
-          uri: event.uri,
-          cid: event.cid,
-          record: eventRecord,
-        },
-      );
-      log("vm_delete_result", { status: r.status, ok: r.ok });
-      next = advanceContract(state, "released", {
-        release: {
-          event: { uri: event.uri, cid: event.cid },
-          payload: { uri: deletion.uri, cid: deletion.cid },
-          ok: r.ok,
-          status: r.status,
-        },
-      }, nowIso());
-    }
+    const release = { event: { uri: event.uri, cid: event.cid }, payload: { uri: deletion.uri, cid: deletion.cid } };
+    next = patchContract(state, { release: { ...release, ok: false } });
+    next = await submitRelease(pds, next, target, release, eventRecord, log);
   } catch (err) {
     log("vm_delete_error", { error: String(err) });
-    next = patchContract(state, { error: `vm.delete failed: ${String(err)}` });
+    next = patchContract(next, { error: `vm.delete failed: ${String(err)}` });
   }
   for (const cap of opts.capabilities ?? []) {
     try {
