@@ -102,13 +102,20 @@ items:
     title: "A core restart adopts the running DenoPods instead of restarting them"
     depends_on: [M3B-FRONTS-SURVIVE-A-CORE-RESTART]
     decision: >
-      Today the deno runtime runs in the core and ReapRuns stops the DenoPods a previous core left
-      running (under systemd-user they also die with the core's cgroup), so a core restart restarts every
-      DenoPod of the kcp. The execrunner adopts a live run from runs/<id>/state.json (pid and start ticks)
-      when the provider observes the pod's runId, polls it for its exit, and reaps only runs that no
-      DenoPod claims after a grace; the DenoPods leave the core's cgroup (their own units, or the core
-      unit's KillMode=process) so they outlive it.
-    files: ["internal/kcplibs/impl/execrunner", "internal/denokcp/provider", "internal/stack/denoruntime", "internal/bootstrap"]
+      A run (DenoPod, DenoRun or PolicyEngine process) belongs to no unit of the core. The execrunner
+      drops SWC_UNIT, SWC_DEVSUP and INVOCATION_ID from a run's env, and devsup counts a child outside a
+      unit's process group as a member only while it carries that unit's attribution, so devsup's stop of
+      the core (proc backend: dev, the market network) spares the runs; dev down still kills them by
+      SWC_INSTANCE. Under systemd-user (prod gateway and bidder, KillMode=control-group) the deno runtime
+      starts or adopts the delegated unit <prefix>denopods-<key>.service (a `sleep infinity` holder in
+      socialweb.slice) and clones every run into its pod-<run> cgroup (memory.max there when the pod sets
+      a limit), so the core unit's cgroup kill spares them and uninstall stops them with the other units.
+      The deno runtime no longer reaps at start: the provider observes each named run from
+      runs/<id>/state.json (pid and start ticks against pid reuse), the 2 s requeue of a running pod is
+      the exit poll, and the runs sweep stops live runs that no object names once they are a runs-keep
+      period (1 min) old. An adopted run that exits has no exit code (the old core held the wait), so it
+      fails and restarts under its restart policy.
+    files: ["internal/kcplibs/impl/execrunner", "internal/denokcp/provider", "internal/stack/denoruntime", "internal/devsup", "internal/devcore", "internal/bootstrap/table"]
     done_when: "a core restart and a --binary swap leave every DenoPod pid unchanged and no request fails during it."
     status: todo
   - id: M4-PROOF
