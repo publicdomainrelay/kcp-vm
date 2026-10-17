@@ -17,7 +17,6 @@ export interface OAuthLocalPdsOpts {
 
 export interface OAuthLocalPds {
   did: string;
-  handle: string;
   issuer: string;
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   relay: IngressRef;
@@ -47,12 +46,10 @@ export async function tombstonePlcDid(opts: { plcDirectoryUrl: string; did: stri
 export async function createOAuthLocalPds(opts: OAuthLocalPdsOpts): Promise<OAuthLocalPds> {
   const { logger, keypair, serve } = opts;
   const sub = keypair.did().replace(/:/g, "-").toLowerCase();
-  const handle = `${sub}.${opts.ingressProxyHost.replace(/:\d+$/, "")}`;
-  const issuer = `https://${handle}`;
+  const issuer = `https://${sub}.${opts.ingressProxyHost.replace(/:\d+$/, "")}`;
   const { did, op } = await createGenesisOp({
     rotationKeys: [keypair.did()],
     verificationMethods: { atproto: keypair.did() },
-    alsoKnownAs: [`at://${handle}`],
     services: { atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: issuer } },
     sign: (b) => keypair.sign(b),
   });
@@ -81,7 +78,6 @@ export async function createOAuthLocalPds(opts: OAuthLocalPdsOpts): Promise<OAut
 
   return {
     did,
-    handle,
     issuer,
     signer,
     relay,
@@ -92,7 +88,7 @@ export async function createOAuthLocalPds(opts: OAuthLocalPdsOpts): Promise<OAut
       if (`${u.origin}` !== issuer || !requestUri || !clientId) {
         throw new Error(`the authorization URL ${u.origin}${u.pathname} is not a PAR request of ${issuer}`);
       }
-      const session = await repo.sessionInjector!.injectSession({ userDid: did, handle });
+      const session = await repo.sessionInjector!.injectSession({ userDid: did, handle: did });
       const res = await repo.app.fetch(new Request(`${issuer}/oauth/authorize`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded", authorization: `DPoP ${session.sessionData.accessJwt}` },
