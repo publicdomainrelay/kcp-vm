@@ -374,7 +374,7 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 func GatewayPds(v manifests.Gateway, stateDir string, n *v1alpha1.MarketNetworkValue) (manifests.RepoPds, error) {
 	p := manifests.RepoPds{StateDir: stateDir, Identity: RequesterIdentity, KcpServer: v.KcpServer, KcpWorkspace: v.IdentityWorkspace,
 		VaultServer: v.Requester.Vault.Server, VaultClient: PdsVaultClient, VaultKcpServer: v.KcpServer + "/clusters/" + v.GatewayWorkspace,
-		VaultMount: RequesterVaultMount}
+		VaultMount: RequesterVaultMount, VaultMountClient: RequesterVaultClient}
 	extra := []string{"--associate-service-id", RequesterAssociate}
 	var ca string
 	if n != nil {
