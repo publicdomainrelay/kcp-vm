@@ -286,6 +286,39 @@ func waitK3s(ctx context.Context, host string, port int) error {
 	}, func() error { return &errNotReady{what: "k3s server at " + url, last: last} })
 }
 
+const readyzStreak = 5
+
+func waitK3sReadyz(ctx context.Context, kubeconfig string) error {
+	last := "no answer"
+	streak := 0
+	return poll(ctx, func(ctx context.Context) (bool, error) {
+		cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+		if err != nil {
+			last = err.Error()
+			return false, nil
+		}
+		cfg.Timeout = 3 * time.Second
+		core, err := kubernetes.NewForConfig(cfg)
+		if err != nil {
+			last = err.Error()
+			return false, nil
+		}
+		if _, err := core.Discovery().RESTClient().Get().AbsPath("/readyz").DoRaw(ctx); err != nil {
+			streak = 0
+			last = err.Error()
+			return false, nil
+		}
+		streak++
+		last = fmt.Sprintf("/readyz answered 200 %d of %d times in a row", streak, readyzStreak)
+		return streak >= readyzStreak, nil
+	}, func() error {
+		return &errNotReady{
+			what: "the k3s server whose admin kubeconfig is " + kubeconfig + " answering /readyz 200 " + strconv.Itoa(readyzStreak) + " times in a row",
+			last: last,
+		}
+	})
+}
+
 func waitK3sControllers(ctx context.Context, kubeconfig string) error {
 	last := "no answer"
 	return poll(ctx, func(ctx context.Context) (bool, error) {

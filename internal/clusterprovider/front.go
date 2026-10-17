@@ -60,6 +60,9 @@ func WaitSlot(ctx context.Context, spec clusterstack.Spec) error {
 	if err := waitK3s(ctx, spec.BindAddress, spec.K3sSecurePort); err != nil {
 		return err
 	}
+	if err := waitK3sReadyz(ctx, spec.ServerAdminKubeconfig()); err != nil {
+		return err
+	}
 	return waitK3sControllers(ctx, spec.ServerAdminKubeconfig())
 }
 
