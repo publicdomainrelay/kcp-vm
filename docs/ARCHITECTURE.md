@@ -8534,6 +8534,22 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   from another packager is not enough; only the same distribution packages reproduce the bytes. The other
   release assets and the Go closure were not built on the droplet, so no second release runner is proposed
   or registered; a Fedora 44 host would be the candidate and needs the full `--verify-reproducible` run first.
+- **The shared Linux dev VM dev-linux-1 (2026-10-17).** `scripts/dev-droplet.sh create/setup/sync/build/swc` from
+  a Mac made one Ubuntu 24.04 droplet that builds and runs live (Go and Deno at the pinned versions, rustup, clang,
+  podman, passt; user `dev` builds, test-0001 runs). Readings on `c-16` (nyc1, $0.50/h, the largest size that
+  region had) and `c-48` (sfo2, $1.50/h, 48 vCPU, 96 GB; `c-60-intel` and every `*-48-intel`/`c2-` size
+  were "not available" in every region tried), same binary and the pinned guest image from
+  `main/latest/guest-image`: cold `go build ./cmd/socialweb-computer` 43.5 s on c-16 and 28.9 s on c-48;
+  `deno task check` 8.6 s and 8.2 s; first `--dev --publish` build with empty build root 205 s (c-16) and 354 s
+  (c-48, rustup, podman builder image and downloads also cold), a new worktree 28 s (c-48), a rebuild 7.4 s and
+  7.0 s; `dev up` (1 bidder) 91 s and 85 s; `run request` 130 s (c-16, includes the one-time guest image fetch)
+  and 82 s; `dev down` 20 s. Six networks brought up 4 s apart, six `run request` flows at once and three cold
+  `go build` runs beside them on c-48: `dev up` 78 to 92 s, `run request` 88 to 107 s, `go build` 51 s, `dev down`
+  19 to 22 s, load average 46 at the peak and 94 GB RAM untouched. Decision: the one droplet is c-48. The size is
+  3x the price of c-16 for 1.5x the compile speed alone, and about 6x the concurrent live flows; the per-proof time
+  does not shrink (it is wall-clock bound). The meshd bytes of the `socialweb-computer-k8s-downloads` asset follow
+  the compiler packages, so on Ubuntu the pin check fails; the dev build stages that asset unpinned off Fedora.
+  Launching six `dev-droplet.sh swc` ssh sessions in the same second hung every client; start them 4 s apart.
 - **A firecracker guest burned one host core while idle (2026-10-15).** Cause: the guest kernel config had
   `# CONFIG_X86_MPPARSE is not set` and the boot args carry `acpi=off`. With ACPI off and no MP table parser
   the kernel found no APIC: the guest console read `ACPI: MPS support code is not built-in`, `No local APIC

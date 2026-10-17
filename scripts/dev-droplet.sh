@@ -5,13 +5,13 @@ usage() {
   cat >&2 <<'EOF'
 usage: scripts/dev-droplet.sh create [name] | setup [name] | push <publish-dir> [name] | swc [name] -- <socialweb-computer args>
        scripts/dev-droplet.sh it <test-regex> <publish-dir> [name] | ssh [name] [cmd...] | list | down
-       scripts/dev-droplet.sh sync [name] [ref] | build [name] [work]
+       scripts/dev-droplet.sh sync [name] [ref] [work] | build [name] [work]
 EOF
   exit 2
 }
 
-sizes="${DEV_DROPLET_SIZES:-c-16-intel c2-16vcpu-32gb-intel c-16 c2-16vcpu-32gb g-16vcpu-64gb-intel}"
-regions="${DEV_DROPLET_REGIONS:-nyc3 nyc1 tor1 ams3 lon1 fra1 sfo3}"
+sizes="${DEV_DROPLET_SIZES:-c-60-intel c2-60vcpu-120gb-intel c-48-intel c2-48vcpu-96gb-intel c-48 c2-48vcpu-96gb c-32-intel c-32 c-16-intel c-16}"
+regions="${DEV_DROPLET_REGIONS:-sfo3 nyc3 atl1 tor1 nyc2 sfo2 nyc1 lon1 fra1 ams3}"
 image="${DEV_DROPLET_IMAGE:-ubuntu-24-04-x64}"
 key_file="${DEV_DROPLET_KEY:-$HOME/.ssh/id_ed25519}"
 [ -f "$key_file" ] || key_file="$HOME/.ssh/id_ed25519_no_password"
@@ -32,7 +32,7 @@ shift
 case "$cmd" in
   create)
     name="${1:-dev-work-0001}"
-    [ "$(doctl compute droplet list --tag-name dev-work --no-header --format ID | grep -c .)" -lt 2 ] || { say "two dev-work droplets exist already"; exit 1; }
+    [ "$(doctl compute droplet list --tag-name dev-work --no-header --format ID | grep -c .)" -lt 8 ] || { say "eight dev-work droplets exist already"; exit 1; }
     key_id="$(doctl compute ssh-key list --no-header --format ID,FingerPrint | awk -v fp="$(ssh-keygen -E md5 -lf "$key_file.pub" | sed 's/^[0-9]* MD5://; s/ .*//')" '$2 == fp { print $1 }')"
     [ -n "$key_id" ] || { say "key $key_file.pub is not registered with doctl"; exit 1; }
     for size in $sizes; do
@@ -110,7 +110,7 @@ EOF
     shift
     publish="${SOCIALWEB_PUBLISH_DIR:?set SOCIALWEB_PUBLISH_DIR to the pushed publish dir}"
     uid="$(rssh "$name" id -u test-0001)"
-    rssh "$name" runuser -u test-0001 -- env HOME=/home/test-0001 XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 "$publish/bin/socialweb-computer" "$@"
+    rssh "$name" cd /var/tmp '&&' runuser -u test-0001 -- env HOME=/home/test-0001 XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 "$publish/bin/socialweb-computer" $(printf '%q ' "$@")
     ;;
   it)
     pattern="${1:?test regex}"
@@ -121,19 +121,20 @@ EOF
     (cd "$repo" && GOOS=linux GOARCH=amd64 go test -c -tags integration -o "$bin" ./test/integration/)
     scp -q -i "$key_file" -o StrictHostKeyChecking=accept-new "$bin" "root@$(ip_of "$name"):/var/tmp/it.test"
     uid="$(rssh "$name" id -u test-0001)"
-    rssh "$name" runuser -u test-0001 -- env HOME=/home/test-0001 XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+    rssh "$name" cd /var/tmp '&&' runuser -u test-0001 -- env HOME=/home/test-0001 XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
       SOCIALWEB_IT_SKIP_BUILD=1 SOCIALWEB_IT_PUBLISH="$publish" SOCIALWEB_IT_LIVE_SLOT=none SOCIALWEB_IT_RUN_ROOT=/var/tmp/swcit SOCIALWEB_IT_ARTIFACTS=/var/tmp/it-art/run \
       /var/tmp/it.test -test.v -test.timeout "${SOCIALWEB_IT_TIMEOUT:-40m}" -test.run "$pattern"
     ;;
   sync)
     name="${1:-dev-work-0001}"
     ref="${2:-origin/main}"
-    dssh "$name" "bash -lc $(printf %q "cd ~; cd socialweb-computer-kcp 2>/dev/null || { git clone -q https://github.com/publicdomainrelay/socialweb-computer-kcp && cd socialweb-computer-kcp; }; git fetch -q origin && git checkout -qf --detach $ref && git log --oneline -1")"
+    work="${3:-swc-dev}"
+    dssh "$name" "bash -lc $(printf %q "cd ~; [ -d socialweb-computer-kcp ] || git clone -q https://github.com/publicdomainrelay/socialweb-computer-kcp; cd socialweb-computer-kcp && git fetch -q origin && { [ -d ~/w/$work ] && git -C ~/w/$work checkout -qf --detach $ref || git worktree add -qf --detach ~/w/$work $ref; } && git -C ~/w/$work log --oneline -1")"
     ;;
   build)
     name="${1:-dev-work-0001}"
     work="${2:-swc-dev}"
-    dssh "$name" "bash -lc $(printf %q "cd ~/socialweb-computer-kcp && scripts/build-socialweb-computer.sh --dev --publish /var/tmp/$work")"
+    dssh "$name" "bash -lc $(printf %q "cd ~/w/$work && scripts/build-socialweb-computer.sh --dev --publish /var/tmp/$work")"
     ;;
   ssh)
     name="${1:-dev-work-0001}"
