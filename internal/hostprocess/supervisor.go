@@ -351,6 +351,8 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 		}
 		switch op.Kind {
 		case OpStart:
+			wasPlaced := s.isPlaced(op.Unit)
+			s.setPlaced(op.Unit, true)
 			st, err := m.Start(ctx, op.Spec)
 			if err == nil && st.Adopted && st.State != hostsvc.Active && st.State != hostsvc.Activating {
 				log.Info("a loaded unit of this name is not running; resetting it before the start", "state", string(st.State), "result", st.Result)
@@ -362,6 +364,9 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 			if err != nil {
 				r.Phase, r.Message = v1alpha1.HostProcessPhaseFailed, err.Error()
 				log.Warn("start", "err", err.Error())
+				if !wasPlaced {
+					s.setPlaced(op.Unit, false)
+				}
 				continue
 			}
 			s.setPlaced(op.Unit, true)
