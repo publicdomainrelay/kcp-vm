@@ -1936,6 +1936,14 @@
           "jsr:@publicdomainrelay/market-network-common@0"
         ]
       },
+      "ts/atproto-market/hono-repo-pds": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/cli-args-env@0",
+          "jsr:@publicdomainrelay/hono-factory-repo-pds@0",
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/market-network-common@0"
+        ]
+      },
       "ts/atproto-market/lib/abc/compute-request": {
         "dependencies": [
           "jsr:@publicdomainrelay/market-common@0"
@@ -2007,6 +2015,14 @@
         "dependencies": [
           "npm:@atproto/jwk@~0.7.2",
           "npm:@atproto/oauth-client@~0.7.5"
+        ]
+      },
+      "ts/atproto-market/lib/atproto-record-kcp": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/atproto-repo-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
         ]
       },
       "ts/atproto-market/lib/atproto-session-custody-openbao": {
@@ -2168,6 +2184,24 @@
           "jsr:@publicdomainrelay/market-network-fetch@0",
           "jsr:@publicdomainrelay/openbao-server-kcp@0",
           "jsr:@publicdomainrelay/serve@0"
+        ]
+      },
+      "ts/atproto-market/lib/hono-factory-repo-pds": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/atproto-helpers@0",
+          "jsr:@publicdomainrelay/atproto-record-kcp@0",
+          "jsr:@publicdomainrelay/identity-prompt-kcp@0",
+          "jsr:@publicdomainrelay/kcp-client-rest@0",
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/market-identity-abc@0",
+          "jsr:@publicdomainrelay/market-identity-vault-openbao@0",
+          "jsr:@publicdomainrelay/market-lexicons@0",
+          "jsr:@publicdomainrelay/market-network-common@0",
+          "jsr:@publicdomainrelay/market-network-fetch@0",
+          "jsr:@publicdomainrelay/openbao-server-kcp@0",
+          "jsr:@publicdomainrelay/serve@0",
+          "npm:@atproto/crypto@0.5",
+          "npm:@atproto/identity@0.5"
         ]
       },
       "ts/atproto-market/lib/hono-factory-secrets-oidc": {

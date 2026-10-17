@@ -7,6 +7,9 @@ entries:
   - name: hono-bidder
     path: ts/atproto-market/hono-bidder/mod.ts
     unstable: [kv, worker-options]
+  - name: hono-repo-pds
+    path: ts/atproto-market/hono-repo-pds/mod.ts
+    unstable: [kv]
   - name: hono-bidder-guest
     path: ts/atproto-market/hono-bidder-guest/mod.ts
   - name: request-vm-ssh

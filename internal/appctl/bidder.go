@@ -189,10 +189,15 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir, guestStateDir string
 	return v, nil
 }
 
-func BidderPds(v manifests.MarketBidder, stateDir string, n *v1alpha1.MarketNetworkValue) manifests.RepoPds {
-	return manifests.RepoPds{StateDir: stateDir, Identity: BidderIdentity, KcpServer: v.Kcp.Server, KcpWorkspace: v.Kcp.Workspace,
+func BidderPds(v manifests.MarketBidder, stateDir string, n *v1alpha1.MarketNetworkValue) (manifests.RepoPds, error) {
+	p := manifests.RepoPds{StateDir: stateDir, Identity: BidderIdentity, KcpServer: v.Kcp.Server, KcpWorkspace: v.Kcp.Workspace,
 		VaultServer: v.Vault.Server, VaultClient: PdsVaultClient, VaultKcpServer: v.Vault.KcpServer, VaultMount: BidderVaultClient,
 		PlcDirectoryUrl: n.PlcDirectoryUrl, IngressProxyHost: n.IngressProxyHost, Trust: v.Trust, Read: v.Read}
+	var err error
+	if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
+		p.ExtraArgs, err = fragment([]string{"--network-hosts", hosts})
+	}
+	return p, err
 }
 
 func ready(status v1alpha1.ApplicationStatus, msg string) v1alpha1.ApplicationStatus {
@@ -281,7 +286,9 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		if err := BidderReads(&values); err != nil {
 			return err
 		}
-		values.Pds = BidderPds(values, ComponentStateDir(ctl.c.Layout.StateDir, PdsComponent), o.Spec.Network)
+		if values.Pds, err = BidderPds(values, ComponentStateDir(ctl.c.Layout.StateDir, PdsComponent), o.Spec.Network); err != nil {
+			return err
+		}
 		st.Message = "applying the " + o.Spec.Profile + " components"
 		ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
 		pods, err := ctl.applyProfile(ctx, BidderSet, o.Spec.Profile, owner, true, &values)
