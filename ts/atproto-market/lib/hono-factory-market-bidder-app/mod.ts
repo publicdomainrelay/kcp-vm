@@ -22,7 +22,7 @@ import {
   registerKeypairPlcDid,
 } from "@publicdomainrelay/atproto-helpers";
 import type { RepoPdsAgent } from "@publicdomainrelay/atproto-helpers";
-import { explicitRelayUrls, splitHostPort } from "@publicdomainrelay/market-network-common";
+import { explicitRelayUrls, isCrawlRoot, splitHostPort } from "@publicdomainrelay/market-network-common";
 import type { MarketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import { vaultRefs } from "@publicdomainrelay/market-identity-abc";
@@ -188,14 +188,6 @@ function guestTlsPortOf(network: MarketNetwork): number | undefined {
   return port ? parseInt(port) : undefined;
 }
 
-function isCrawlRoot(u: string): boolean {
-  try {
-    const url = new URL(u);
-    return (url.protocol === "http:" || url.protocol === "https:") && (url.pathname === "/" || url.pathname === "");
-  } catch {
-    return false;
-  }
-}
 
 const REQUIRED_PROVIDER_FIELDS = {
   kcp: ["server", "workspace", "handle", "guestLoginMount"],

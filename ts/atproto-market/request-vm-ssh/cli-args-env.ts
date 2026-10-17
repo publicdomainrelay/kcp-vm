@@ -68,6 +68,10 @@ export default {
       type: "string" as const,
       description: "Comma-separated firehose URLs of the market network",
     },
+    "guest-tls-port": {
+      type: "number" as const,
+      description: "Port of the dispatcher's TLS front; with --repo-pds-url the requester asks each relay to crawl its repo PDS at did-key-<repo key>.<ingress proxy host>:<this port> (unset: the ingress proxy host's own port)",
+    },
     "network-hosts": {
       type: "string" as const,
       description: "Comma-separated name=address pairs of the market network's service names (its PDSes, PLC, relay) and the loopback address each answers on, copied from the network value; another application's names never resolve through this application's own kcp",

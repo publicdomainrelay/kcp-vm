@@ -2410,6 +2410,7 @@
           "jsr:@publicdomainrelay/atproto-helpers@0",
           "jsr:@publicdomainrelay/cli-args-env@0",
           "jsr:@publicdomainrelay/cloud-init-common@0",
+          "jsr:@publicdomainrelay/did-key-ingress-proxy@0",
           "jsr:@publicdomainrelay/identity-prompt-kcp@0",
           "jsr:@publicdomainrelay/kcp-client-rest@0",
           "jsr:@publicdomainrelay/logger@0",

@@ -80,6 +80,27 @@ function makeLogger(logger: StructuredLoggerInterface): Logger {
   };
 }
 
+export async function requestRelayCrawl(logger: StructuredLoggerInterface, relayUrl: string, hostname: string): Promise<void> {
+  const base = relayUrl.replace(/\/+$/, "");
+  logger.info("relay_registering_pds", { hostname, relay: relayUrl });
+  try {
+    const res = await fetch(`${base}/xrpc/com.atproto.sync.requestCrawl`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hostname }),
+    });
+    if (res.ok) {
+      await res.body?.cancel();
+      logger.info("relay_registered_pds", { hostname, relay: relayUrl });
+    } else {
+      const text = await res.text().catch(() => "");
+      logger.warn("relay_register_pds_failed", { hostname, relay: relayUrl, status: res.status, body: text.slice(0, 200) });
+    }
+  } catch (err) {
+    logger.warn("relay_register_pds_error", { hostname, relay: relayUrl, error: String(err) });
+  }
+}
+
 export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
   const { logger, badgeBlueSigner, plcDirectory, agent, writeBudget } = opts;
   const l = makeLogger(logger);
@@ -232,24 +253,8 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     return { status: res.status, ok: res.ok, body: resBody };
   }
 
-  async function requestCrawl(relayUrl: string, hostname: string): Promise<void> {
-    const base = relayUrl.replace(/\/+$/, "");
-    l("info", "relay_registering_pds", { hostname, relay: relayUrl });
-    try {
-      const res = await fetch(`${base}/xrpc/com.atproto.sync.requestCrawl`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ hostname }),
-      });
-      if (res.ok) {
-        l("info", "relay_registered_pds", { hostname, relay: relayUrl });
-      } else {
-        const text = await res.text().catch(() => "");
-        l("warn", "relay_register_pds_failed", { hostname, relay: relayUrl, status: res.status, body: text.slice(0, 200) });
-      }
-    } catch (err) {
-      l("warn", "relay_register_pds_error", { hostname, relay: relayUrl, error: String(err) });
-    }
+  function requestCrawl(relayUrl: string, hostname: string): Promise<void> {
+    return requestRelayCrawl(logger, relayUrl, hostname);
   }
 
   async function listReposByCollection(relayUrl: string, collection: string): Promise<string[]> {

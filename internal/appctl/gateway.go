@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -465,6 +466,13 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir, requesterStateDir st
 		}
 		if n.QrOrigin != "" {
 			requesterExtra = append(requesterExtra, "--qr-origin", n.QrOrigin)
+		}
+		if n.GuestTlsUrl != "" {
+			p, err := portOf(n.GuestTlsUrl)
+			if err != nil {
+				return manifests.Gateway{}, fmt.Errorf("appctl: network guestTlsUrl: %w", err)
+			}
+			requesterExtra = append(requesterExtra, "--guest-tls-port", strconv.Itoa(p))
 		}
 	}
 	if len(o.Spec.BidderDids) > 0 {

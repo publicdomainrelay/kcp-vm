@@ -3,7 +3,8 @@ import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import { applyOAuthAgentToRequesterPDS, createOAuthRequester, createRequesterPDS } from "@publicdomainrelay/requester-xrpc";
 import type { OAuthRequesterHandle } from "@publicdomainrelay/requester-xrpc";
-import { createDelegatingAgent, createRepoPdsAgent } from "@publicdomainrelay/atproto-helpers";
+import { createDelegatingAgent, createRepoPdsAgent, requestRelayCrawl } from "@publicdomainrelay/atproto-helpers";
+import { ingressUrlOf } from "@publicdomainrelay/did-key-ingress-proxy";
 import type { RepoPdsAgent } from "@publicdomainrelay/atproto-helpers";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
@@ -11,7 +12,7 @@ import { REQUESTER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import type { UserDataPatch } from "@publicdomainrelay/cloud-init-common";
 import { Secp256k1Keypair } from "@atproto/crypto";
-import { explicitRelayUrls, marketNetwork } from "@publicdomainrelay/market-network-common";
+import { explicitRelayUrls, isCrawlRoot, marketNetwork, splitHostPort } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import { vaultRefs } from "@publicdomainrelay/market-identity-abc";
 import type { BrowserOAuthClient, IdentityVault, MarketIdentity, MarketIdentityMode, VaultRef } from "@publicdomainrelay/market-identity-abc";
@@ -272,9 +273,13 @@ let statusRepoDid = "";
       open: async (repoKeyHex: string) => {
         if (o.repoPdsUrl) {
           const did = await repoPdsDid(o.repoPdsUrl);
-          const agent = createRepoPdsAgent({ pdsUrl: o.repoPdsUrl, did, keypair: await Secp256k1Keypair.import(repoKeyHex, { exportable: true }) });
+          const repoKey = await Secp256k1Keypair.import(repoKeyHex, { exportable: true });
+          const agent = createRepoPdsAgent({ pdsUrl: o.repoPdsUrl, did, keypair: repoKey });
           repoAgent = agent;
           logger.info("requester_repo_pds", { url: o.repoPdsUrl, did });
+          const crawlPort = o.guestTlsPort ?? splitHostPort(network.ingressProxyHost).port;
+          const crawlHost = new URL(ingressUrlOf(repoKey.did(), network.ingressProxyHost)).hostname + (crawlPort ? `:${crawlPort}` : "");
+          for (const url of relayUrls.filter(isCrawlRoot)) await requestRelayCrawl(logger, url, crawlHost);
           return requesterAssociatingRepo({
             did,
             associateCalled: new Promise<string>(() => {}),

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -105,6 +106,13 @@ func RequesterValues(spec v1alpha1.MarketRequesterSpec, stateDir string) (manife
 			if kv[1] != "" {
 				extra = append(extra, kv[0], kv[1])
 			}
+		}
+		if n.GuestTlsUrl != "" {
+			p, err := portOf(n.GuestTlsUrl)
+			if err != nil {
+				return manifests.MarketRequester{}, fmt.Errorf("appctl: network guestTlsUrl: %w", err)
+			}
+			extra = append(extra, "--guest-tls-port", strconv.Itoa(p))
 		}
 		if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
 			extra = append(extra, "--network-hosts", hosts)
