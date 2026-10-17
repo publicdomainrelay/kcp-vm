@@ -2,7 +2,7 @@ apiVersion: deno.computer/v1alpha1
 kind: DenoPod
 metadata:
   name: {{.Name}}
-  namespace: default
+  namespace: default{{.Annotations}}
   finalizers:
     - denopod.deno.computer/run
 spec:

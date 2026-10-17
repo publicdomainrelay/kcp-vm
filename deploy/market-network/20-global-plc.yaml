@@ -1,5 +1,6 @@
 name: plc
 entry: hono-plc
+edge: "a market network front: it binds port 0 once and keeps that port across a core restart (ports.json)"
 stateDir: "{{.StateDir}}/global-plc"
 memory: 256Mi
 serviceAccount: deno-runner

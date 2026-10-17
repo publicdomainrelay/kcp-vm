@@ -3,6 +3,8 @@ kind: DenoPod
 metadata:
   name: dispatcher-tls
   namespace: default
+  annotations:
+    deno.computer/edge: "a market network front: it binds port 0 once and keeps that port across a core restart (ports.json)"
   finalizers:
     - denopod.deno.computer/run
 spec:

@@ -48,6 +48,7 @@ type Service struct {
 	Permissions    *ServicePermissions                `json:"permissions"`
 	Probe          ServiceProbe                       `json:"probe"`
 	Projected      []denov1alpha1.ProjectedCredential `json:"projected,omitempty"`
+	Edge           string                             `json:"edge,omitempty"`
 }
 
 type ServicePermissions struct {
@@ -249,7 +250,7 @@ func (s Service) TemplateData(entries map[string]tsbundle.EntrySpec) (map[string
 	if err != nil {
 		return nil, err
 	}
-	if fixed := servicenames.FixedPorts(map[string]string{servicenames.ArgsKey: argsText, servicenames.EnvKey: envText}); len(fixed) > 0 {
+	if fixed := servicenames.FixedPorts(map[string]string{servicenames.ArgsKey: argsText, servicenames.EnvKey: envText}); len(fixed) > 0 && s.Edge == "" {
 		return nil, fmt.Errorf("manifests: service %s binds a fixed port (%s); every service behind the edge binds port 0 and reports its listener",
 			s.Name, strings.Join(fixed, ", "))
 	}
@@ -257,7 +258,14 @@ func (s Service) TemplateData(entries map[string]tsbundle.EntrySpec) (map[string
 	if s.TLS != TLSNone {
 		tls = "true"
 	}
-	data := map[string]any{"Name": s.Name, "ServiceAccount": ""}
+	data := map[string]any{"Name": s.Name, "ServiceAccount": "", "Annotations": ""}
+	if s.Edge != "" {
+		text, err := jsonText(map[string]string{denov1alpha1.AnnotationEdge: s.Edge})
+		if err != nil {
+			return nil, err
+		}
+		data["Annotations"] = "\n  annotations: " + text
+	}
 	if s.ServiceAccount != "" {
 		text, err := jsonText(map[string]string{"name": s.ServiceAccount, "namespace": "default"})
 		if err != nil {
