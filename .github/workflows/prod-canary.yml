@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/toolchain
       - name: canary
-        run: deno run -A --node-modules-dir=none scripts/prod-canary.ts --log "$RUNNER_TEMP/results.jsonl"
+        run: deno run -A --node-modules-dir=none scripts/prod-canary.ts --web-signin --log "$RUNNER_TEMP/results.jsonl"
       - if: always()
         uses: actions/upload-artifact@v7
         with:

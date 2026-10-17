@@ -23,7 +23,7 @@ By default (`--identity ephemeral`) the canary uses no real account. Each run:
 3. mints the service-auth token of every gateway XRPC call locally with the key
    (`aud` = `--audience`, `lxm` = the method, 2 minute lifetime).
 4. at the end, also on a failure, signs out of the web app and tombstones the DID
-   on PLC (`tombstone` step; the PLC directory then answers 410 for it).
+   on PLC (`tombstone` step: the last PLC operation of the DID is `plc_tombstone`).
 
 The gateway asks a cluster owner only for a did:plc or did:web whose `#atproto` key
 signs the service-auth token (`internal/atprotoauth`). The nodes of the cluster are
@@ -38,8 +38,9 @@ callback's `swc_session` cookie, `GET /session`, and after the cluster is Ready
 `POST /api/clusters/list` must list it (the web app calls the gateway with a
 service-auth token from the PDS through the OAuth session). The OAuth requests reach
 the job's PDS through the ingress proxy, so the proxy must relay form bodies and the
-`DPoP-Nonce` header (`ts/did-key-ingress-proxy` since the canary change). The
-workflow leaves `--web-signin` off until xrpc.fedproxy.com runs that relay.
+`DPoP-Nonce` header (`ts/did-key-ingress-proxy` since 0b7b0af7; xrpc.fedproxy.com runs it).
+The workflow passes `--web-signin`. Without it the job's PDS is not served at all and the
+canary needs only the PLC directory and the gateway.
 
 `--identity creds` keeps the old mode: `createSession` and `getServiceAuth` at
 `--pds` with the handle and password of `--creds` (a file of
