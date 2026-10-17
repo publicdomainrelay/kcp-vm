@@ -3745,7 +3745,11 @@ because it bounds a mechanism the rest of this document leans on.
   where the host is starved. The rule when it recurs on a host below load 16, or in the prod bidder's
   `status.market` readings, is the one the plan wrote down: the Bid create moves after the publish and
   dedup falls back to the market.bid record key (an rkey derived from the RFP uri). It needs a reading
-  of the prod bidder (hat-8, the lead).
+  of the prod bidder (hat-8, the lead). The reading is now one command on any bidder (section 15,
+  M4-LATENCY-READINGS item 9): on a quiet dev-linux-1 the kcp wait is 40 to 51 ms p95, over the
+  budget, and 12.7 ms of the 29 ms p50 is `claim`, which counts Bids and ComputeVMs fresh before the
+  create. Cheaper first steps than moving the create: serve `claim` the quota gauge that `capacity`
+  just read, and read prod before changing anything.
 
 - **The Windows bidder: the seams as they landed (plan 0011 M0-REVISIT, 2026-10-16, read at 79f40adb;
   hono-compute-provider and atproto-market are `ts/` in the same tree).** `GOOS=windows GOARCH=amd64 go
@@ -8566,7 +8570,27 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
      a bidder restart that replays the stream from its stored cursor; with the ledger off nothing
      dedups the replay, so each restart of that variant re-bid old RFPs for up to 112 s before the
      block began (the block waited for the log to go quiet).
-- **Live capacity and iteration time (2026-10-15).** The "3 live slots" were `SWC_LIVE_SLOTS` in the lead's
+  9. The lasting instrument (plan 0009 ACC9-LATENCY, 2026-10-17). `status.market` of a MarketBidder
+     (and of the other kinds that carry `MarketLoopStatus`) holds `rfpToBid` and `kcpWait`: `count`,
+     `p50Us`, `p95Us`, `maxUs` over the last 256 RFPs that reached a published bid, written with the
+     counters (integer microseconds: the generated validator takes integers only). `rfpToBid` runs
+     from the RFP's entry into the bidder's gate (`bidLoop.rfpGate`) to the call of
+     `ledger.published`; `kcpWait` is the time the bidder waited on kcp in that span: the gate
+     `find`, the quota `capacity` check, `claim`, and the `published` status patch (the patch is not
+     awaited by the path, but its time is counted). Read it with `kubectl get marketbidder app -o
+     jsonpath='{.status.market.kcpWait}'` on the bidder's kcp. The ring is not stored; a restart of
+     the bidder empties it. Reading, dev-linux-1 (c-48), commit 56569f26, one bidder market network
+     (`dev up --profile market-network --bidders 1`), 20 RFPs each from `run request --skip-ssh`
+     (guests booted and released): 4 requests at a time, load 3.6: `kcpWait` 29.5 / 51.3 (84.2) ms
+     p50 / p95 (max), `rfpToBid` 521 / 915 (1579); one at a time after a bidder restart, load 1.6 to
+     8: `kcpWait` 31.0 / 40.5 (44.4), `rfpToBid` 786 / 1502 (1515). The bidder log span `dispatch:
+     resolving rfp -> bidder created VM bid` over the same 20 RFPs was 778 / 1486 (1507), against
+     `rfpToBid` 786 / 1502 (1515): the instrument and the log agree. A temporary per-call timer
+     (mirror only, 8 more RFPs) split the `kcpWait` p50 of 29.2 ms into `find` 3.6, `capacity` 4.4,
+     `claim` 12.7 (a `get`, a fresh quota count of Bids and ComputeVMs, the create) and `published`
+     8.4. The calls the path awaits sum to about 21 ms p50; each kcp call on this droplet is 3 to 4
+     ms, against 0.5 to 1 ms in the earlier reading. So ACC9-LATENCY is not met on this host and the
+     check stays todo. The "3 live slots" were `SWC_LIVE_SLOTS` in the lead's
   `~/.tmp/swc-lead/live-slot.ts`, not hardware. Readings on hat-8 (Ryzen 7 7700X, 16 threads, 46 GB, load
   average 20 to 29 from other work) and on a DigitalOcean `c-16-intel` droplet (16 vCPU Xeon 8358, 32 GB,
   /dev/kvm present, `kvm_intel nested=Y`; a `c-16` Xeon 8168 droplet has it too), one `1 bidder` market
