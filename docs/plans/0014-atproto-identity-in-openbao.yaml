@@ -249,10 +249,8 @@ items:
       repositories. Decided by Claude, user may veto. The core restart leg is a kill -9 of the gateway's core
       (a child application has no devsup of its own, so `dev restart <gateway> core` does not apply).
       `socialweb-computer upgrade` needs an installed host, so the upgrade leg is the prod reading
-      ACC14-SURVIVES (the cookie across rc8 to rc9). Its dev form, the network core restarted on another
-      binary (`dev restart --binary <path> core`), joins the test once a network core restart keeps the
-      addresses its adopted child applications use (today the fronts rebind on new ports and the gateway
-      and bidder DenoPods keep the old ones).
+      ACC14-SURVIVES (the cookie across rc8 to rc9). Its dev form is the network core restarted on another
+      binary (`dev restart --binary <path> core`, every unit adopted).
     files: ["test/integration/web_app_signin_test.go", "test/integration/web_app_session_test.go", "test/integration/kubeconfig_client_cert_test.go"]
     done_when: "the tests pass on the harness and in the 0010 G3-CI-INTEGRATION pipeline."
     risks: []

@@ -27,7 +27,23 @@ const (
 	kcpDumpTimeout      = 5 * time.Minute
 )
 
-func TestWebAppCookieSurvivesAGatewayCoreKillAndNoSecretLeaks(t *testing.T) {
+type coreRestart struct {
+	Binary struct {
+		Path string `json:"path"`
+	} `json:"binary"`
+	Before struct {
+		PID          int    `json:"pid"`
+		InvocationID string `json:"invocationID"`
+	} `json:"before"`
+	After struct {
+		PID          int    `json:"pid"`
+		InvocationID string `json:"invocationID"`
+	} `json:"after"`
+	UnitsUnchanged bool    `json:"unitsUnchanged"`
+	Seconds        float64 `json:"seconds"`
+}
+
+func TestWebAppCookieSurvivesAGatewayCoreKillAndACoreBinarySwapAndNoSecretLeaks(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	front, err := net.Listen("tcp", "127.0.0.1:0")
@@ -43,6 +59,10 @@ func TestWebAppCookieSurvivesAGatewayCoreKillAndNoSecretLeaks(t *testing.T) {
 	acct := n.OwnerAccount(t)
 	web := n.webSignIn(t, front, origin, acct)
 
+	swap := filepath.Join(n.Dir, "upgrade", "socialweb-computer")
+	if r := n.h.As(ctx, "install", "-D", "-m", "0755", n.h.Bin, swap); r.Err != nil {
+		t.Fatalf("copying the binary for the swap: %v %s", r.Err, r.Tail(3))
+	}
 	for _, leg := range []struct {
 		name string
 		do   func() (string, error)
@@ -66,6 +86,17 @@ func TestWebAppCookieSurvivesAGatewayCoreKillAndNoSecretLeaks(t *testing.T) {
 					return "", fmt.Errorf("no new gateway core within %s of the kill of %d", coreRestartWait, before)
 				}
 			}
+		}},
+		{"the network core restarted on another binary", func() (string, error) {
+			r := n.Run("dev-restart-core", coreRestartWait, "dev", "restart", "--instance", n.Instance, "--state-dir", n.StateRoot, "--binary", swap, "core")
+			var rep coreRestart
+			if err := json.Unmarshal([]byte(r.Stdout), &rep); err != nil || r.Err != nil {
+				return "", fmt.Errorf("%v %v\n%s", r.Err, err, r.Tail(10))
+			}
+			if rep.Before.PID == 0 || rep.After.PID == rep.Before.PID || rep.After.InvocationID == rep.Before.InvocationID || !rep.UnitsUnchanged || rep.Binary.Path != swap {
+				return "", fmt.Errorf("the core was not replaced from %s with every unit adopted: %+v", swap, rep)
+			}
+			return fmt.Sprintf("network core pid %d -> %d on %s in %.1fs, every unit adopted", rep.Before.PID, rep.After.PID, rep.Binary.Path, rep.Seconds), nil
 		}},
 	} {
 		what, err := leg.do()
