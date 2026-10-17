@@ -316,6 +316,15 @@ items:
     title: A nightly canary, a scheduled GitHub Actions job, that runs a Job on a prod tenant cluster that scales from zero
     depends_on: ["0006:M5-FRESH-DEPLOY", "G1-CI-GATE"]
     decision: >
+      Changed by the user 2026-10-17: the canary uses an ephemeral identity, not alice's bsky.social account.
+      Each run makes a fresh key in the job, registers a did:plc whose PDS is a one-account PDS with an OAuth
+      server (createOAuthLocalPds in ts/atproto-market/lib/atproto-helpers), served in the job behind the
+      did-key-ingress-proxy (xrpc.fedproxy.com), mints the gateway's service-auth tokens locally, and tombstones
+      the DID on PLC at the end, also on a failure. The gateway asks a cluster owner only for a did:plc or
+      did:web whose #atproto key signs the token; the nodes are rented by the gateway's own requester, so the
+      owner needs no handle, PDS or vouch. With --web-signin the identity also signs in to the web app over
+      atproto OAuth and lists its cluster through the session; the workflow turns that on once xrpc.fedproxy.com
+      runs the relay that carries form bodies and the DPoP-Nonce header. No repository secret is needed.
       Changed by the user 2026-10-17: the canary is the scheduled GitHub Actions workflow
       `.github/workflows/prod-canary.yml` on a GitHub-hosted runner (hat-8 was offline), not a timer on a host.
       The text below is the earlier decision.
