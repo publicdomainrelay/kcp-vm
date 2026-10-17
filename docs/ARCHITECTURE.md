@@ -3911,6 +3911,19 @@ because it bounds a mechanism the rest of this document leans on.
   network value and the bidder DIDs onto the root objects (no record carries them); the per-child core
   holds the network's admin kubeconfig (the shared kcp isolates components by workspace RBAC, not the
   cores); the DNS table of the one deno runtime holds every workspace's names.
+
+- **The requester retries the release with the same signed event (plan 0020, opened 2026-10-17).**
+  Before: one non-2xx answer to the direct submitEvent of a vm.delete (a 404 from the
+  did-key-ingress-proxy while the winning bidder was away, job 618) made the runner write releaseFailed
+  and stop watching, so the guest outlived its contract; and every releaseCompute call wrote a new
+  vm.delete and a new market.event record. Now: releaseCompute stores the event's refs in the contract
+  state before it submits, and a later call resends that event after re-reading it by uri and checking
+  its cid; the state reaches released only on a 2xx. holdUntilEnded retries after 5 s, doubling to 5 min,
+  until a 2xx or the bidder's terminated event, writing Releasing with the attempt and the last answer;
+  the bound is the contract's creationTimestamp plus its ttl-after-finished (8d for a NodeClaim's
+  contract, 24 h without the annotation), after which the contract is Failed with the reason. A restart
+  in Releasing resends the stored event. Open until ACC20-BIDDER-BACK and ACC20-ONE-EVENT have their
+  market network reading.
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,

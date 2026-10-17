@@ -1,0 +1,78 @@
+plan: "0020"
+title: "The requester retries the release: the same signed vm.delete event, sent again until the bidder acknowledges it"
+status: doing
+source: >
+  2026-10-17: the runner worker found a failover orphan in job 618. The gateway's requester released a
+  contract while the winning bidder was away: the direct submitEvent of the vm.delete answered 404 (the
+  did-key-ingress-proxy had no subscriber for the bidder), the runner went straight to releaseFailed
+  (ts/atproto-market/lib/requester-controller-kcp/runner.ts holdUntilEnded) and stopped watching, and the
+  guest stayed up. Each call of releaseCompute also wrote a new vm.delete and a new market.event record, so
+  a retry by hand added records instead of resending the one the bidder should act on.
+principle: >
+  A release is one signed vm.delete event per contract. The requester keeps its refs in the contract state
+  before it submits, and sends that same event again until the bidder acknowledges it (a 2xx answer) or
+  reports the guest terminated, within the contract's own lifetime. The RFP flow is unchanged: only the
+  delivery of the release is retried.
+state_rules:
+  - Read AGENTS.md first. status is one of todo, doing, done, blocked. The lead flips statuses.
+items:
+  - id: M1-RESEND-SAME-EVENT
+    title: "releaseCompute writes the vm.delete event once and resends it on every later call"
+    depends_on: []
+    decision: >
+      releaseCompute (ts/atproto-market/lib/compute-request-xrpc) writes the vm.delete payload and the
+      market.event that wraps it, stores {event, payload, ok: false} in the contract state, and then
+      submits. When the state already has release.event, it writes nothing: resubmitRelease re-reads the
+      event record from the requester's PDS by its uri (com.atproto.repo.getRecord through the DID
+      document's PDS), checks that its cid is the one in the state, resolves the bidder's submitEvent
+      endpoint again and sends {uri, cid, record}. The contract state reaches the phase released only on a
+      2xx; a non-2xx answer or an error keeps the phase and records release.status and error.
+    files: ["ts/atproto-market/lib/compute-request-xrpc/mod.ts"]
+    done_when: "a contract that was released three times has one vm.delete and one market.event record in the requester's repo."
+    status: todo
+  - id: M2-RETRY-LOOP
+    title: "holdUntilEnded retries the release with a backoff, bounded by the contract TTL and the stopping signal"
+    depends_on: [M1-RESEND-SAME-EVENT]
+    decision: >
+      After the first submit, the runner (ts/atproto-market/lib/requester-controller-kcp/runner.ts
+      retryRelease) watches for the bidder's terminated event (awaitComputeTermination) and resends the
+      same event after 5 s, doubling to at most 5 min. It ends on a 2xx (Released, "vm.delete accepted")
+      or on a terminated event (Released, "the bidder reported the guest terminated"). Every try writes
+      Releasing with the attempt, the last answer and the time of the next try. The bound is the
+      contract's creationTimestamp plus its socialweb.computer/ttl-after-finished annotation (8d for a
+      NodeClaim's contract; 24 h when the annotation is absent); past it the contract is Failed with the
+      last reason. The stopping signal ends the loop and leaves the contract in Releasing. The pure parts
+      (the bound, the delay, what counts as an acknowledgement) are in requester-controller-abc.
+    files: ["ts/atproto-market/lib/requester-controller-kcp/runner.ts", "ts/atproto-market/lib/abc/requester-controller/mod.ts"]
+    done_when: "a release whose first submit answers 404 shows Releasing with a growing attempt count, then Released once the bidder answers."
+    status: todo
+  - id: M3-RESUME-RELEASING
+    title: "A requester restart in Releasing resends the stored event"
+    depends_on: [M1-RESEND-SAME-EVENT, M2-RETRY-LOOP]
+    decision: >
+      A contract whose phase is Releasing and whose state has release.event goes straight to
+      holdUntilEnded on a restart (no new RFP, no new record), and the release path resends the stored
+      event. dispositionOf still treats state.phase released as done, which M1 makes true only after a 2xx.
+    files: ["ts/atproto-market/lib/requester-controller-kcp/runner.ts"]
+    done_when: "a requester DenoPod restarted while a release is retried continues with the same event uri and attempt counting from the restart."
+    status: todo
+  - id: ACC20-BIDDER-BACK
+    title: "A bidder that comes back after several retries gets the same event and tears the guest down"
+    depends_on: [M2-RETRY-LOOP]
+    done_when: >
+      On a market network with a gateway: a tenant cluster holds a node; the bidder DenoPod is stopped
+      before the release; the requester logs at least three requester_release_retry lines for one event
+      uri; the bidder is back; the next resend answers 2xx or the terminated event arrives; the bidder's
+      ComputeVM is gone; the ComputeContract is Released. The bidder's own restore check (task/failover-fix)
+      is off for the run, so only this path is shown.
+    status: todo
+  - id: ACC20-ONE-EVENT
+    title: "One vm.delete per contract"
+    depends_on: [M1-RESEND-SAME-EVENT]
+    done_when: "the requester's repo holds exactly one com.publicdomainrelay.temp.compute.events.vm.delete record for the contract of ACC20-BIDDER-BACK."
+    status: todo
+  - id: ACC20-BOUND
+    title: "The retry ends at the contract TTL with a reason"
+    depends_on: [M2-RETRY-LOOP]
+    done_when: "a contract with a short ttl-after-finished and a bidder that never comes back ends Failed with \"vm.delete was not acknowledged by <time> (the contract TTL)\" and the last answer."
+    status: todo
