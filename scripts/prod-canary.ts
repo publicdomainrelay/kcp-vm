@@ -144,7 +144,7 @@ async function openEphemeral(): Promise<void> {
     ingressProxyHost: args["ingress-proxy-host"],
     tls: args["ingress-tls"],
   });
-  await pds.beginServe();
+  if (args["web-signin"]) await pds.beginServe();
   note("ephemeralIdentity", t, true, { did: pds.did, pds: pds.issuer });
 }
 
@@ -227,10 +227,12 @@ async function tombstone(): Promise<string | null> {
   try {
     await pds.tombstone();
     tombstoned = true;
-    const r = await http(`${args.plc.replace(/\/+$/, "")}/${pds.did}`);
-    await r.body?.cancel();
-    if (r.status !== 410) return `after the tombstone the PLC directory answered ${r.status} for ${pds.did}`;
-    note("tombstone", t, true, { did: pds.did, plcStatus: r.status });
+    const r = await http(`${args.plc.replace(/\/+$/, "")}/${pds.did}/log/last`);
+    const last = await r.json().catch(() => null);
+    if (last?.type !== "plc_tombstone") return `after the tombstone the last PLC operation of ${pds.did} is ${last?.type ?? r.status}`;
+    const doc = await http(`${args.plc.replace(/\/+$/, "")}/${pds.did}`);
+    await doc.body?.cancel();
+    note("tombstone", t, true, { did: pds.did, lastOp: last.type, resolve: doc.status });
     return null;
   } catch (e) {
     return `tombstone of ${pds.did} failed: ${(e as Error).message}`;
