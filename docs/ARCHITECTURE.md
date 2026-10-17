@@ -3895,6 +3895,16 @@ because it bounds a mechanism the rest of this document leans on.
   (ClusterRole `market-network-peers` in both workspaces of each child), so an AtprotoRecord `valueFrom`
   with `workspace: root:<other>` resolves (403 elsewhere, the record stays Pending). Prod keeps a kcp per
   application and runs the same sets with base root.
+  A core restart of the network restarts every DenoPod of the kcp (the deno runtime runs in the core), so
+  the network's fronts (plc, relay, dispatcher, dispatcher-tls, alice and bob pds) are edges
+  (`deno.computer/edge`, the one case a service may name its port): each binds port 0 once, the network
+  records the ports in `<network state>/network/ports.json`, renders them as `{{.Ports.*}}`, restarts a
+  front that came back elsewhere (`deno.computer/restart`) and holds ServicesReady until every front is
+  back on its port; the network value copied onto the children therefore stays valid. The PLC directory
+  keeps its operation log in its state dir (`hono-plc --state-path`), so no DID is lost to a restart. In
+  an application, peers inside it are reached by service name per connection (`<name>.default.{{.ServiceSuffix}}`).
+  The gateway child's teardown deletes the account workspaces (they sit at the root of the kcp) before
+  its own workspace, so the clusterprovider releases its tenant members (dev down 130 s -> 60 s).
   Open: the web app's account and home workspaces (`root:<account>:<home>`, the tenant clusters) still sit
   at the root of the network's kcp, not under root:gateway (kcpclient, the clusterprovider registry,
   sweepkcp and the tenant credential paths take `root` as their base); the composer still copies the

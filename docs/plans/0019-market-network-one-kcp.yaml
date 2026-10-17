@@ -87,6 +87,17 @@ items:
     files: ["internal/appctl", "deploy/apps"]
     done_when: "a record in one application's workspace resolves a reference into another's on the market network, and the same record without workspace resolves in prod."
     status: todo
+  - id: M3B-FRONTS-SURVIVE-A-CORE-RESTART
+    title: "The network's fronts keep their ports across a core restart"
+    depends_on: [M1-CHILD-IN-WORKSPACE]
+    decision: >
+      A core restart restarts every DenoPod of the network's kcp. The fronts (plc, relay, dispatcher,
+      dispatcher-tls, alice and bob pds) are edges (deno.computer/edge): port 0 once, then the port in
+      <network state>/network/ports.json ({{.Ports.*}}); a front back on another port is restarted onto its
+      own; ServicesReady waits for them. hono-plc --state-path keeps the PLC log.
+    files: ["internal/appctl/network.go", "internal/manifests/service.go", "deploy/market-network", "ts/atproto-market/hono-plc"]
+    done_when: "after dev restart --instance <network> core (and --binary) every front reports its old address, the network is Ready and run request --network completes."
+    status: todo
   - id: M4-PROOF
     title: "Live proof and dev up time"
     depends_on: [M1-CHILD-IN-WORKSPACE, M2-GATEWAY-IN-WORKSPACE]
