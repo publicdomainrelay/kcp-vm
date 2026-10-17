@@ -8,6 +8,9 @@ queued: >
   M2-DENOKCP-FORK, M2-DENOKCP-INPROC, M2-SERVICE-TEMPLATE and M4-MARKET-NETWORK-PORT are done. Then M0-REVISIT
   runs first; no other item may move to doing before it is done. Every item is executed ON a macOS host
   with Apple Silicon (decided by the user 2026-10-11); the executor works on that host, not on hat-8.
+  M0-REVISIT ran on 2026-10-16 against socialweb-computer-kcp origin/main 79f40adb (the vendored
+  hono-compute-provider and atproto-market are the ts/ trees at that commit); every prerequisite item
+  above is done, and docs/ARCHITECTURE.md section 15, "Plan 0012 M0-REVISIT", holds the reconciliation.
 source: >
   The user's decisions of 2026-10-09..11: macOS and Windows bidder work is deferred out of plans 0006,
   0007 and 0008 into their own plans (0011 for Windows, this one for macOS). Plans 0006 and 0007 build the
@@ -17,6 +20,9 @@ source: >
   List by owner) with one backend per OS; a host-unit/service-manager interface; an OS-neutral
   ComputeVM status.runtime {backend, ref, instance, pid?, startTime?}; a content-addressed binary install
   versions/<sha256>/; asset dirs runtime/<sha256>/ garbage-collected only when nothing references them.
+  As landed: the VM seam is internal/vmruntime.Runtime over hostsvc.Manager (Verdict is hostsvc.Verdict;
+  status.runtime is {backend, ref, instance, pid, startTime, hostBootID, vmmID}); the binary install is
+  bin/<sha256>/ with bin/current and bin/previous; asset dirs are runtime/<sha256>/.
   Headless servers only. A VM survives a crash or upgrade of the core binary and any logout; a host
   reboot makes every VM Lost, replaced through a new RFP. The mechanism is the native one per OS. The
   invariant: no socialweb-computer code is in a running VM's process tree; the OS service manager or VMM
@@ -26,6 +32,12 @@ source: >
   stops the job. All code, docs, architecture and plan items are changeable; the best solution wins.
 state_rules:
   - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
+  - >
+    Decided by the user 2026-10-16: the Mac this plan runs on is never rebooted, power-cycled, signed out of or
+    put to sleep by an executor, not even after asking. A proof that needs one of those is split: the part that a
+    no-reboot equivalent can show (bootout of the launchd domain or job, kill of the VMM owner, a stale reference
+    Inspected to Lost, a console user who stays logged in) is run and recorded; the reboot-, logout- and
+    sleep-only part is written down with what it would add and stays blocked until the user does it.
   - This file is the only state. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
   - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
@@ -66,14 +78,14 @@ research:
     lifecycle-synthesis.md, lifecycle-linux.md) were not on disk when it was written; M0-REVISIT re-reads
     whatever 0006/0007 recorded in their place.
   in_repo_today:
-    - "internal/hostos has _linux.go and _windows.go halves only (caps, lock, portrange, proc, sysproc); there is no darwin process-identity, lock or port-range file, so every darwin build today compiles only what has no OS half. docs/ARCHITECTURE.md:2223-2280 documents linux and windows columns, no darwin column."
+    - "internal/hostos has darwin files since 0006 M0-XOS-GATE: proc_darwin.go (ProcStart, Cmdline, Alive, Signal, Reload, Terminate), bootid_darwin.go and portrange_darwin.go refuse with ErrUnsupported (plan 0012); sysproc_darwin.go gives Setpgid and an empty DieWithParent; lock_unix.go (build tag unix) already serves darwin. docs/ARCHITECTURE.md 'The host platform' has a darwin column that says 'refuses'. GOOS=darwin GOARCH=arm64 go build ./... and go vet ./... are clean at 79f40adb."
     - "plan 0006 M0-SIZE-BUDGET (as written 2026-10-07) gives darwin client modes only and refuses run bidder by name; superseded by the user's 2026-10-11 decision that this plan builds the macOS bidder. M0-REVISIT reads what 0006 landed."
-    - "kcp-libs impl/execrunner/supervisor.go:141 Setpgid per DenoPod run, :156/:322 stop is SIGKILL of that group: on darwin a per-run process group escapes launchd's kill of the job's process group when the bidder dies (launchd.plist AbandonProcessGroup semantics), so deno children would outlive a crashed bidder"
-    - "cmd/socialweb-nodeimage/main.go:42-45 the image builder extracts THIS host's own kernel; a Mac has no Linux kernel, so the guest kernel and rootfs are built on Linux and carried as darwin-only assets. cmd/socialweb-nodeinit/main.go:14-16 waits for /dev/vda, which is what VZ virtio-blk presents"
-    - "cmd/socialweb-nodeboot/main.go:37-38 user_data reaches the guest on a read-only ext4 disk labelled cidata (cloud-init NoCloud)"
-    - "atproto-market lib/common/cloud-init-common/mod.ts:110 UserDataModule, :1225-1231 registered modules; guest-side downloads map uname -m to amd64/arm64 (:487-494 atproto-reverse-proxy and websocat, :739-746 wootty, :1101-1108 dumbpipe x86_64|aarch64), so most modules already fetch arm64 builds; every module is checked on arm64 in M0-ARCH-MODULES"
+    - "internal/kcplibs/impl/execrunner/runner_linux.go:19 Setpgid per DenoPod run, killGroup/termGroup signal that group (runner_darwin.go refuses today): on darwin a per-run process group escapes launchd's kill of the job's process group when the bidder dies (launchd.plist AbandonProcessGroup semantics), so deno children would outlive a crashed bidder"
+    - "cmd/socialweb-nodeimage, socialweb-nodeinit and socialweb-nodeboot are gone. Guest images are built on Linux by scripts/build-guest-image.sh into kernel + rootfs.ext4 + image.json per hypervisor and arch, pinned in internal/versions/versions.json guestImages.targets, never embedded, fetched and verified by internal/guestimage (the name vz-arm64 is reserved there for this plan); the firecracker-aarch64 kernel config (deploy/guest-kernel/firecracker-aarch64.config) has virtio-mmio and no virtio-pci, and VZ presents virtio over PCI, so VZ needs its own kernel config or a distribution kernel"
+    - "user_data reaches the guest on a read-only ext4 disk labelled cidata (cloud-init NoCloud), written in pure Go by internal/guestdisk WriteSeed over internal/guestseed; boot args come from image.json; the rootfs is cloned by internal/guestdisk Clone (clone_linux.go FICLONE; clone_other.go plain copy)"
+    - "atproto-market lib/common/cloud-init-common/mod.ts: UserDataModule at :70, registry at :90, registered modules are secrets, k3s, iroh and poweroff-ends-vm (:838-841, after 0008 M1-STRIP-LEGACY-TRANSPORTS); guest-side arch mapping is in the iroh module (dumbpipe x86_64|aarch64, :559-566) and k3s uses the upstream installer; every module is checked on arm64 in M0-ARCH-MODULES"
     - "atproto-market lexicons/com/publicdomainrelay/temp/compute/vm.json:19-45 compute.vm has cpus, mem, disk, network, location, role, user_data and NO arch field: a requester cannot say amd64 and an arm64-only bidder cannot tell"
-    - "hono-compute-provider lib/container-backend-container/mod.ts:8 and :85-86 already drive Apple's `container` CLI (`container system start --enable-kernel-install`); that is a container-mode backend, whose services run as launchd agents of a logged-in user (apple/container Sources/ContainerPlugin/LaunchPlist.swift), so it is not the headless VM backend this plan builds"
+    - "ts/hono-compute-provider has no container-backend-container any more (lib/ holds compute-provider-kcp, container-backend-docker and microvm-vmruntime); a guest is a ComputeVM object that the Go controller internal/computevm reconciles through internal/vmruntime, so the VM host seam is Go (microvm-vmruntime only shells out to the socialweb-computer vm verb, cmd/socialweb-computer/vm.go)"
     - "deno-macos-runner-desktop (org root) is a tray UI for a desktop bidder; this plan is headless only and does not use it"
   virtualization_framework:
     - "vfkit: 'The virtual machine will be started when vfkit starts and will be terminated as soon as the vfkit process exits' (https://github.com/crc-org/vfkit/blob/main/doc/usage.md). The VMM process therefore IS the VM's lifetime, which is why the launchd job's program must be vfkit itself and nothing of ours."
@@ -87,7 +99,7 @@ research:
   launchd_and_platform:
     - "launchd.plist(5): UserName runs a system-domain job as that user; KeepAlive, RunAtLoad, LaunchOnlyOnce; AbandonProcessGroup false (default) means launchd kills the job's remaining process group when the job exits. Only plists under /Library/LaunchDaemons (and /System) are loaded at boot, so a job bootstrapped by path from elsewhere is gone after a reboot: reboot = Lost by construction, measured in M0-REBOOT-LOST-POWER."
     - "golang.org/x/sys/unix SysctlKinfoProc(\"kern.proc.pid\", pid) returns KinfoProc whose Proc.P_starttime is the start time (x/sys unix ztypes_darwin_*.go), CGO_ENABLED=0: the darwin twin of /proc/<pid>/stat start ticks"
-    - "Apple: replacing a signed executable in place (cp keeps the inode) risks a code-signing crash the next time it runs; write a new file and rename (https://developer.apple.com/documentation/security/updating-mac-software). runtime/<sha256>/ and versions/<sha256>/ never rewrite a file in place."
+    - "Apple: replacing a signed executable in place (cp keeps the inode) risks a code-signing crash the next time it runs; write a new file and rename (https://developer.apple.com/documentation/security/updating-mac-software). runtime/<sha256>/ and bin/<sha256>/ never rewrite a file in place."
 items:
   - id: M0-REVISIT
     milestone: M0
@@ -117,7 +129,7 @@ items:
       and the darwin stub list.
     risks:
       - "If 0006/0007 change after this ran, the state rule sends this item back to doing; the evidence keeps every SHA it was run against."
-    status: todo
+    status: done
     evidence: []
   - id: M0-HOST-BASELINE
     milestone: M0
@@ -131,8 +143,9 @@ items:
       (0006:M2-KCP-PORT0), the embedded deno running a fixture entry with --cached-only (0008:M1-DENO), an
       OpenBaoServer object with the darwin bao asset (0006:M2-OPENBAO-SERVER), and one DenoPod through the
       forked runner. Also measure the process-group question: start the runner under a test LaunchDaemon,
-      SIGKILL it, and record whether its deno children (Setpgid per run, supervisor.go:141) survive launchd's
-      kill of the job's group. Each failure is an item added here by name.
+      SIGKILL it, and record whether its deno children (Setpgid per run, execrunner runner_linux.go:19; the
+      darwin runner refuses today, so this reading uses a stand-in parent that sets Setpgid on a child)
+      survive launchd's kill of the job's group. Each failure is an item added here by name.
     files: ["evidence only; new items appended to this file for every failure"]
     test_first: "None (measurement). Each command's output and exit status with UTC timestamps."
     done_when: "Host record committed; each non-VM mode recorded as works or fails-with-item; the deno-survives-bidder reading recorded."
@@ -268,8 +281,11 @@ items:
       iff the job exists AND its pid equals status.runtime.pid AND that pid's start time equals startTime
       AND /vm/state reports running; Lost iff the job is absent, the pid is gone or reused, or the state is
       stopped or error; Unknown on any other error (broker unreachable, REST timeout), retried and never
-      turned into a release. internal/hostos gains proc_darwin.go (ProcStart, Alive, Signal, Terminate),
-      lock_darwin.go and portrange_darwin.go (sysctl net.inet.ip.portrange.first/last).
+      turned into a release. internal/hostos fills proc_darwin.go (ProcStart, Cmdline, Alive, Signal, Reload,
+      Terminate), bootid_darwin.go (kern.boottime, the darwin twin of /proc boot_id: status.runtime.hostBootID
+      and the HostRebooted Lost reason) and portrange_darwin.go (sysctl net.inet.ip.portrange.first/last);
+      lock_unix.go already serves darwin. status.runtime.startTime is the decimal string of hostos.ProcStart's
+      uint64 (P_starttime as microseconds since the epoch).
     files: ["evidence only; the Verdict table is copied into M1-VMHOST-VZ"]
     test_first: "None (measurement)."
     done_when: "Readings for a live vfkit, a killed one and a reused pid recorded; Verdict table recorded."
@@ -303,9 +319,9 @@ items:
     title: Every cloud-init-common module on an arm64 guest, and what Rosetta does and does not cover
     depends_on: [M0-SCRATCH-BACKEND]
     decision: >
-      With RFP-born arm64 guests, one rent per registered module set (cloud-init-common mod.ts:1225-1231:
-      tunnel, fedproxy-ssh, fedproxy-web, wootty, secrets, k3s, iroh) plus the market node's join user_data
-      of plan 0005: record which complete on arm64 and which fail and why (an amd64-only download, a
+      With RFP-born arm64 guests, one rent per registered module set (cloud-init-common mod.ts:838-841:
+      secrets, k3s, iroh, poweroff-ends-vm; the tunnel, fedproxy and wootty modules were stripped by 0008
+      M1-STRIP-LEGACY-TRANSPORTS) plus the market node's join user_data of plan 0005: record which complete on arm64 and which fail and why (an amd64-only download, a
       hard-coded arch). Then the same failing sets with vfkit --device rosetta and binfmt registered by
       the image: record which Rosetta rescues. Decision this item writes: the list of modules fixed to
       fetch by arch (owned code, atproto-market) and the residual case a requester's own user_data hard-
@@ -354,8 +370,14 @@ items:
     title: The darwin backend of the VM host seam - a launchd job whose program is vfkit
     depends_on: [M0-GATE, "0007:M2-CONTROLLER", "0007:M1-API"]
     decision: >
-      vmhost_darwin.go (build tag darwin) implements the landed seam: Start writes the work dir (disks
-      from M1-GUEST-IMAGE-ARM64, cidata), renders the job plist (Label computer.socialweb.vm.<handle>.<name>,
+      vfkit_darwin.go (build tag darwin) is the second vmruntime.Runtime next to firecracker_linux.go, over the
+      launchd hostsvc.Manager of M1-HOSTUNIT-LAUNCHD (the Runtime keeps the unit name socialweb-vm-<hid>-<name>.service;
+      the launchd label is that name without the suffix, prefixed computer.). The firecracker-only parts of the
+      landed code are generalised in this item: vmruntime.Config.Exec (Stage, Pasta, VMExec, Firecracker),
+      ImageTarget() (firecracker-<arch>), GracefulStop() (true only on amd64 today), the firecracker words and
+      vmmExitRE in internal/computevm runningStatus/observe, and unsupported_other.go becomes !linux && !darwin.
+      Prepare/Reserve/Await/Start/Inspect/Stop/List/Cleanup/Load map as follows: Start writes the work dir (disks
+      from M1-GUEST-IMAGE-ARM64, cidata), renders the job plist (Label computer.socialweb.vm.<hid>.<name>,
       Program runtime/<sha256>/vfkit, ProgramArguments the vfkit argv from the ComputeVM spec, UserName
       _socialweb when in the system domain, RunAtLoad true, KeepAlive false, LaunchOnlyOnce true,
       StandardOutPath/StandardErrorPath in the work dir), writes it under the state dir (never
@@ -365,7 +387,7 @@ items:
       (and its gvproxy job if any), then removes the plist and work dir. List(owner) lists jobs by the
       label prefix of this handle. The core binary stays CGO_ENABLED=0; it never links
       Virtualization.framework (vfkit does).
-    files: ["internal/vmhost/vfkit_darwin.go (or the landed seam package)", "internal/vmhost/vfkit_darwin_test.go", "internal/hostos/proc_darwin.go, lock_darwin.go, portrange_darwin.go"]
+    files: ["internal/vmruntime/vfkit_darwin.go", "internal/vmruntime/vmruntime.go and internal/computevm/computevm.go (firecracker-only parts)", "internal/hostos/proc_darwin.go, bootid_darwin.go, portrange_darwin.go"]
     test_first: >
       Offline on any OS: TestTheVfkitJobPlistNeverKeepsAliveAndNeverLivesInLibraryLaunchDaemons (golden
       plist), TestTheVfkitVerdictTable (fake launchd and REST: job absent -> Lost, start time differs ->
@@ -405,16 +427,48 @@ items:
     title: The host-unit seam on darwin - the bidder's vault (and gvproxy) as launchd jobs
     depends_on: [M0-GATE, M1-LAUNCHD-BROKER, "0006:M2-HOST-UNITS"]
     decision: >
-      The darwin file of the host-unit seam maps Start/Stop/Inspect/List onto launchd jobs in the domain
-      M0-GATE chose, through the broker or directly: the bidder's OpenBao (0007:M4-BIDDER-VAULT) as
+      The seam is hostsvc.Manager (Start, Inspect, Stop, ResetFailed, List, Identify, Check, StopSlice, Watch,
+      Capabilities, Close) with a new hostsvc.Backend value launchd next to systemd-user and proc
+      (ParseBackend, Config.Validate, the host-backend option; hostsvc/unsupported_other.go becomes
+      !linux && !darwin; the two hard-coded BackendSystemdUser in cmd/socialweb-computer/bidder.go and
+      internal/stack/bidder/core.go follow the option). launchd_darwin.go maps Start/Stop/Inspect/List onto
+      launchd jobs in the domain M0-GATE chose, through the broker or directly. Slice maps to a label prefix
+      (StopSlice boots out every job with it), Limits and Delegate are not enforced (Capabilities
+      EnforcesLimits false, FDStore false, PrivateHostname false, OOMKillReported false; RefuseUnsupported
+      already refuses a spec that asks for them), InvocationID is a UUID chosen per start and kept in the plist,
+      Watch is pollWatch (watchpoll.go). The bidder's OpenBao (0007:M4-BIDDER-VAULT) as
       computer.socialweb.vault.<handle> with KeepAlive true (a vault should come back after a crash, unlike
       a VM) and its plist in /Library/LaunchDaemons only if the vault must start at boot (decided by
       Claude, user may veto: yes, the vault holds the bidder's identity and is not a VM); gvproxy jobs per
       VM when M0-NETWORK-VZ chose gvproxy, with the VM's lifecycle.
-    files: ["internal/hostsvc/launchd_darwin.go (or the landed seam package)"]
+    files: ["internal/hostsvc/launchd_darwin.go", "internal/hostsvc/hostsvc.go (Backend)", "internal/hostsvc/unsupported_other.go"]
     test_first: "Darwin livegate: TestTheVaultJobOutlivesTheBidderAndKeepsItsKV. Red first."
     done_when: "Green; the vault KV read back after a bidder SIGKILL recorded."
     risks: []
+    status: todo
+    evidence: []
+  - id: M1-BOOTSTRAP-DARWIN
+    milestone: M1
+    title: The bidder's own kcp (store, kine, front, slot) on darwin - the bootstrap layer as launchd jobs
+    depends_on: [M0-GATE, M1-HOSTUNIT-LAUNCHD, "0006:M2-KCP-PORT0"]
+    decision: >
+      Added by M0-REVISIT (2026-10-16): plan 0012 did not account for it. A bidder is an application
+      instance with its own kcp, and run bidder brings up the bootstrap layer (internal/bootstrap: kine over
+      sqlite, the port-0 front, the one kcp slot, the core) as units of the host-unit seam before the
+      ComputeVM controller can run (internal/stack/bidder/core.go, devcore.Run). The plan's release list
+      excluded kine; the bidder needs it. Content: kcp v0.33.0 and kine v0.17.1 for darwin/arm64 pinned in
+      versions.json (kcp publishes a darwin_arm64 archive; kine publishes no darwin binary, so the sqlite
+      cgo build is made from the pinned source on a Mac, an asset built here by its tar bytes), the units
+      rendered through launchd_darwin.go, internal/apiserverfront's fd store (fdstore_other.go refuses; the
+      front runs without a held port on darwin, as the dev proc backend does for a missing store, or holds
+      it through a launchd Sockets entry, decided by the reading), and the core's own sandbox hooks
+      (devcore, StopTimeout, Delegate) following Capabilities. Also here: stack/bidder CoreConfig passes
+      EnforceMemory true to the DenoPod runner, which needs cgroups (cgroup_other.go refuses); on darwin it
+      follows Capabilities().EnforcesLimits.
+    files: ["internal/versions/versions.json (darwin/arm64 kcp and kine)", "internal/bootstrap", "internal/stack/bidder/core.go", "internal/apiserverfront/fdstore_darwin.go", "internal/assets/assetpack"]
+    test_first: "None (AGENTS.md: no tests). Live proof: run bidder on the Mac reaches the MarketBidder root applied."
+    done_when: "run bidder on the Mac applies its MarketBidder root object with every bootstrap job a launchd job; kill -9 of the core leaves kcp, kine and the front running."
+    risks: ["kine's sqlite is cgo; the build host needs Xcode command line tools, and a Linux release cannot make it without a darwin cross toolchain; this is the reason a Mac build step may be recorded in M2-RELEASE-DARWIN."]
     status: todo
     evidence: []
   - id: M1-NETWORK-DARWIN
@@ -428,7 +482,7 @@ items:
       loopback listeners. If the user picks VZ NAT, this item instead implements the isolation M0 proved
       possible, or records that guests of one bidder are not isolated and the bidder bids only on RFPs it
       would serve alone (a documented limit).
-    files: ["internal/vmhost/network_darwin.go", "internal/assets (gvproxy darwin/arm64, if chosen)"]
+    files: ["internal/guestnet (darwin file: the identical address plan of guestnet.Plan() carried by gvproxy or VZ NAT; wire_other.go refuses)", "internal/vmruntime/vfkit_darwin.go", "internal/versions/versions.json and internal/assets (gvproxy darwin/arm64, if chosen)"]
     test_first: "Darwin livegate: TestTwoRfpGuestsOnOneMacBidderCannotReachEachOther. Red first."
     done_when: "Green; probes recorded."
     risks: []
@@ -439,15 +493,19 @@ items:
     title: The arm64 guest kernel, initramfs and rootfs for VZ, built on Linux, carried as darwin-only assets
     depends_on: [M0-GATE, "0006:M1-ASSETS", "0007:M2-BACKPORT"]
     decision: >
-      The release build produces an arm64 target: an uncompressed arm64 Image with the virtio drivers
-      built in (the M0 config), the initramfs, and the arm64 rootfs from the same preinstall manifest 0007
-      inventoried (M1-FC-INVENTORY), plus binfmt registration for Rosetta if M0-ARCH-MODULES and the user
-      keep it. Embedded only in the darwin/arm64 binary. On the host the controller writes raw ext4 images
-      under runtime/<sha256>/ once per image fingerprint, copies a per-guest rootfs with clonefile(2)
-      (APFS copy-on-write, through golang.org/x/sys/unix.Clonefile, CGO_ENABLED=0) and writes cidata in
-      pure Go. Whether the arm64 kernel is its own target or shares a multi-driver config with others is
-      the same question plan 0011 asks.
-    files: ["scripts/build-guest-image.sh (arm64 vz target)", "internal/assets (darwin-only guest image blobs)", "internal/vmhost/disks_darwin.go", "internal/versions/versions.json"]
+      Amended by M0-REVISIT: guest images are not embedded; they are pinned in versions.json
+      guestImages.targets and fetched and verified by internal/guestimage, built by scripts/build-guest-image.sh
+      on a Linux host. This item adds the target vz-arm64 (the name versions.json reserves): an uncompressed
+      arm64 Image with virtio-pci, virtio-blk, virtio-net, virtio-console, vsock and ext4 built in (the M0
+      config, or a decompressed distribution kernel if M0-SCRATCH-BACKEND shows that boots), the arm64
+      rootfs.ext4 of the firecracker-aarch64 target when it is reusable as is, and image.json with the boot
+      args; binfmt registration for Rosetta only if M0-ARCH-MODULES and the user keep it. The host store
+      (guestimage.Store, StateDir/images) already holds an image once per fingerprint; the per-guest rootfs
+      is cloned by guestdisk.Clone, whose darwin file uses clonefile(2) (APFS copy-on-write, through
+      golang.org/x/sys/unix.Clonefile, CGO_ENABLED=0) instead of the plain copy of clone_other.go; cidata is
+      already pure Go (guestdisk.WriteSeed). Whether the arm64 kernel is its own target or shares a
+      multi-driver config with others is the same question plan 0011 asks.
+    files: ["scripts/build-guest-image.sh (vz-arm64 target)", "deploy/guest-kernel/ (vz-arm64 config)", "internal/versions/versions.json (guestImages.targets.vz-arm64)", "internal/guestdisk/clone_darwin.go", "internal/guestimage"]
     test_first: >
       Offline: TestTheArm64KernelIsAnUncompressedImage (header magic ARM\x64 at offset 56, not a gzip or
       EFI zboot), TestTheArm64KernelConfigHasEveryVirtioDriverBuiltIn, TestCidataIsAnExt4LabelledCidata.
@@ -467,7 +525,7 @@ items:
       one run by signalling its pid and the descendants found through kern.proc.all ppid links; recovery
       by pid uses hostos.ProcStart (P_starttime). If M0 found launchd kills the whole session instead,
       Setpgid stays and only identity changes.
-    files: ["internal/kcplibs/impl/execrunner/supervisor_darwin.go (or the landed fork path)"]
+    files: ["internal/kcplibs/impl/execrunner/runner_darwin.go (osProcessHost: prepare, killGroup, termGroup, alive, startTicks; today every method refuses or returns zero)", "internal/hostos/sysproc_darwin.go (DieWithParent is empty; its ponytail names this plan)", "internal/portscan/scan_darwin.go (refuses; DenoPod listener reporting needs it)"]
     test_first: "Darwin livegate: TestAKilledBidderDaemonTakesEveryDenoChildWithIt. Red first if M0 recorded survivors."
     done_when: "Green under a real LaunchDaemon."
     risks: []
@@ -481,7 +539,7 @@ items:
       M0-RESOURCES's rule as a pure function in the bidder's provider path (hostmem and ncpu read through
       sysctl in the darwin file; the rule itself OS-neutral so Linux and Windows may adopt it): no bid when
       the request would exceed the budget; the reason logged with the numbers.
-    files: ["internal/computevm (admission)", "internal/hostos/mem_darwin.go"]
+    files: ["internal/computevm (admission; Linux has none either: MemoryMax of the VM unit is the limit there, and appctl/quota.go caps ComputeVMs at 64)", "ts/hono-compute-provider/lib/compute-provider-kcp (the bid decision)", "internal/hostos/mem_darwin.go"]
     test_first: "Offline: TestNoBidWhenNonLostGuestsPlusTheRequestExceedMemoryMinusReserve. Red first."
     done_when: "Green."
     risks: []
@@ -490,10 +548,15 @@ items:
   - id: M2-BIDDER-DAEMON-DARWIN
     milestone: M2
     title: run bidder as a LaunchDaemon running as _socialweb, its process group dying with it, its VMs not
-    depends_on: [M1-VMHOST-VZ, M1-HOSTUNIT-LAUNCHD, M1-NETWORK-DARWIN, M1-GUEST-IMAGE-ARM64, M1-DENOPOD-RUNNER-DARWIN, M1-ADMISSION-DARWIN, "0007:M5-RUN-BIDDER"]
+    depends_on: [M1-VMHOST-VZ, M1-HOSTUNIT-LAUNCHD, M1-BOOTSTRAP-DARWIN, M1-NETWORK-DARWIN, M1-GUEST-IMAGE-ARM64, M1-DENOPOD-RUNNER-DARWIN, M1-ADMISSION-DARWIN, "0007:M5-RUN-BIDDER"]
     decision: >
+      Landed model to follow: the Linux bidder is the template internal/install/templates/socialweb-computer-bidder@.service
+      (Type=notify, WatchdogSec, Delegate=yes, Restart=always, KillMode=control-group; run bidder --handle %i --fg).
+      launchd has none of notify, watchdog or delegation: the core's notify.Ready and notify.Watchdog are no-ops
+      without NOTIFY_SOCKET, so a hung core is not killed by anyone. This item adds a core-side stall exit (the
+      OnTick loop in stack/bidder/core.go exits the process when its own tick stops) as the watchdog's twin.
       /Library/LaunchDaemons/computer.socialweb.bidder.<handle>.plist: UserName _socialweb, ProgramArguments
-      [versions/<sha256>/socialweb-computer, run, bidder, --handle, <h>], KeepAlive true, RunAtLoad true,
+      [bin/current/socialweb-computer, run, bidder, --handle, <h>], KeepAlive true, RunAtLoad true,
       ThrottleInterval 5, AbandonProcessGroup false, state dir /var/db/socialweb-computer/bidder/<h>
       (decided by Claude, user may veto). Everything else is plan 0007's run bidder unchanged, with the
       vfkit backend. VM jobs are separate launchd jobs, so a bidder crash, restart or bootout touches none.
@@ -511,12 +574,12 @@ items:
       `sudo socialweb-computer install bidder --handle <h>`, idempotent, each step observed before changed:
       (1) refuse on Intel or below the minimum macOS the user chooses (questions_for_user); (2) create the
       hidden role user and group _socialweb (dscl, uid below 500, no login shell, no home in /Users); (3)
-      the state dir 0700 _socialweb; (4) the binary into versions/<sha256>/ as a new file; (5) the broker
+      the state dir 0700 _socialweb; (4) the binary into bin/<sha256>/ as a new file with bin/current pointing at it; (5) the broker
       LaunchDaemon (if chosen) and the bidder LaunchDaemon, bootstrapped; (6) pmset -a sleep 0 (and
       disablesleep 1 on a portable), the previous values recorded for uninstall; (7) FileVault: report its
       state and what a reboot will need, per the user's answer; (8) check-host. `uninstall bidder`
       reverses each, refusing while a ComputeVM is Running unless --drain.
-    files: ["cmd/socialweb-computer install/uninstall (darwin file)", "internal/install/darwin/", "docs/bidder-host-macos.md"]
+    files: ["internal/install/system_darwin.go (the install.System seam: LookupAccount, CreateAccount, Chown, SetLinger and User have darwin meanings; LoadAppArmor, ReloadSystemManager and AddToGroup do not; system_other.go returns ErrUnsupported today)", "internal/install/templates/ (a launchd plist template next to socialweb-computer-bidder@.service)", "internal/hostcontract (a darwin Gather: gather_other.go says the host contract has no meaning)", "docs/bidder-host-macos.md"]
     test_first: "Offline: TestTheDarwinInstallPlanIsObservedBeforeEachChange (fake system); darwin livegate: TestInstallTwiceThenUninstallLeavesTheMacAsFound. Red first."
     done_when: "Both green; a clean-Mac install reading recorded end to end."
     risks: []
@@ -524,17 +587,17 @@ items:
     evidence: []
   - id: M2-BINARY-UPGRADE-DARWIN
     milestone: M2
-    title: socialweb-computer upgrade on macOS - a new versions/<sha256>/ file and a re-pointed daemon, VMs untouched
+    title: socialweb-computer upgrade on macOS - a new bin/<sha256>/ file and a re-pointed daemon, VMs untouched
     depends_on: [M2-INSTALLER-DARWIN, "0006:M3-HOST-INSTALL"]
     decision: >
       The landed upgrade flow gets its darwin half: verify the manifest and sha256, write
-      versions/<sha256>/socialweb-computer as a new file (never in place; Apple's code-signing note), rewrite
+      bin/<sha256>/socialweb-computer as a new file (never in place; Apple's code-signing note), rewrite
       the bidder plist's ProgramArguments and bootout+bootstrap only the bidder job (needs root once per
       upgrade through sudo, or through the broker with an upgrade verb restricted to the bidder label and a
-      program under versions/; decided at M0-GATE); GC removes versions and runtime dirs no job and no
+      program under bin/; decided at M0-GATE); GC removes bin and runtime dirs no job and no
       ComputeVM names. A vfkit asset change applies to new VMs only; running VMs keep their runtime dir
       until released.
-    files: ["cmd/socialweb-computer upgrade (darwin file)", "internal/install/darwin/"]
+    files: ["internal/install/upgrade.go and gc.go (landed: bin/<sha256>/ + bin/current + bin/previous, Rollback, GC by /proc/<pid>/exe and unit files; the darwin halves are RestartOwnUnits, SelfCheck and the process scan)", "internal/assets/procscan_other.go (ProcessesOfUID returns nil today; GC of runtime/<sha256>/ needs a sysctl kern.proc.uid scan on darwin or it may remove a directory a running vfkit executes from)"]
     test_first: "Darwin livegate: TestAnUpgradeKeepsEveryVfkitPidAndStartTimeAndRemovesTheOldVersionOnce. Red first."
     done_when: "Green; vfkit pid/start time before and after recorded."
     risks: []
@@ -553,7 +616,7 @@ items:
       Notarization and Developer ID are the user's question; until answered, the release is ad-hoc signed
       and the docs say how to clear quarantine on a downloaded binary. Byte-identical builds hold for the
       unsigned inputs; signing is a recorded post-step whose output sha256 is pinned.
-    files: ["internal/versions/versions.json (darwin/arm64 entry)", "scripts/build-socialweb-computer.sh", "scripts/sign-darwin-assets.sh", "deploy/check.sh"]
+    files: ["internal/versions/versions.json (platforms.darwin/arm64 is status seam with no assets today; assets: deno, bao, kcp, kine, vfkit, gvproxy if chosen, dumbpipe if the bidder needs it)", "internal/assets (assets_darwin_arm64.go next to assets_linux_arm64.go, blobs/darwin_arm64; assets_release_unsupported.go covers it today with no blobs)", "internal/assets/assetpack", "scripts/build-socialweb-computer.sh", "scripts/sign-darwin-assets.sh", "deploy/check.sh"]
     test_first: "check.sh --full: TestTheReleaseBinaryFitsItsSizeBudget for darwin/arm64 red with a 1-byte budget, then green; TestTheVfkitAssetCarriesTheVirtualizationEntitlement. Red first."
     done_when: "Budget recorded and enforced; signing and reproducibility readings recorded."
     risks: ["Ad-hoc signing on Linux needs a non-Apple codesign implementation (e.g. rcodesign); if signing must happen on a Mac, the release has a Mac step, recorded."]

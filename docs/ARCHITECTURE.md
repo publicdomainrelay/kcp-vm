@@ -3800,6 +3800,46 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **Plan 0012 M0-REVISIT: the darwin seams as they landed, and what the plan missed, on 2026-10-16.** Read at
+  socialweb-computer-kcp 79f40adb (vendored ts/hono-compute-provider and ts/atproto-market at that commit);
+  plans 0006 (45 items), 0007 (32) and 0008 (16) are all done. `GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build
+  ./...` and `go vet ./...` are clean. Seam names, expected by the plan and as landed: the VM host interface is
+  `internal/vmruntime.Runtime` (Prepare, Reserve, Await, Start, Inspect, Stop, Shutdown, List, Cleanup, Watch,
+  Load, CollectImages) over `hostsvc.Manager` (Start, Inspect, Stop, ResetFailed, List, Identify, Check,
+  StopSlice, Watch, Capabilities, Close); the Verdict is `hostsvc.Verdict` (Unknown, Running, Lost) with a
+  `LostReason`; the placement backends are `hostsvc.Backend` `systemd-user` and `proc` (devsup), and
+  `launchd` is the new one; the only Runtime is `firecracker` in `firecracker_linux.go`, and `ForHost`,
+  `hostsvc.Open`, `devsup.Run`, `install.NewSystem` and `hostcontract.Gather` return ErrUnsupported or an empty
+  answer on every other OS. `status.runtime` is `{backend, ref (the unit name), instance (the systemd
+  InvocationID), pid, startTime (the decimal start ticks), hostBootID, vmmID}`; the ComputeVM controller
+  (`internal/computevm`, a client-go loop) places a VM as a `HostProcess` child through the supervisor of
+  `internal/hostprocess`, adopts it by name after a restart, and writes Lost with a reason. The binary install
+  is `bin/<sha256>/` with `bin/current` and `bin/previous` (`internal/install` Upgrade, Rollback, GC; the plan
+  said `versions/<sha256>/`); asset dirs are `runtime/<sha256>/` and `internal/assets.Collect` takes them out
+  only when no loaded unit and no process names them. Guest images are pinned in `versions.json
+  guestImages.targets`, built by `scripts/build-guest-image.sh`, fetched by `internal/guestimage` and never
+  embedded (the plan said embedded darwin-only blobs); `vz-arm64` is reserved there, and the
+  firecracker-aarch64 kernel config has virtio-mmio and no virtio-pci. The bidder unit is `Type=notify` with
+  `WatchdogSec`, `Delegate=yes`, `Restart=always`, and the bidder core brings up kcp, kine (sqlite), the port-0
+  front and the slot as units of the host-unit seam before the ComputeVM controller runs. Darwin stubs today:
+  `hostos` ProcStart, Cmdline, Alive, Signal, Reload, Terminate, BootID, LocalPortRange; `portscan`
+  (`scan_darwin.go`); `execrunner` `osProcessHost` and the cgroup limiter; `hostsvc` Open, ListenPort,
+  OpenProcClient; `vmruntime.ForHost`; `devsup`; `install` System, SelfCheck, RestartOwnUnits;
+  `hostcontract.Gather`; `assets.ProcessesOfUID`; `apiserverfront` fd store; `guestnet.Wire`; `nsexec`;
+  `socialweb-vmexec`. `guestdisk.Clone` and `assets` syncTree have portable fallbacks (plain copy), and the lock
+  is `flock` on every unix. The plan's text was amended for: the Runtime and Manager names and the files they
+  live in, the install layout, the guest image path, the cloud-init module set (secrets, k3s, iroh,
+  poweroff-ends-vm after 0008 M1-STRIP-LEGACY-TRANSPORTS), BootID on darwin (`kern.boottime`) for the
+  HostRebooted reason, and one new item, M1-BOOTSTRAP-DARWIN, because a bidder runs its own kcp and kine and the
+  plan never said a Mac needs them (and the plan excluded kine). Two gaps are recorded inside existing items:
+  launchd has no watchdog, so the core must exit on its own stall (M2-BIDDER-DAEMON-DARWIN), and the bidder core
+  asks the DenoPod runner for cgroup memory limits, which darwin cannot give (M1-BOOTSTRAP-DARWIN).
+  `dev up` (the market network) is Linux only because devsup is, so a Mac bidder joins a market network that
+  runs elsewhere through `run bidder --market-network-file`, or the market network is ported later. The user's
+  2026-10-16 rule that the Mac is never rebooted, signed out or put to sleep splits the reboot, logout and sleep
+  proofs of M0-LAUNCHD-DOMAIN, M0-REBOOT-LOST-POWER, M3-LIVE-SURVIVE and M3-LIVE-REBOOT-LOST into a
+  no-reboot equivalent that is run and a reboot-only remainder that stays blocked.
+
 - **A deleted cluster leaves no slice, no state directory and no failed unit, and the prod canary is a user
   timer on hat-8, on 2026-10-15 (plan 0010 G3-PROD-CANARY).** After the delete fix a deleted cluster
   still left an empty `socialweb-hp-gw-cluster-<key>.slice` (loaded, active, no process), its state
