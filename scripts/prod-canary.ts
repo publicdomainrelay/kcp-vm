@@ -545,7 +545,8 @@ const watchdog = setTimeout(() => {
 try {
   await main();
 } catch (e) {
-  failure = (e as Error).message ?? String(e);
+  const cause = (e as { cause?: unknown }).cause;
+  failure = `${(e as Error).message ?? String(e)}${cause ? `: ${String(cause)}` : ""}`;
 }
 clearTimeout(watchdog);
 await finish();
