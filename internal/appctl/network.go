@@ -2,6 +2,7 @@ package appctl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -10,11 +11,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
@@ -30,6 +33,7 @@ const (
 	CABundleFile        = "ca-bundle.pem"
 	NetworkServiceState = "state"
 	NetworkPortsFile    = "ports.json"
+	FrontRebindAfter    = 30 * time.Second
 )
 
 type service struct {
@@ -55,10 +59,12 @@ type networks struct {
 	applied map[string]int64
 	pkiPEM  []byte
 	peers   string
+
+	rebinding map[string]time.Time
 }
 
 func newNetworks(ctl *Controller) *networks {
-	return &networks{ctl: ctl, applied: map[string]int64{}}
+	return &networks{ctl: ctl, applied: map[string]int64{}, rebinding: map[string]time.Time{}}
 }
 
 func (n *networks) values(spec v1alpha1.MarketNetworkSpec) (manifests.MarketNetwork, error) {
@@ -85,22 +91,33 @@ func (n *networks) values(spec v1alpha1.MarketNetworkSpec) (manifests.MarketNetw
 		PDSPrivateKeyHex: alice, BobPDSPrivateKeyHex: bob, Ports: ports}, nil
 }
 
+var frontPorts = []struct {
+	key  string
+	port func(*manifests.NetworkPorts) *int
+}{
+	{"global/plc", func(p *manifests.NetworkPorts) *int { return &p.Plc }},
+	{"relay/relay", func(p *manifests.NetworkPorts) *int { return &p.Relay }},
+	{"relay/dispatcher", func(p *manifests.NetworkPorts) *int { return &p.Dispatcher }},
+	{"relay/dispatcher-tls", func(p *manifests.NetworkPorts) *int { return &p.DispatcherTLS }},
+	{"alice/pds", func(p *manifests.NetworkPorts) *int { return &p.AlicePds }},
+	{"bob/pds", func(p *manifests.NetworkPorts) *int { return &p.BobPds }},
+}
+
 func servicePorts(views map[string]podView) (manifests.NetworkPorts, error) {
 	var p manifests.NetworkPorts
-	for key, into := range map[string]*int{"global/plc": &p.Plc, "relay/relay": &p.Relay, "relay/dispatcher": &p.Dispatcher,
-		"relay/dispatcher-tls": &p.DispatcherTLS, "alice/pds": &p.AlicePds, "bob/pds": &p.BobPds} {
-		s, err := portFrom(views[key].Address)
+	for _, f := range frontPorts {
+		s, err := portFrom(views[f.key].Address)
 		if err != nil {
-			return p, fmt.Errorf("%s: %w", key, err)
+			return p, fmt.Errorf("%s: %w", f.key, err)
 		}
-		if *into, err = strconv.Atoi(s); err != nil {
-			return p, fmt.Errorf("%s: %w", key, err)
+		if *f.port(&p), err = strconv.Atoi(s); err != nil {
+			return p, fmt.Errorf("%s: %w", f.key, err)
 		}
 	}
 	return p, nil
 }
 
-func (n *networks) holdPorts(views map[string]podView) (string, error) {
+func (n *networks) holdPorts(ctx context.Context, views map[string]podView) (string, error) {
 	live, err := servicePorts(views)
 	if err != nil {
 		return "", err
@@ -110,10 +127,29 @@ func (n *networks) holdPorts(views map[string]podView) (string, error) {
 	if devinstance.ReadJSON(path, &recorded) != nil {
 		return "", devinstance.WriteJSON(path, live)
 	}
-	if live != recorded {
-		return fmt.Sprintf("the network's services listen on %+v, not on the ports they keep across a core restart %+v; waiting for them to bind those again", live, recorded), nil
+	if live == recorded {
+		return "", nil
 	}
-	return "", nil
+	for _, f := range frontPorts {
+		if *f.port(&live) == *f.port(&recorded) {
+			continue
+		}
+		if at, ok := n.rebinding[f.key]; ok && time.Since(at) < FrontRebindAfter {
+			continue
+		}
+		ws, name, _ := strings.Cut(f.key, "/")
+		ri, err := n.ctl.client(n.ctl.c.workspace()+":"+ws, DenoPodGVR)
+		if err != nil {
+			return "", err
+		}
+		patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{denov1alpha1.AnnotationRestart: time.Now().UTC().Format(time.RFC3339Nano)}}})
+		if _, err := ri.Namespace("default").Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: FieldManager}); err != nil {
+			return "", fmt.Errorf("restarting %s onto its kept port: %w", f.key, err)
+		}
+		n.rebinding[f.key] = time.Now()
+		n.ctl.c.log().Info("a market network front is restarted onto the port it keeps", "front", f.key, "listens", *f.port(&live), "keeps", *f.port(&recorded))
+	}
+	return fmt.Sprintf("the network's services listen on %+v, not on the ports they keep across a core restart %+v; waiting for them to bind those again", live, recorded), nil
 }
 
 func (n *networks) applyServices(ctx context.Context, owner string, values *manifests.MarketNetwork) error {
@@ -418,7 +454,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, false, "Waiting", strings.Join(rep.notReady, "; "))
 		return write(v1alpha1.ApplicationPhaseProvisioning, "waiting for the network's services to report ready")
 	}
-	if why, err := n.holdPorts(views); err != nil || why != "" {
+	if why, err := n.holdPorts(ctx, views); err != nil || why != "" {
 		if err != nil {
 			why = err.Error()
 		}
