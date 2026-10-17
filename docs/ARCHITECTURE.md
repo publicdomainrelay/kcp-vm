@@ -3746,6 +3746,50 @@ because it bounds a mechanism the rest of this document leans on.
   `status.market` readings, is the one the plan wrote down: the Bid create moves after the publish and
   dedup falls back to the market.bid record key (an rkey derived from the RFP uri). It needs a reading
   of the prod bidder (hat-8, the lead).
+
+- **The Windows bidder: the seams as they landed (plan 0011 M0-REVISIT, 2026-10-16, read at 79f40adb;
+  hono-compute-provider and atproto-market are `ts/` in the same tree).** `GOOS=windows GOARCH=amd64 go
+  build ./...` and `go vet ./...` are green. The plan was written against names that did not land:
+  - The VM seam is `vmruntime.Runtime` (Prepare, Reserve with a `Placer`, Await, Start, Inspect returning
+    an `Observation`, Shutdown, Stop, List, Cleanup, Watch, Load, CollectImages). The verdict type is
+    `hostsvc.Verdict`. The service-manager seam is `hostsvc.Manager`; its `UnitSpec` is an argv plus
+    cgroup limits, so it cannot describe an HCS system. The ComputeVM controller (`internal/computevm`)
+    does not call the runtime alone: `Reserve` hands a `Placer` that creates a `HostProcess` child, the
+    supervisor starts the unit through `Manager`, and the controller reads liveness, orphans, exits and
+    events from `Manager`. A Windows VM backend therefore needs the controller to ask the runtime, not
+    the manager (item M1-CONTROLLER-RUNTIME-OWNED).
+  - `status.runtime` is `{backend, ref (the unit name), instance (the InvocationID), pid, startTime (start
+    ticks as a string), hostBootID, vmmID}`; `Backend` is a free string in the API, but `hostsvc.ParseBackend`
+    accepts only `systemd-user` and `proc`.
+  - kcp is the unpatched release asset kcp v0.33.0 in its own unit behind kine on sqlite (cgo) and our
+    front, not in-process. The assets table has no windows/amd64 kcp, kine or any other entry
+    (`platforms["windows/amd64"]` is status seam with zero assets). The `proc` backend is `devsup`, which
+    is Linux-only. The bootstrap layer is installed systemd units.
+  - The guest image is a `guestImages` target built by `scripts/build-guest-image.sh`, never embedded, fetched
+    and verified by `internal/guestimage`; `hyperv-x86_64` is a reserved target name. It has no initramfs:
+    the kernel boots `root=/dev/vda` from the rootfs ext4 and cloud-init reads a pure-Go NoCloud cidata
+    drive (`internal/guestseed`). There is no `socialweb-nodeinit` in the VM path.
+  - The guest network is constant: guest 172.30.0.2/30, gateway 172.30.0.1, MAC 06:00:ac:1e:00:02, host
+    address 192.0.2.1 (`internal/guestnet`, pasta maps 192.0.2.1 to the host loopback). There is no network
+    index allocator. An HNS NAT network per host cannot give every guest this plan; M0-HNS-NETWORK measures
+    what Windows can do with it.
+  - iroh is the only guest transport; guests have no JSR registry, websocat or tunnel module.
+  - The core binary installs to `bin/<sha>/` with `bin/current` and `bin/previous` (not `versions/<sha256>/`);
+    assets are `runtime/<sha256>/`, collected when unreferenced. `install` is behind `install.System` and
+    `UserManager`, which are systemd and account shaped (`system_other.go` refuses on !linux). The bidder
+    core is `Type=notify` with a watchdog (`internal/notify`).
+  - The DenoPod runner is `internal/kcplibs/impl/execrunner` with an `osProcessHost` seam (prepare,
+    killGroup, termGroup, alive, startTicks); `runner_windows.go` is a refusing stub.
+  - Windows stubs today: `hostsvc.Open`, `OpenProcClient`, `ListenPort(s)`; `vmruntime.ForHost`;
+    `hostos.BootID`; `execrunner.osProcessHost`; `install.NewSystem`, `SelfCheck`, `RestartOwnUnits`,
+    `NewStagedSystem`; `hostcontract.Gather`; `guestnet.Wire`; `devsup`; `nsexec`; `apiserverfront` hold;
+    `cmd/socialweb-vmexec`; the release asset blobs (`assets_release_unsupported.go`). `hostos` process
+    identity, lock, port range and `DieWithParent` (empty) have Windows bodies.
+  - Decision (decided by Claude, user may veto): on Windows every non-VM host process of a bidder (kine,
+    kcp slot, front, OpenBao, deno) is a child of the bidder service inside a kill-on-close job object. Only
+    VMs outlive the core, and HCS owns them. This replaces the plan's pre-installed vault service.
+  - Decision from the user (2026-10-16): the Windows desktop is never rebooted, shut down or signed out. A
+    reboot-only proof is `blocked` and its closest no-reboot equivalent is measured and labelled.
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,

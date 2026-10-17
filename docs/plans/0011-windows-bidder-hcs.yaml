@@ -17,6 +17,12 @@ source: >
   List by owner) with one backend per OS; a host-unit/service-manager interface; an OS-neutral
   ComputeVM status.runtime {backend, ref, instance, pid?, startTime?}; a content-addressed binary install
   versions/<sha256>/; asset dirs runtime/<sha256>/ garbage-collected only when nothing references them.
+  AS LANDED (M0-REVISIT, ARCHITECTURE section 14 "The Windows bidder: the seams as they landed"): the VM
+  seam is vmruntime.Runtime (Prepare, Reserve with a Placer, Await, Inspect -> Observation, Shutdown, Stop,
+  List, Cleanup, Watch, Load, CollectImages); the verdict is hostsvc.Verdict; the service manager is
+  hostsvc.Manager (unit/argv shaped); status.runtime is {backend, ref=unit, instance=InvocationID, pid,
+  startTime=ticks, hostBootID, vmmID}; the core installs to bin/<sha>/ (bin/current, bin/previous) and assets
+  to runtime/<sha256>/. Read every "versions/<sha256>/" below as bin/<sha>/.
   Headless servers only. A VM survives a crash or upgrade of the core binary and any logout; a host
   reboot makes every VM Lost, replaced through a new RFP. The mechanism is the native one per OS. The
   invariant: no socialweb-computer code is in a running VM's process tree; the OS service manager or VMM
@@ -26,6 +32,8 @@ source: >
   code, docs, architecture and plan items are changeable; the best solution wins.
 state_rules:
   - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
+  - "AGENTS.md overrides this plan where they differ (amended by M0-REVISIT 2026-10-16): write no unit tests (ignore every test_first field; an offline or livegate test named in an item is a manual live proof or, at the end, an integration test in test/integration), flip an item's status only (the git history is the evidence), put decisions and readings in docs/ARCHITECTURE.md sections 14 and 15."
+  - "The Windows machine is the user's own desktop and Linux workstation (decided by the user 2026-10-16): it is never rebooted, shut down, hibernated or signed out, not even on request, and nothing that needs a restart is enabled. A proof that needs a reboot is replaced by its closest no-reboot equivalent (the compute system's owner killed, the compute system terminated so Inspect answers Lost) and the reboot-only part is blocked."
   - This file is the only state. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
   - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
@@ -120,7 +128,7 @@ items:
       items, and the windows stub list.
     risks:
       - "If 0006/0007 change after this ran, the state rule sends this item back to doing; the evidence keeps every SHA it was run against."
-    status: todo
+    status: done
     evidence: []
   - id: M0-HOST-BASELINE
     milestone: M0
@@ -133,12 +141,13 @@ items:
       WSL2 or Docker Desktop is installed and the NAT prefixes they hold (Get-NetNat), Defender state,
       the BitLocker state, and the group membership of the executor's account. Then build the landed tree
       for windows/amd64 on this host and run, as an unprivileged user: `version --json`, `check-host`,
-      in-process kcp on port 0 with its OnListen ports (0006:M2-KCP-PORT0), the embedded deno (0008:M1-DENO)
-      running one fixture entry with --cached-only, an OpenBaoServer object (0006:M2-OPENBAO-SERVER) with
-      the windows bao asset, and one DenoPod through the forked runner. Each that fails is an item added
-      here by name. Fallback if in-process kcp's embedded etcd does not run on Windows: record the error
-      and add an item for etcd as a separate embedded child (an etcd windows/amd64 release asset) with the
-      same OnListen contract; decided by Claude, user may veto.
+      kcp (as landed: the release kcp binary behind kine on sqlite, not in-process; neither has a
+      windows/amd64 asset, so the reading is whether kcp v0.33.0 and kine build for windows/amd64 from
+      source and run, each on port 0), the embedded deno (0008:M1-DENO) running one fixture entry with
+      --cached-only, the windows bao release, and one DenoPod through the forked runner (expected: refuses,
+      runner_windows.go is a stub). Each that fails is an item added here by name. Fallback if kcp or kine
+      do not build or run on Windows: record the error and add an item that decides between a source
+      build asset per tool and running the bidder's bootstrap layer elsewhere; decided by Claude, user may veto.
     files: ["evidence only; new items appended to this file for every failure"]
     test_first: "None (measurement). The reading is each command's output and exit status with UTC timestamps."
     done_when: "Host record committed in evidence; each of the five non-VM modes recorded as works or fails-with-item."
@@ -165,9 +174,11 @@ items:
       adapter on an HNS endpoint, ComPorts 0 to a named pipe; HcsGrantVmAccess on every file. Driven by
       runComputeContract against the market network or, if the market network does not yet run on Windows (M0-HOST-BASELINE),
       against the canonical harness shape of ts/atproto-market/test/bidder_container_integration_test.ts with
-      the bidder pointed at its local dispatcher. The guest reaches onNetwork and the requester's tunnel
-      answers; zero ssh.
-    files: ["scratch branch only: internal/vmhost (hcs scratch backend), the kernel config, the disk writer; evidence names the branch and SHA"]
+      the bidder pointed at its local dispatcher. The guest reaches onNetwork and the requester's iroh
+      session answers; zero ssh. As landed the guest image has no initramfs: the scratch guest kernel
+      boots root=/dev/sda from the rootfs VHD (hv_storvsc built in), the seed is the NoCloud cidata disk of
+      internal/guestseed, and the fixed guest network of internal/guestnet is its network-config.
+    files: ["scratch branch only: internal/vmruntime (hcs scratch backend behind vmruntime.Runtime), deploy/guest-kernel/hyperv-x86_64.config, the disk writer; evidence names the branch and SHA"]
     test_first: >
       The live rent itself: the requester's runComputeContract onNetwork callback fires within the boot
       timeout, the guest's cloud-init log (read from the COM1 pipe) shows every module of the user_data
@@ -175,7 +186,7 @@ items:
       waiting for its root) and then green.
     done_when: "One guest rented through the RFP flow on this host reached onNetwork and was released with vm.delete 200; boot time and the guest's console log recorded."
     risks:
-      - "cmd/socialweb-nodeinit/main.go:14-16 waits for /dev/vda; under Hyper-V the root arrives as /dev/sda. The scratch init waits for the disk by label, which M1-GUEST-IMAGE-HV makes the rule."
+      - "The landed guest boots root=/dev/vda with no init of ours; under Hyper-V the root arrives as /dev/sda, so the boot arguments of the hyperv-x86_64 target say root=/dev/sda (the rootfs is the only disk on SCSI controller 0 LUN 0)."
       - "If LinuxKernelDirect is refused on this build (schema 2.2), the fallback is UEFI boot from the rootfs VHD with the kernel inside it (WslCoreVm.cpp's other path); recorded and taken into M1-GUEST-IMAGE-HV."
     status: todo
     evidence: []
@@ -209,6 +220,9 @@ items:
     title: A compute system with ShouldTerminateOnLastHandleClosed=false outlives its creator; what vmcompute restart does
     depends_on: [M0-SCRATCH-BACKEND]
     decision: >
+      Safety first (the machine is the user's own): before (3) and (4) read whether any WSL distribution,
+      Docker or other HCS system is running; restart vmcompute or hns only when none is, else record the
+      refusal-to-risk as the reading and block that part. Never a reboot.
       With a guest rented through the RFP flow by the scratch bidder: (1) TerminateProcess the bidder
       (taskkill /F /PID) and read, every 5 s for 10 minutes, the compute system's State and RuntimeId from
       a fresh HcsOpenComputeSystem in another process, plus the guest's onNetwork heartbeat and the
@@ -252,6 +266,12 @@ items:
     title: An HNS NAT network for guests, an endpoint per guest, tenant isolation, and coexistence with WSL and Docker
     depends_on: [M0-HCS-ACCOUNT]
     decision: >
+      As landed every guest has the same fixed network (internal/guestnet: guest 172.30.0.2/30, gateway
+      172.30.0.1, MAC 06:00:ac:1e:00:02, and it dials the constant host address 192.0.2.1); there is no
+      network index allocator and user_data is final at create. So also measure whether one HNS network per
+      guest can carry that identical plan (the host side 172.30.0.1 of each guest on its own isolated
+      network, and 192.0.2.1 reaching the bidder's listeners), or whether the Windows guest needs a
+      per-backend network-config (a seam change in guestseed/guestnet, to be written as a new item).
       Measure: HcnCreateNetwork of type NAT with a /24 the installer chooses (refusing a prefix any
       existing Get-NetNat or HNS network holds), with and without EnableNonPersistent; who may create it
       (M0-HCS-ACCOUNT's table); an endpoint per guest created at Start and deleted at Stop versus an
@@ -293,8 +313,8 @@ items:
     title: Upgrading a running service whose exe is locked, through versions/<sha256>/ and the SCM ImagePath
     depends_on: [M0-HCS-SURVIVAL, M0-HCS-ACCOUNT]
     decision: >
-      With the scratch bidder installed as an SCM service at versions/<sha A>/socialweb-computer.exe and a
-      guest rented: write versions/<sha B>/socialweb-computer.exe, ChangeServiceConfig the ImagePath,
+      With the scratch bidder installed as an SCM service at bin/<sha A>/socialweb-computer.exe and a
+      guest rented: write bin/<sha B>/socialweb-computer.exe, ChangeServiceConfig the ImagePath,
       restart the service; read: the guest's RuntimeId unchanged, the new process's version, the old exe
       deletable only after the service stopped using it. Also measure: Defender scanning a newly written
       exe (time to first start), and whether the virtual account may rewrite its own service's config
@@ -323,12 +343,52 @@ items:
     risks: []
     status: todo
     evidence: []
+  - id: M1-CONTROLLER-RUNTIME-OWNED
+    milestone: M1
+    title: The ComputeVM controller asks the VM runtime for liveness, orphans and events instead of the unit manager and HostProcess children
+    depends_on: [M0-GATE]
+    decision: >
+      Added by M0-REVISIT. internal/computevm calls hostsvc.Manager.Inspect for liveness (live, placer,
+      exits), lists HostProcess children for orphans, builds the VM slice name from vmruntime.SliceName
+      and watches unit events, and Reserve hands a Placer that creates the HostProcess child. An HCS system
+      has none of these. The seam becomes: Runtime gets the liveness and watch calls the controller needs
+      (a runtime that places no HostProcess says so in Capabilities), the Linux runtime keeps its
+      Placer path unchanged, and the controller branches on the capability, not on GOOS. Status.runtime
+      stays the landed shape; on Windows backend=hcs, ref=compute system Id, instance=RuntimeId, pid and
+      startTime empty, hostBootID empty.
+    files: ["internal/computevm/computevm.go", "internal/vmruntime/vmruntime.go"]
+    test_first: "None (AGENTS.md: no tests). Proof: the Linux market network still rents a guest."
+    done_when: "The Linux path is unchanged in a live rent and a controller can run with a runtime that places no HostProcess."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M1-KCP-WINDOWS
+    milestone: M1
+    title: kcp, kine and the other bootstrap executables for windows/amd64 as pinned assets
+    depends_on: [M0-GATE, "0006:M1-ASSETS", "0006:M2-KCP-SLOTS"]
+    decision: >
+      Added by M0-REVISIT. The landed bidder runs the unpatched release kcp v0.33.0 behind kine v0.17.1 (the
+      cgo sqlite build) and our front; the assets table has no windows/amd64 entry for kcp, kine, deno,
+      bao or the plugins (versions.json platforms["windows/amd64"] is status seam with no assets), and
+      the upstream kcp release carries no windows archive. M0-HOST-BASELINE reads whether kcp and kine
+      build and run on Windows; this item then pins what it found: a source build per tool on the
+      release builder (CGO_ENABLED=0 where possible, a pure-Go sqlite for kine), deno and bao from their
+      windows/amd64 releases, each by sha256 in versions.json, staged by the same asset pipeline.
+    files: ["internal/versions/versions.json (windows/amd64 assets)", "internal/assets", "scripts/build-socialweb-computer.sh"]
+    test_first: "None (AGENTS.md: no tests)."
+    done_when: "The windows/amd64 asset list is pinned and the Windows host runs a bootstrap layer (kine, kcp, front) from those assets."
+    risks: ["kcp may not build for windows at all; if so the bidder's kcp runs elsewhere and this plan stops for the user."]
+    status: todo
+    evidence: []
   - id: M1-VMHOST-HCS
     milestone: M1
     title: The Windows backend of the VM host seam over HCS, with no helper process
-    depends_on: [M0-GATE, "0007:M2-CONTROLLER", "0007:M1-API"]
+    depends_on: [M0-GATE, M1-CONTROLLER-RUNTIME-OWNED, "0007:M2-CONTROLLER", "0007:M1-API"]
     decision: >
-      vmhost_windows.go (build tag windows) implements the landed seam: Start writes the compute system
+      hcs_windows.go in internal/vmruntime (build tag windows, ForHost returns it) implements the landed
+      vmruntime.Runtime (Prepare, Reserve, Await, Inspect, Shutdown, Stop, List, Cleanup, Watch, Load,
+      CollectImages; Reserve ignores the Placer because an HCS system has no HostProcess child; Watch polls
+      HcsEnumerateComputeSystems): Start writes the compute system
       document (Owner socialweb-computer-<handle>, ShouldTerminateOnLastHandleClosed false, LinuxKernelDirect,
       SCSI rootfs + cidata, the HNS endpoint, ComPorts 0 pipe, memory and processor count from the
       ComputeVM spec), grants VM access to each file, creates, starts, then closes its handle; it records
@@ -340,7 +400,7 @@ items:
       hcsshim is imported only for ext4/tar2ext4 (decided by Claude, user may veto: hcsshim's hcs package is
       container-oriented and pulls a large tree). An HCS system of this Owner with no ComputeVM is the
       controller's orphan rule (0007:M2-CONTROLLER), never touched if its Owner differs.
-    files: ["internal/vmhost/hcs_windows.go (or the landed seam package)", "internal/vmhost/hcs_windows_test.go", "internal/hcsapi/ (windows-only wrapper)"]
+    files: ["internal/vmruntime/hcs_windows.go", "internal/hcsapi/ (windows-only wrapper)"]
     test_first: >
       Offline on any OS: TestTheHcsDocumentForAComputeVMSetsOwnerAndNeverTerminatesOnLastHandle (golden
       JSON) and TestTheHcsVerdictTable (fake API: not found -> Lost, RuntimeId differs -> Lost, access
@@ -356,12 +416,13 @@ items:
     title: Guest networking on Windows through one HNS NAT network and an endpoint per guest
     depends_on: [M0-GATE, M1-VMHOST-HCS]
     decision: >
-      From M0-HNS-NETWORK: the network is created once by the installer (M2-INSTALLER-WINDOWS); each
-      ComputeVM gets an endpoint (MAC from compute-provider-common guestMacFor, address from the network
-      index the controller already allocates, 0007:M2-CONTROLLER) plus the isolation ACL M0 proved; the
-      guest's host address is the network gateway, and the bidder's guest-facing listeners bind it. The
-      network allocation part of the seam gets its windows file; Linux pasta is untouched.
-    files: ["internal/vmhost/hns_windows.go", "internal/hcnapi/", "hono-compute-provider compute-provider-common pointGuestAtHost callers (the host address comes from status.network.gateway)"]
+      From M0-HNS-NETWORK. As landed there is no network index: every guest has the fixed plan of
+      internal/guestnet and dials 192.0.2.1. M0-HNS-NETWORK decides whether the Windows backend satisfies
+      that plan with an HNS network per guest, or the guest's network-config becomes per backend (a new
+      seam in guestseed/guestnet). The endpoint (MAC guestnet.GuestMAC) and its isolation policy are made at
+      Start and deleted at Stop; the bidder's guest-facing listeners bind the address the guest dials. Linux
+      pasta is untouched.
+    files: ["internal/vmruntime/hns_windows.go", "internal/hcnapi/", "internal/guestnet (per-backend plan, if M0 says so)"]
     test_first: "Offline: TestTheEndpointDocumentCarriesTheIsolationAcl (golden). Livegate on Windows: TestTwoRfpGuestsOnOneBidderCannotReachEachOther (probe in each guest's user_data, result on onNetwork). Red first."
     done_when: "Both green; the isolation reading recorded."
     risks: []
@@ -370,19 +431,20 @@ items:
   - id: M1-GUEST-IMAGE-HV
     milestone: M1
     title: The guest kernel, initramfs and rootfs for Hyper-V, built on Linux, carried as windows-only assets, written to VHDs in pure Go
-    depends_on: [M0-GATE, "0006:M1-ASSETS", "0007:M2-BACKPORT"]
+    depends_on: [M0-GATE, "0006:M1-ASSETS", "0007:M1-GUEST-IMAGE", "0007:M2-BACKPORT"]
     decision: >
-      A Windows host has no Linux kernel to copy (cmd/socialweb-nodeimage/main.go:42-45), so the guest
-      image is built by the release build on Linux and embedded only in the windows/amd64 binary (0006's
-      per-OS asset pipeline): an x86_64 kernel with the Hyper-V drivers built in (the M0 config), the
-      initramfs whose init waits for the root by label (not /dev/vda), and the rootfs tar (the same
-      preinstall manifest 0007 inventoried, M1-FC-INVENTORY). On the host, the controller converts the
-      rootfs tar to an ext4 VHD once per image fingerprint under runtime/<sha256>/ and writes the
-      per-guest cidata VHD with tar2ext4; a guest's rootfs is a copy (differencing VHDX through
-      virtdisk.dll is a later optimisation, recorded, not built). Whether this kernel is a separate
-      hypervisor target or one multi-driver x86_64 kernel shared with firecracker/qemu is the user's
-      question; until answered, a separate target (decided by Claude, user may veto).
-    files: ["scripts/build-guest-image.sh (hyperv target)", "internal/assets (windows-only guest image blobs)", "internal/vmhost/disks_windows.go", "cmd/socialweb-nodeinit (root by label)", "internal/versions/versions.json (guest image pins)"]
+      As landed (0007 M1-GUEST-IMAGE) a guest image is a guestImages target of versions.json built on any
+      Linux host by scripts/build-guest-image.sh, pinned by the sha256 of each output (vmlinux, rootfs.ext4,
+      image.json), never embedded, and fetched and verified by internal/guestimage; there is no initramfs
+      and no nodeinit in the VM path. So this item adds the reserved target hyperv-x86_64: an x86_64
+      kernel config deploy/guest-kernel/hyperv-x86_64.config with the Hyper-V drivers built in (the M0
+      config) and boot arguments root=/dev/sda, the same Ubuntu base rootfs and preinstall manifest. On the
+      host the rootfs ext4 is wrapped as a fixed VHD (a VHD footer appended, pure Go) once per image
+      fingerprint under runtime/<sha256>/, the per-guest cidata disk is the landed guestseed image the same
+      way, and a guest's rootfs is a copy (differencing VHDX through virtdisk.dll is a later optimisation).
+      Whether this kernel is a separate hypervisor target or one multi-driver x86_64 kernel shared with
+      firecracker is the user's question; until answered, a separate target (decided by Claude, user may veto).
+    files: ["scripts/build-guest-image.sh (hyperv target)", "deploy/guest-kernel/hyperv-x86_64.config", "internal/guestdisk (vhd wrapper, windows copy)", "internal/guestimage", "internal/versions/versions.json (guestImages target and pins)"]
     test_first: >
       Offline: TestTheHypervKernelConfigHasEveryDriverBuiltIn (parses the shipped .config: HYPERV,
       HYPERV_STORAGE, HYPERV_NET, HYPERV_VSOCKETS, EXT4_FS =y), TestTar2Ext4ProducesAnImageCloudInitReadsAsCidata
@@ -396,13 +458,14 @@ items:
     title: The forked DenoPod runner on Windows - a job object per run, identity by creation time
     depends_on: [M0-GATE, "0008:M2-DENOKCP-FORK"]
     decision: >
-      The runner's process-group code (kcp-libs supervisor.go:141 Setpgid, :156/:322 SIGKILL of the group,
-      :249-268 recovery by pid and start ticks) gets a windows file: each run is a process created
+      The runner is internal/kcplibs/impl/execrunner, and the OS part is its osProcessHost seam (prepare,
+      killGroup, termGroup, alive, startTicks), whose runner_windows.go refuses today. It gets a real
+      body: each run is a process created
       suspended, assigned to its own job object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE), then resumed; stop
       is TerminateJobObject; recovery uses internal/hostos.ProcStart (GetProcessTimes creation time). Every
       per-run job is nested in the bidder service's own kill-on-close job (M2-BIDDER-SERVICE-WINDOWS), so a
       crash of the core binary kills every deno process and no VM (VMs are not in any job of ours).
-    files: ["internal/kcplibs/impl/execrunner/supervisor_windows.go (or the landed fork path)", "internal/hostos/job_windows.go"]
+    files: ["internal/kcplibs/impl/execrunner/runner_windows.go", "internal/hostos/job_windows.go"]
     test_first: "Windows livegate: TestAKilledRunnerParentTakesEveryDenoChildWithIt and TestARunIsRecoveredByPidAndCreationTime. Red first (today the package does not build for windows)."
     done_when: "GOOS=windows build of the runner green; both tests green on the Windows host."
     risks: ["Deno on Windows spawns its own subprocesses rarely; any it spawns inherit the job unless CREATE_BREAKAWAY_FROM_JOB is allowed, which the job forbids."]
@@ -410,29 +473,31 @@ items:
     evidence: []
   - id: M1-HOSTUNIT-SCM
     milestone: M1
-    title: The host-unit seam on Windows - install-time SCM services started and stopped by the bidder
-    depends_on: [M0-GATE, "0006:M2-HOST-UNITS"]
+    title: The hostsvc.Manager backend on Windows - every non-VM host process is a child of the bidder service in a kill-on-close job
+    depends_on: [M0-GATE, "0006:M2-HOST-UNITS", M1-KCP-WINDOWS]
     decision: >
-      On Linux the host-unit seam starts transient systemd units at runtime. On Windows VMs need no host
-      unit (HCS owns them), and the only other long-lived child of a bidder is its OpenBao
-      (0007:M4-BIDDER-VAULT). Creating SCM services at runtime needs SC_MANAGER_CREATE_SERVICE, which a
-      non-admin identity lacks, so (decided by Claude, user may veto) the installer creates
-      socialweb-computer-vault-<handle> once (ImagePath = the extracted bao under runtime/<sha256>/, its
-      own virtual account), with a service DACL granting the bidder's account start, stop and query; the
-      windows backend of the seam maps Start/Stop/Inspect onto those pre-installed services and refuses
-      any unit it was not installed with, naming the installer command. A bao asset change re-points the
-      ImagePath through the same elevated upgrade path as M2-BINARY-UPGRADE-WINDOWS.
-    files: ["internal/hostsvc/scm_windows.go (or the landed seam package)", "internal/hostsvc/scm_windows_test.go"]
-    test_first: "Windows livegate: TestThePreinstalledVaultServiceOutlivesTheBidderAndIsAdopted; offline: TestAnUninstalledUnitIsRefusedNamingTheInstaller. Red first."
-    done_when: "Both green; the bidder's vault survives a TerminateProcess of the bidder with its KV readable after."
+      Amended by M0-REVISIT. As landed, hostsvc.Manager is argv and cgroup shaped, hostsvc.Open refuses on
+      !linux, ParseBackend knows only systemd-user and proc, the proc backend (devsup) is Linux-only, and a
+      bidder's bootstrap layer (kine, kcp slot, front) plus its OpenBao are units. Only VMs must outlive the
+      core, and HCS owns them. So (decided by Claude, user may veto) the Windows backend, named job, starts
+      each unit as a child process of the bidder service inside the kill-on-close job object, reports
+      Inspect from the process handle, and a restart of the core re-creates its children (kcp state
+      persists in kine's sqlite, OpenBao on disk, VMs in HCS). No SCM service per child, no
+      SC_MANAGER_CREATE_SERVICE, no admin after install. Capabilities say EnforcesLimits false and no
+      FDStore or PrivateHostname, so hostsvc.RefuseUnsupported refuses those specs by name.
+    files: ["internal/hostsvc/job_windows.go", "internal/hostsvc/hostsvc.go (BackendJob)", "internal/hostos/job_windows.go"]
+    test_first: "None (AGENTS.md: no tests)."
+    done_when: "The bidder's bootstrap layer and OpenBao start as job children on Windows and a killed core takes every one of them with it."
     risks: []
     status: todo
     evidence: []
   - id: M2-BIDDER-SERVICE-WINDOWS
     milestone: M2
     title: run bidder as a Windows service, its deno children dying with it, its VMs not
-    depends_on: [M1-VMHOST-HCS, M1-NETWORK-HNS, M1-GUEST-IMAGE-HV, M1-DENOPOD-RUNNER-WINDOWS, M1-HOSTUNIT-SCM, "0007:M5-RUN-BIDDER"]
+    depends_on: [M1-VMHOST-HCS, M1-NETWORK-HNS, M1-GUEST-IMAGE-HV, M1-DENOPOD-RUNNER-WINDOWS, M1-HOSTUNIT-SCM, M1-KCP-WINDOWS, "0007:M5-RUN-BIDDER"]
     decision: >
+      As landed the bidder core is Type=notify with a watchdog (internal/notify); under SCM the same Ready
+      and Watchdog calls become service status reports.
       `socialweb-computer run bidder --handle <h>` detects it was started by SCM and runs under
       golang.org/x/sys/windows/svc (stop, shutdown and preshutdown handled with a bounded drain), service
       name socialweb-computer-bidder-<h>, account from M0-HCS-ACCOUNT (preferred NT SERVICE\socialweb-computer-bidder-<h>),
@@ -464,7 +529,7 @@ items:
       runtime\ and vms\ (VHD IO) and nothing else; (6) the binary into versions\<sha256>\, the bidder and
       vault services with their DACLs; (7) check-host. `uninstall bidder` reverses each, refusing while a
       ComputeVM is Running unless --drain.
-    files: ["cmd/socialweb-computer install/uninstall (windows file)", "internal/install/windows/", "docs/bidder-host-windows.md"]
+    files: ["internal/install/system_windows.go (the install.System of the landed install flow; UserManager has no Windows meaning, the bidder service stands in for the user unit)", "internal/install/templates (Windows service definition)", "docs/bidder-host-windows.md"]
     test_first: "Offline: TestTheInstallPlanIsObservedBeforeEachChange (fake system: a second run changes nothing); Windows livegate: TestInstallTwiceThenUninstallLeavesTheHostAsFound (feature step skipped). Red first."
     done_when: "Both green; a clean-host install reading recorded end to end with timings."
     risks: ["Group Policy may block Defender exclusions or service DACL changes; each refusal is printed with the policy name, not ignored."]
@@ -515,7 +580,7 @@ items:
       from cloud-init user_data in an HCS system, reaches onNetwork, and the requester reaches it only
       through the relay tunnel. Read: ComputeVM Running with status.runtime {hcs, Id, RuntimeId}; the bid
       config, receipt and onNetwork records field-for-field the shapes the firecracker provider writes.
-    files: ["internal/marketnetwork/live_test.go (TestAWindowsBidderRentsAnHcsGuestThroughTheRFPFlow, windows tag)"]
+    files: ["test/integration (a Windows integration test, written only at the end per AGENTS.md; until then a manual live run)"]
     test_first: "The live test, red until M2 exists."
     done_when: "PASS with UTC timestamps on the Windows host; zero ssh sessions in every log."
     risks: []
@@ -531,7 +596,7 @@ items:
       `socialweb-computer upgrade --binary <a build with a different closure>`, same reads plus every
       DenoPod on the new closure; then releaseCompute's vm.delete answered 200, the ComputeVM gone,
       HcsEnumerateComputeSystems by Owner empty, the endpoint and the work dir's VHDs gone.
-    files: ["internal/marketnetwork/live_test.go (TestAWindowsBidderKilledAndUpgradedKeepsItsVmAndStillReleasesIt)"]
+    files: ["test/integration (a Windows integration test, written only at the end per AGENTS.md; until then a manual live run)"]
     test_first: "That test, red until M2 exists."
     done_when: "PASS readings recorded with UTC timestamps; zero ssh sessions."
     risks: []
@@ -542,12 +607,18 @@ items:
     title: A host reboot makes every VM Lost, never booted again, and the receipt still releases
     depends_on: [M3-LIVE-SURVIVE]
     decision: >
-      With a guest rented through the RFP flow: Restart-Computer. After boot the bidder service starts
+      AMENDED 2026-10-16 (the user forbids any reboot of this machine): the reboot itself is never run and
+      that part stays blocked. The equivalent that is run: with a guest rented through the RFP flow, stop
+      the bidder service, terminate the guest's compute system (the HCS system is gone, as after a reboot),
+      start the service; the controller reads Lost for that Id, creates no system, and the receipt's
+      release answers vm.delete 200 and removes the Lost ComputeVM and its work dir. What a real reboot
+      would add and stays unproven: the service's automatic start at boot, HNS network persistence across
+      a boot, and the boot-id change. Original text: Restart-Computer. After boot the bidder service starts
       (automatic start), the controller re-populates: the ComputeVM is Lost (HCS has no system with that
       Id), no compute system is created for it, and the requester's releaseCompute of that receipt gets
       vm.delete 200 and the Lost ComputeVM and its work dir are deleted. The requester-side replacement
       through a new RFP is plan 0005 M3-NODE-LOSS's and is not re-proved here.
-    files: ["internal/marketnetwork/live_test.go (TestAWindowsHostRebootLeavesLostComputeVMsThatStillRelease, a two-phase test resumed after boot)"]
+    files: ["test/integration (a Windows integration test, written only at the end per AGENTS.md)"]
     test_first: "That test, red until M2 exists."
     done_when: "PASS readings recorded: pre-reboot Running, post-reboot Lost, no new HCS system, release 200."
     risks: ["If the HNS network is non-persistent it must be recreated before the controller allocates; the installer's network is persistent unless M0 decided otherwise."]
