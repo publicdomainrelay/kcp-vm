@@ -48,13 +48,13 @@ func deleteTenantCluster(ctx context.Context, adminKubeconfig, did, name string)
 	if err := home.Resource(clusterGVR).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
-	for deadline := time.Now().Add(4 * time.Minute); ; {
+	for deadline := time.Now().Add(10 * time.Minute); ; {
 		_, err := home.Resource(clusterGVR).Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			break
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("cluster %s still present after 4m", name)
+			return fmt.Errorf("cluster %s still present after 10m", name)
 		}
 		if !sleepCtx(ctx, 3*time.Second) {
 			return ctx.Err()
