@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/provider"
@@ -29,7 +28,6 @@ const (
 	PolicyEngineEntry = "ts/policy-engine/lib/policy-engine-server-gha-lite"
 	RetryAfter        = 2 * time.Second
 	WatchListEnv      = "KUBE_FEATURE_WatchListClient"
-	RunsUnitSuffix    = "-denopods" + hostsvc.ServiceSuffix
 )
 
 type Config struct {
@@ -43,6 +41,7 @@ type Config struct {
 	OpenBaoFrom  func(context.Context) (OpenBao, error)
 	Log          *slog.Logger
 	Units        hostsvc.Manager
+	RunsUnit     string
 
 	EnforceMemory bool
 }
@@ -73,12 +72,8 @@ func (c Config) ClosureEnv() []string {
 	return []string{TSRootEnv + "=" + c.Closure.Root, TSKeyEnv + "=" + c.Closure.Key, TSModeEnv + "=" + string(c.Closure.Mode)}
 }
 
-func RunsUnit(coreUnit string) string {
-	return strings.TrimSuffix(coreUnit, hostsvc.ServiceSuffix) + RunsUnitSuffix
-}
-
 func (c Config) holdsRuns() bool {
-	return c.Units != nil && c.Unit != "" && c.Units.Capabilities().Backend == hostsvc.BackendSystemdUser
+	return c.Units != nil && c.RunsUnit != "" && c.Units.Capabilities().Backend == hostsvc.BackendSystemdUser
 }
 
 func (c Config) Holder(ctx context.Context) execrunner.Holder {
@@ -90,7 +85,7 @@ func (c Config) Holder(ctx context.Context) execrunner.Holder {
 		if err != nil {
 			return 0, err
 		}
-		spec := hostsvc.UnitSpec{Name: RunsUnit(c.Unit), Description: "the DenoPods and PolicyEngines that " + c.Unit + " runs; they outlive a restart of it",
+		spec := hostsvc.UnitSpec{Name: c.RunsUnit, Description: "the DenoPods and PolicyEngines of " + c.StateDir + "; they outlive a restart of its core",
 			Exec: []string{sleep, "infinity"}, Delegate: true, Restart: hostsvc.RestartNo, OOMPolicy: "continue"}
 		st, err := c.Units.Start(ctx, spec)
 		if err == nil && st.MainPID == 0 {
@@ -228,15 +223,8 @@ func Run(ctx context.Context, c Config) error {
 	}
 	defer p.Close()
 	log.Info("the deno runtime runs in the core", "deno", c.Deno, "runsDir", RunsDir(c.StateDir), "closure", c.Closure.Key,
-		"closureRoot", c.Closure.Root, "unit", c.Unit, "kcp", restCfg.Host, "openbao", c.OpenBao.Address, "runsUnit", c.runsUnitName())
+		"closureRoot", c.Closure.Root, "unit", c.Unit, "kcp", restCfg.Host, "openbao", c.OpenBao.Address, "runsUnit", c.RunsUnit, "runsUnitHolds", c.holdsRuns())
 	return p.Run(ctx)
-}
-
-func (c Config) runsUnitName() string {
-	if !c.holdsRuns() {
-		return ""
-	}
-	return RunsUnit(c.Unit)
 }
 
 func Supervise(ctx context.Context, c Config) {

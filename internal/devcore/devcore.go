@@ -130,7 +130,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	go logcap.Keep(ctx, LogCapConfig(l, log))
 	if cfg.DenoRuntime != nil && rec.SharedKcp == "" {
 		deno := *cfg.DenoRuntime
-		deno.Units = m
+		deno.Units, deno.RunsUnit = m, l.Names().DenoPods()
 		go denoruntime.Supervise(ctx, deno)
 	}
 	if len(rec.StandIns) == 0 && rec.AdminKubeconfig != "" {
