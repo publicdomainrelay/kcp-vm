@@ -101,6 +101,7 @@ const EMPTY_NODE_CID_PLACEHOLDER = "" as Cid;
 class MstNode {
   layer: number;
   pointer: Cid;
+  persisted = false;
   private _entries: NodeEntry[] | null;
   #sha256: Hasher;
 
@@ -378,10 +379,23 @@ class MstNode {
     return { cid, bytes };
   }
 
+  loadedEntries(): NodeEntry[] {
+    return this._entries ?? [];
+  }
+
+  markPersisted(): void {
+    if (this.persisted) return;
+    this.persisted = true;
+    for (const e of this._entries ?? []) {
+      if (e instanceof MstNode) e.markPersisted();
+    }
+  }
+
   async collectBlocks(
     existing: Set<Cid>,
     blocks: Map<Cid, Bytes>,
   ): Promise<void> {
+    if (this.persisted) return;
     const { cid, bytes } = await this.serialize();
     if (!existing.has(cid)) {
       blocks.set(cid, bytes);
@@ -529,6 +543,7 @@ export class Mst {
   #tree: MstNode | null;
   #all: Map<string, Cid>;
   #sha256: Hasher;
+  #fresh = new Set<Cid>();
 
   constructor(store: BlockStore, root: Cid | null, sha256Fn: Hasher) {
     this.#store = store;
@@ -544,6 +559,28 @@ export class Mst {
 
   get size(): number {
     return this.#all.size;
+  }
+
+  fork(): Mst {
+    const m = new Mst(this.#store, this.#root, this.#sha256);
+    m.#tree = this.#tree;
+    m.#all = new Map(this.#all);
+    return m;
+  }
+
+  takeFresh(): Cid[] {
+    const fresh = this.#fresh;
+    this.#fresh = new Set();
+    const out: Cid[] = [];
+    const walk = (node: MstNode): void => {
+      if (!fresh.has(node.pointer)) return;
+      out.push(node.pointer);
+      for (const e of node.loadedEntries()) {
+        if (e instanceof MstNode) walk(e);
+      }
+    };
+    if (this.#tree) walk(this.#tree);
+    return out;
   }
 
   async init(): Promise<void> {
@@ -582,7 +619,9 @@ export class Mst {
     await this.#tree.collectBlocks(existing, blocks);
     for (const [cid, bytes] of blocks) {
       await this.#store.put(cid, bytes);
+      this.#fresh.add(cid);
     }
+    this.#tree.markPersisted();
     const { cid } = await this.#tree.serialize();
     this.#root = cid;
     return cid;
@@ -605,7 +644,9 @@ export class Mst {
     await this.#tree.collectBlocks(existing, blocks);
     for (const [cid, bytes] of blocks) {
       await this.#store.put(cid, bytes);
+      this.#fresh.add(cid);
     }
+    this.#tree.markPersisted();
 
     const entries = await this.#tree.getEntries();
     if (entries.length === 0) {
@@ -668,7 +709,9 @@ async function deserializeNodeData(
   }
 
   const cid = await cidForNodeData(data, sha256Fn);
-  return new MstNode(resolvedLayer, cid, entries, sha256Fn);
+  const node = new MstNode(resolvedLayer, cid, entries, sha256Fn);
+  node.persisted = true;
+  return node;
 }
 
 export async function diff(

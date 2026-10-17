@@ -8,7 +8,8 @@ import { XrpcError } from "@publicdomainrelay/atproto-repo-abc";
 import { encode as cborEncode, decode as cborDecode, cidLink } from "@publicdomainrelay/atproto-repo-common";
 import { cidFromDigest } from "@publicdomainrelay/atproto-repo-common";
 import { nextTid } from "@publicdomainrelay/atproto-repo-common";
-import { createMst, diff } from "@publicdomainrelay/atproto-repo-abc";
+import { createMst } from "@publicdomainrelay/atproto-repo-abc";
+import type { Mst } from "@publicdomainrelay/atproto-repo-abc";
 import { concat } from "@publicdomainrelay/atproto-repo-common";
 import { drislEncode, drislDecode, drislCidLink } from "@publicdomainrelay/atproto-repo-common";
 
@@ -63,6 +64,8 @@ async function cidForBytes(bytes: Bytes): Promise<Cid> {
   return cidFromDigest(new Uint8Array(digest));
 }
 
+const MAX_SNAPSHOTS = 32;
+
 const sha256: Hasher = async (data: Bytes): Promise<Bytes> => {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -83,6 +86,7 @@ export class Repo implements RepoApi {
   #signer: Signer;
   #did: Did;
   #writeQueue = new Map<Did, Promise<void>>();
+  #snapshots = new Map<Did, { root: Cid; mst: Promise<Mst> }>();
 
   constructor(store: Storage, signer: Signer, did?: Did) {
     this.#store = store;
@@ -94,14 +98,34 @@ export class Repo implements RepoApi {
     return this.#did;
   }
 
+  #remember(did: Did, root: Cid, mst: Promise<Mst>): void {
+    this.#snapshots.delete(did);
+    this.#snapshots.set(did, { root, mst });
+    if (this.#snapshots.size > MAX_SNAPSHOTS) this.#snapshots.delete(this.#snapshots.keys().next().value as Did);
+  }
+
+  #mstAt(did: Did, root: Cid): Promise<Mst> {
+    const hit = this.#snapshots.get(did);
+    if (hit && hit.root === root) return hit.mst;
+    const loaded = (async () => {
+      const mst = createMst(this.#store, sha256, root);
+      await mst.init();
+      return mst;
+    })();
+    this.#remember(did, root, loaded);
+    loaded.catch(() => {
+      if (this.#snapshots.get(did)?.mst === loaded) this.#snapshots.delete(did);
+    });
+    return loaded;
+  }
+
   async describe(_did: Did): Promise<{ collections: string[]; head: Tid | null }> {
     const head = await this.#store.getHead(_did);
     if (!head) return { collections: [], head: null };
     const rootCid = await getMstRoot(this.#store, head.commit);
     if (!rootCid) return { collections: [], head: head.rev };
 
-    const mst = createMst(this.#store, sha256, rootCid);
-    await mst.init();
+    const mst = await this.#mstAt(_did, rootCid);
     const collections = new Set<string>();
     for await (const { key } of mst.entries()) {
       const slash = key.indexOf("/");
@@ -124,8 +148,7 @@ export class Repo implements RepoApi {
     const rootCid = await getMstRoot(this.#store, head.commit);
     if (!rootCid) return null;
 
-    const mst = createMst(this.#store, sha256, rootCid);
-    await mst.init();
+    const mst = await this.#mstAt(_did, rootCid);
     const key = `${collection}/${rkey}`;
     const valueCid = await mst.get(key);
     if (!valueCid) return null;
@@ -148,8 +171,7 @@ export class Repo implements RepoApi {
     const rootCid = await getMstRoot(this.#store, head.commit);
     if (!rootCid) return { records: [] };
 
-    const mst = createMst(this.#store, sha256, rootCid);
-    await mst.init();
+    const mst = await this.#mstAt(_did, rootCid);
     const limit = opts?.limit ?? 50;
     const cursor = opts?.cursor ?? "";
     const prefix = `${collection}/`;
@@ -204,8 +226,8 @@ export class Repo implements RepoApi {
 
     const prevRoot = prevCommit ? await getMstRoot(this.#store, prevCommit) : null;
 
-    const mst = createMst(this.#store, sha256, prevRoot);
-    await mst.init();
+    const mst = prevRoot === null ? createMst(this.#store, sha256, null) : (await this.#mstAt(_did, prevRoot)).fork();
+    if (prevRoot === null) await mst.init();
 
     const ops: CommitOp[] = [];
 
@@ -262,7 +284,7 @@ export class Repo implements RepoApi {
       await this.#store.put(rootForCommit, emptyBytes);
     }
 
-    const changedCids = await diff(this.#store, prevRoot, rootForCommit);
+    const changedCids = mst.takeFresh();
 
     const rev = nextTid();
     const commitData: CommitData = {
@@ -293,6 +315,7 @@ export class Repo implements RepoApi {
     const carBlocks = await buildCarSlice(this.#store, changedCids, commitCid);
 
     await this.#store.setHead(_did, { commit: commitCid, rev });
+    if (newRoot !== null) this.#remember(_did, newRoot, Promise.resolve(mst));
 
     return {
       repo: _did,

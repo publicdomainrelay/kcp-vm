@@ -19,7 +19,9 @@ import (
 	"time"
 )
 
-var appRE = regexp.MustCompile(`/apps/[^/]+/([a-z0-9-]+)/`)
+var appRE = regexp.MustCompile(`/apps/[^/]+/([a-z0-9-]+)(?:/|\s|$)`)
+
+var podRE = regexp.MustCompile(`/(?:components|network/state)/([a-z0-9-]+(?:/[a-z0-9-]+)?)`)
 
 type procSum struct {
 	N     int   `json:"n"`
@@ -97,16 +99,8 @@ func classify(args []string) (string, string, bool) {
 		return app, "postgres", true
 	case base == "deno":
 		entry := "inline"
-		for _, a := range args[1:] {
-			if strings.HasSuffix(a, ".ts") {
-				parts := strings.Split(a, "/")
-				if len(parts) >= 2 {
-					entry = parts[len(parts)-2] + "/" + parts[len(parts)-1]
-				} else {
-					entry = a
-				}
-				break
-			}
+		if m := podRE.FindStringSubmatch(full); m != nil {
+			entry = m[1]
 		}
 		return app, "deno:" + entry, true
 	case base == "socialweb-computer" || base == "swc":
@@ -263,7 +257,8 @@ func runSample(args []string) int {
 	for {
 		at := time.Now()
 		s := map[string]any{"ts": at.UTC().Format(time.RFC3339), "elapsedSec": int(at.Sub(started).Seconds()), "host": hostSample(),
-			"procs": procSample(), "disk": diskSample(t.layout.StateDir), "status": statusSample(ctx, *binary, *instance, *stateDir)}
+			"procs": procSample(), "disk": diskSample(t.layout.StateDir), "status": statusSample(ctx, *binary, *instance, *stateDir),
+			"kv": kvSample(t.layout.StateDir), "pds": pdsSample(ctx, *binary, *instance, *stateDir)}
 		s["sampleSec"] = time.Since(at).Seconds()
 		line, _ := json.Marshal(s)
 		f, err := os.OpenFile(*outPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
