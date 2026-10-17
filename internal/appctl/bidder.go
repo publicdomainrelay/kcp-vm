@@ -223,6 +223,14 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 			st.Phase, st.Message = v1alpha1.ApplicationPhaseDeleting, fmt.Sprintf("%d ComputeVM(s) releasing", vms)
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
 		}
+		records, err := ctl.releaseRecords(ctx, ctl.c.workspace(), ws, owner)
+		if err != nil {
+			return err
+		}
+		if records > 0 {
+			st.Phase, st.Message = v1alpha1.ApplicationPhaseDeleting, fmt.Sprintf("%d AtprotoRecord(s) leaving the repo before the pds DenoPod stops", records)
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
 		left, err := ctl.deletePods(ctx, ws, owner, nil)
 		if err != nil {
 			return err

@@ -232,7 +232,16 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 	owner := ownerOf(u)
 	st := v1alpha1.ApplicationStatus{ObservedGeneration: o.Generation, Profile: o.Spec.Profile, Components: []v1alpha1.ApplicationComponent{}}
 	if u.GetDeletionTimestamp() != nil {
-		left, err := ctl.deletePods(ctx, ctl.c.workspace()+":"+ComponentWorkspace, owner, nil)
+		ws := ctl.c.workspace() + ":" + ComponentWorkspace
+		records, err := ctl.releaseRecords(ctx, ws, ws, owner)
+		if err != nil {
+			return err
+		}
+		if records > 0 {
+			st.Phase, st.Message = v1alpha1.ApplicationPhaseDeleting, fmt.Sprintf("%d AtprotoRecord(s) leaving the repo before the pds DenoPod stops", records)
+			return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+		}
+		left, err := ctl.deletePods(ctx, ws, owner, nil)
 		if err != nil {
 			return err
 		}

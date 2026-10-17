@@ -135,3 +135,24 @@ items:
     depends_on: [M2-GATEWAY-REQUESTER-OWN-PDS]
     done_when: "one association write to alice's repo per requester DID; a restart does not ask again; a bidder under bidder-tangled-vouch resolves alice as the requester's operator from the association record."
     status: todo
+  - id: M3-OPERATED-BIDDER-DISCOVERY
+    title: "A requester finds the bidders its vouched operators operate"
+    depends_on: [M1-BIDDER-OWN-PDS, M2-GATEWAY-REQUESTER-OWN-PDS]
+    decision: >
+      A bidder DID made by its own PDS is in no relay index and in no vouch record, so a requester that knew
+      Bob's account found no bidder. Discovery adds, for every DID the requester vouches (its own and,
+      through its association, its operator's), the DIDs that DID's repo associates (a badgeBlueKeys record
+      bidder_associate {challenge: the vouched DID, keyId: the bidder}, the one record the QR page or the
+      core writes into the operator's repo) whose own repo names that operator back with the same canonical
+      record (discoverOperatedDids in operator-discovery-badge-blue-keys). bidderDids stays an extra source.
+    done_when: "a gateway with no bidderDids rents a node from a bidder that only its operator's vouched account operates."
+    status: todo
+  - id: M3-RECORDS-BEFORE-PDS-STOPS
+    title: "Deleting an application removes its AtprotoRecord objects before its pds DenoPod stops"
+    depends_on: [M0-SHARED-PDS-DENOPOD]
+    decision: >
+      The MarketBidder and Gateway delete paths delete every AtprotoRecord object of the application first and
+      stop their DenoPods only when none is left; the running pds DenoPod removes each record from the repo
+      and releases its finalizer. When the pds DenoPod is not running, the core releases the finalizers itself.
+    done_when: "dev down of a market network with a bidder and a gateway leaves no AtprotoRecord object and no stuck workspace."
+    status: todo
