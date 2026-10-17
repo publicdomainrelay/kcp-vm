@@ -73,12 +73,14 @@ func clientOf(kubeconfig string) (dynamic.Interface, error) {
 
 type counters struct {
 	rfpCreated, rfpFailed, vmStarted, vmHeld, vmReleased, vmFailed, refused atomic.Int64
+	tenantCycles, tenantOut, tenantIn, tenantFailed                         atomic.Int64
 }
 
 func (c *counters) line(started time.Time) string {
 	b, _ := json.Marshal(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339), "elapsedSec": int(time.Since(started).Seconds()),
 		"rfpCreated": c.rfpCreated.Load(), "rfpFailed": c.rfpFailed.Load(), "vmStarted": c.vmStarted.Load(), "vmHeld": c.vmHeld.Load(),
-		"vmReleased": c.vmReleased.Load(), "vmFailed": c.vmFailed.Load(), "refused": c.refused.Load()})
+		"vmReleased": c.vmReleased.Load(), "vmFailed": c.vmFailed.Load(), "refused": c.refused.Load(),
+		"tenantCycles": c.tenantCycles.Load(), "tenantOut": c.tenantOut.Load(), "tenantIn": c.tenantIn.Load(), "tenantFailed": c.tenantFailed.Load()})
 	return string(b)
 }
 
@@ -129,6 +131,9 @@ func runLoad(args []string) int {
 	maxConcurrent := fs.Int("max-concurrent", 64, "requester max concurrent contracts")
 	contractQuota := fs.Int("contract-quota", 20000, "requester ComputeContract quota")
 	inflight := fs.Int("rfp-inflight", 48, "most RFP-only contracts being created at once")
+	tenantEvery := fs.Duration("tenant-every", 0, "interval between tenant cluster scale-out and scale-in cycles (0: off)")
+	tenantName := fs.String("tenant-name", "tenant", "tenant cluster name")
+	tenantHold := fs.Duration("tenant-hold", 20*time.Second, "how long the tenant pod runs before it is deleted")
 	fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -279,6 +284,37 @@ func runLoad(args []string) int {
 						c.vmFailed.Add(1)
 					}
 				}(seq)
+			}
+		}()
+	}
+
+	if *tenantEvery > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			gateway := filepath.Join(t.layout.StateDir, appctl.AppsDir, "dev", *instance+"-gateway")
+			for seq := 0; ; seq++ {
+				if !sleepCtx(run, *tenantEvery) {
+					return
+				}
+				kube, err := openTenantKube(gateway, *tenantName)
+				if err != nil {
+					c.tenantFailed.Add(1)
+					fmt.Println(`{"event":"tenant open failed","error":"` + strings.ReplaceAll(err.Error(), `"`, `'`) + `"}`)
+					continue
+				}
+				c.tenantCycles.Add(1)
+				out, in, err := tenantCycle(ctx, kube, seq, *tenantHold, 6*time.Minute, 5*time.Minute)
+				if out {
+					c.tenantOut.Add(1)
+				}
+				if in {
+					c.tenantIn.Add(1)
+				}
+				if err != nil {
+					c.tenantFailed.Add(1)
+					fmt.Println(`{"event":"tenant cycle failed","error":"` + strings.ReplaceAll(err.Error(), `"`, `'`) + `"}`)
+				}
 			}
 		}()
 	}

@@ -5,7 +5,7 @@ export const DEFAULT_BID_RECORD_TTL_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_BID_RETENTION_SCAN_MS = 10 * 60 * 1000;
 export const DEFAULT_BID_RETENTION_PAGES = 50;
 export const DEFAULT_BID_RETENTION_FIRST_MS = 30_000;
-export const DEFAULT_BID_RETENTION_DELETES = 200;
+export const DEFAULT_BID_RETENTION_DELETES = 1000;
 
 export interface OwnBidRecordPage {
   records: Array<{ uri: string; cid: string; value: Record<string, unknown> }>;
