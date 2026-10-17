@@ -2,6 +2,7 @@ package execrunner
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,7 +26,19 @@ func (p *Pod) Remove(_ context.Context, runID string) error { return p.sup.remov
 func (e *Engine) Remove(_ context.Context, runID string) error { return e.sup.remove(runID) }
 
 func (p *Pod) Sweep(named func(string) bool, before time.Time) []string {
-	return SweepRuns(p.opts.RunsDir, named, before)
+	removed := SweepRuns(p.opts.RunsDir, named, before)
+	for _, id := range removed {
+		removePodCgroup(id)
+	}
+	return removed
+}
+
+func (p *Pod) Reap(named func(string) bool, startedBefore time.Time) []string {
+	var out []string
+	for _, r := range ReapUnnamed(p.opts.RunsDir, named, startedBefore, reapGrace) {
+		out = append(out, fmt.Sprintf("%s pid %d killed %t", r.Run, r.PID, r.Killed))
+	}
+	return out
 }
 
 func (p *Pod) CapLogs(capBytes int64) []string { return CapRunLogs(p.opts.RunsDir, capBytes) }

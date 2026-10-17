@@ -7,7 +7,10 @@ import (
 	"time"
 )
 
-const reapPoll = 50 * time.Millisecond
+const (
+	reapPoll  = 50 * time.Millisecond
+	reapGrace = 15 * time.Second
+)
 
 type Reaped struct {
 	Run    string `json:"run"`
@@ -42,8 +45,14 @@ func liveRuns(runsDir string) map[string]runState {
 	return out
 }
 
-func ReapRuns(runsDir string, grace time.Duration) []Reaped {
+func ReapUnnamed(runsDir string, named func(string) bool, startedBefore time.Time, grace time.Duration) []Reaped {
 	live := liveRuns(runsDir)
+	for id, st := range live {
+		started, err := time.Parse(time.RFC3339Nano, st.Started)
+		if named(id) || err != nil || !started.Before(startedBefore) {
+			delete(live, id)
+		}
+	}
 	if len(live) == 0 {
 		return nil
 	}
@@ -73,11 +82,8 @@ func ReapRuns(runsDir string, grace time.Duration) []Reaped {
 		}
 		out = append(out, r)
 	}
-	for time.Now().Before(deadline.Add(grace)) {
-		if len(liveRuns(runsDir)) == 0 {
-			break
-		}
-		time.Sleep(reapPoll)
+	for id := range live {
+		removePodCgroup(id)
 	}
 	return out
 }

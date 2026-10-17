@@ -35,6 +35,7 @@ type cgroupBase struct {
 	mu   sync.Mutex
 	path string
 	leaf string
+	held bool
 }
 
 var podBase cgroupBase
@@ -44,44 +45,72 @@ type limiter struct {
 	fd  *os.File
 }
 
-func ownCgroupDir() (string, error) {
-	body, err := os.ReadFile("/proc/self/cgroup")
+func cgroupDirOf(pid string) (string, error) {
+	body, err := os.ReadFile(filepath.Join("/proc", pid, "cgroup"))
 	if err != nil {
 		return "", err
 	}
 	for _, line := range strings.Split(string(body), "\n") {
 		if rest, ok := strings.CutPrefix(line, "0::"); ok {
 			rest = strings.TrimSuffix(strings.TrimSpace(rest), " (deleted)")
-			return filepath.Join(cgroupMount, rest), nil
+			dir := filepath.Join(cgroupMount, rest)
+			if filepath.Base(dir) == supervisorLeaf {
+				dir = filepath.Dir(dir)
+			}
+			return dir, nil
 		}
 	}
 	return "", errors.New("the process is in no cgroup v2 hierarchy")
 }
 
-func podCgroupBase() (string, error) {
+func podCgroupBase(holder Holder) (string, error) {
 	podBase.mu.Lock()
 	defer podBase.mu.Unlock()
-	if podBase.path != "" {
+	pid := 0
+	if holder != nil {
+		var err error
+		if pid, err = holder(); err != nil {
+			return "", fmt.Errorf("execrunner: the unit that holds the runs: %w", err)
+		}
+		dir, err := cgroupDirOf(strconv.Itoa(pid))
+		if err != nil {
+			return "", fmt.Errorf("execrunner: the cgroup of the unit that holds the runs: %w", err)
+		}
+		if podBase.held && podBase.path == dir {
+			return dir, nil
+		}
+	} else if podBase.path != "" && !podBase.held {
 		return podBase.path, nil
 	}
-	path, leaf, err := prepareBase()
+	path, leaf, err := prepareBase(pid)
 	if err != nil {
-		return "", fmt.Errorf("execrunner: a pod memory limit needs a cgroup this process may subdivide (run the core under a unit with Delegate=yes): %w", err)
+		return "", fmt.Errorf("execrunner: a pod cgroup needs a cgroup this process may subdivide (a unit with Delegate=yes): %w", err)
 	}
-	podBase.path = path
-	podBase.leaf = leaf
+	podBase.path, podBase.leaf, podBase.held = path, leaf, holder != nil
 	return path, nil
+}
+
+func removePodCgroup(id string) {
+	podBase.mu.Lock()
+	base := podBase.path
+	podBase.mu.Unlock()
+	if base != "" {
+		_ = os.Remove(filepath.Join(base, podCgroupPrefix+id))
+	}
 }
 
 func ReleaseCgroups() {
 	podBase.mu.Lock()
 	defer podBase.mu.Unlock()
-	base, leaf := podBase.path, podBase.leaf
+	base, leaf, held := podBase.path, podBase.leaf, podBase.held
 	if base == "" {
 		return
 	}
-	podBase.path, podBase.leaf = "", ""
-	removePodCgroups(base)
+	podBase.path, podBase.leaf, podBase.held = "", "", false
+	if held {
+		return
+	}
+	killPodCgroups(base)
 	_ = os.WriteFile(filepath.Join(base, "cgroup.subtree_control"), []byte("-memory"), 0o644)
 	_ = os.WriteFile(filepath.Join(base, "cgroup.procs"), []byte(strconv.Itoa(os.Getpid())), 0o644)
 	_ = movePids(leaf, base)
@@ -101,8 +130,12 @@ func movePids(from, to string) error {
 	return nil
 }
 
-func prepareBase() (string, string, error) {
-	dir, err := ownCgroupDir()
+func prepareBase(holderPID int) (string, string, error) {
+	who := "self"
+	if holderPID > 0 {
+		who = strconv.Itoa(holderPID)
+	}
+	dir, err := cgroupDirOf(who)
 	if err != nil {
 		return "", "", err
 	}
@@ -110,8 +143,10 @@ func prepareBase() (string, string, error) {
 	if err := os.Mkdir(leaf, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", "", err
 	}
-	if err := os.WriteFile(filepath.Join(leaf, "cgroup.procs"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
-		return "", "", err
+	if holderPID == 0 {
+		if err := os.WriteFile(filepath.Join(leaf, "cgroup.procs"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+			return "", "", err
+		}
 	}
 	for attempt := 0; ; attempt++ {
 		if err := movePids(base, leaf); err != nil {
@@ -126,11 +161,23 @@ func prepareBase() (string, string, error) {
 		}
 		time.Sleep(subtreeRetryDelay)
 	}
-	removePodCgroups(base)
+	removeIdlePodCgroups(base)
 	return base, leaf, nil
 }
 
-func removePodCgroups(base string) {
+func removeIdlePodCgroups(base string) {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), podCgroupPrefix) {
+			_ = os.Remove(filepath.Join(base, e.Name()))
+		}
+	}
+}
+
+func killPodCgroups(base string) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return
@@ -149,8 +196,8 @@ func removePodCgroups(base string) {
 	}
 }
 
-func newLimiter(cmd *exec.Cmd, id string, memoryMax uint64) (*limiter, error) {
-	base, err := podCgroupBase()
+func newLimiter(cmd *exec.Cmd, id string, memoryMax uint64, holder Holder) (*limiter, error) {
+	base, err := podCgroupBase(holder)
 	if err != nil {
 		return nil, err
 	}
@@ -159,11 +206,15 @@ func newLimiter(cmd *exec.Cmd, id string, memoryMax uint64) (*limiter, error) {
 		return nil, fmt.Errorf("execrunner: create the pod cgroup: %w", err)
 	}
 	l := &limiter{dir: dir}
-	for name, value := range map[string]string{
-		"memory.max":       strconv.FormatUint(memoryMax, 10),
-		"memory.swap.max":  "0",
-		"memory.oom.group": "1",
-	} {
+	limits := map[string]string{}
+	if memoryMax > 0 {
+		limits = map[string]string{
+			"memory.max":       strconv.FormatUint(memoryMax, 10),
+			"memory.swap.max":  "0",
+			"memory.oom.group": "1",
+		}
+	}
+	for name, value := range limits {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0o644); err != nil {
 			l.release()
 			return nil, fmt.Errorf("execrunner: set %s on the pod cgroup: %w", name, err)

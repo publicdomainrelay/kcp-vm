@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/provider"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/impl/execrunner"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/impl/policyclient"
@@ -26,7 +29,7 @@ const (
 	PolicyEngineEntry = "ts/policy-engine/lib/policy-engine-server-gha-lite"
 	RetryAfter        = 2 * time.Second
 	WatchListEnv      = "KUBE_FEATURE_WatchListClient"
-	ReapGrace         = 15 * time.Second
+	RunsUnitSuffix    = "-denopods" + hostsvc.ServiceSuffix
 )
 
 type Config struct {
@@ -39,6 +42,7 @@ type Config struct {
 	OpenBao      OpenBao
 	OpenBaoFrom  func(context.Context) (OpenBao, error)
 	Log          *slog.Logger
+	Units        hostsvc.Manager
 
 	EnforceMemory bool
 }
@@ -69,7 +73,41 @@ func (c Config) ClosureEnv() []string {
 	return []string{TSRootEnv + "=" + c.Closure.Root, TSKeyEnv + "=" + c.Closure.Key, TSModeEnv + "=" + string(c.Closure.Mode)}
 }
 
-func (c Config) PodOptions(trust func() []byte) execrunner.PodOptions {
+func RunsUnit(coreUnit string) string {
+	return strings.TrimSuffix(coreUnit, hostsvc.ServiceSuffix) + RunsUnitSuffix
+}
+
+func (c Config) holdsRuns() bool {
+	return c.Units != nil && c.Unit != "" && c.Units.Capabilities().Backend == hostsvc.BackendSystemdUser
+}
+
+func (c Config) Holder(ctx context.Context) execrunner.Holder {
+	if !c.holdsRuns() {
+		return nil
+	}
+	return func() (int, error) {
+		sleep, err := exec.LookPath("sleep")
+		if err != nil {
+			return 0, err
+		}
+		spec := hostsvc.UnitSpec{Name: RunsUnit(c.Unit), Description: "the DenoPods and PolicyEngines that " + c.Unit + " runs; they outlive a restart of it",
+			Exec: []string{sleep, "infinity"}, Delegate: true, Restart: hostsvc.RestartNo, OOMPolicy: "continue"}
+		st, err := c.Units.Start(ctx, spec)
+		if err == nil && st.MainPID == 0 {
+			_ = c.Units.ResetFailed(ctx, spec.Name)
+			st, err = c.Units.Start(ctx, spec)
+		}
+		if err != nil {
+			return 0, err
+		}
+		if st.MainPID == 0 {
+			return 0, fmt.Errorf("denoruntime: %s is %s with no main process", spec.Name, st.State)
+		}
+		return st.MainPID, nil
+	}
+}
+
+func (c Config) PodOptions(trust func() []byte, holder execrunner.Holder) execrunner.PodOptions {
 	return execrunner.PodOptions{
 		DenoBin:      c.Deno,
 		RunsDir:      RunsDir(c.StateDir),
@@ -77,20 +115,20 @@ func (c Config) PodOptions(trust func() []byte) execrunner.PodOptions {
 		ExtraEnv:     c.ClosureEnv(),
 		Timeout:      RunnerTimeout,
 		TrustBundle:  trust,
-		Unit:         c.Unit,
+		Holder:       holder,
 
 		EnforceMemory: c.EnforceMemory,
 	}
 }
 
-func (c Config) EngineOptions() execrunner.EngineOptions {
+func (c Config) EngineOptions(holder execrunner.Holder) execrunner.EngineOptions {
 	return execrunner.EngineOptions{
 		DenoBin:   c.Deno,
 		ServerDir: filepath.Join(c.Closure.Root, PolicyEngineEntry),
 		RunsDir:   RunsDir(c.StateDir),
 		ExtraEnv:  c.ClosureEnv(),
 		Timeout:   RunnerTimeout,
-		Unit:      c.Unit,
+		Holder:    holder,
 	}
 }
 
@@ -151,16 +189,17 @@ func Run(ctx context.Context, c Config) error {
 		return err
 	}
 	var p *provider.Provider
+	holder := c.Holder(ctx)
 	pods, err := execrunner.NewPod(c.PodOptions(func() []byte {
 		if p == nil {
 			return restCfg.CAData
 		}
 		return p.TrustBundle()
-	}))
+	}, holder))
 	if err != nil {
 		return err
 	}
-	engines, err := execrunner.NewEngine(c.EngineOptions())
+	engines, err := execrunner.NewEngine(c.EngineOptions(holder))
 	if err != nil {
 		return err
 	}
@@ -189,16 +228,19 @@ func Run(ctx context.Context, c Config) error {
 	}
 	defer p.Close()
 	log.Info("the deno runtime runs in the core", "deno", c.Deno, "runsDir", RunsDir(c.StateDir), "closure", c.Closure.Key,
-		"closureRoot", c.Closure.Root, "unit", c.Unit, "kcp", restCfg.Host, "openbao", c.OpenBao.Address)
+		"closureRoot", c.Closure.Root, "unit", c.Unit, "kcp", restCfg.Host, "openbao", c.OpenBao.Address, "runsUnit", c.runsUnitName())
 	return p.Run(ctx)
+}
+
+func (c Config) runsUnitName() string {
+	if !c.holdsRuns() {
+		return ""
+	}
+	return RunsUnit(c.Unit)
 }
 
 func Supervise(ctx context.Context, c Config) {
 	log := c.log()
-	if reaped := execrunner.ReapRuns(RunsDir(c.StateDir), ReapGrace); len(reaped) > 0 {
-		log.Warn("stopped the DenoPod processes a previous core of this instance left running, before the deno runtime starts its own",
-			"runs", fmt.Sprint(reaped))
-	}
 	for {
 		err := Run(ctx, c)
 		if ctx.Err() != nil {
