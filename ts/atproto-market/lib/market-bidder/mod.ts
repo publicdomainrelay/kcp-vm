@@ -192,6 +192,21 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const contractStore = config.contractStore;
   const loop = config.loop;
   config.writeBudget?.trackContracts(() => activeContracts.size);
+  const listOwnBidRecords = async (cursor: string | undefined) => {
+    const pdsUrl = await resolvePds(atproto.idResolver, atproto.did);
+    const url = new URL(`${pdsUrl}/xrpc/com.atproto.repo.listRecords`);
+    url.searchParams.set("repo", atproto.did);
+    url.searchParams.set("collection", BID_NSID);
+    url.searchParams.set("limit", "100");
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`listRecords ${BID_NSID}: ${res.status}`);
+    }
+    const page = await res.json() as { records?: Array<{ uri: string; cid: string; value: Record<string, unknown> }>; cursor?: string };
+    return { records: page.records ?? [], cursor: page.records?.length ? page.cursor : undefined };
+  };
   const bidLoop = createBidLoop({
     selfDid: atproto.did,
     claimant: `pid-${Deno.pid}-${crypto.randomUUID().slice(0, 8)}`,
@@ -204,29 +219,18 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       intervalMs: config.bidRetentionScanMs,
       sharedUris: atproto.sharedRecordUris,
       deleteRecord: atproto.deleteRecord,
-      listOwnBidRecords: async (cursor) => {
-        const pdsUrl = await resolvePds(atproto.idResolver, atproto.did);
-        const url = new URL(`${pdsUrl}/xrpc/com.atproto.repo.listRecords`);
-        url.searchParams.set("repo", atproto.did);
-        url.searchParams.set("collection", BID_NSID);
-        url.searchParams.set("limit", "100");
-        if (cursor) url.searchParams.set("cursor", cursor);
-        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-        if (!res.ok) {
-          await res.body?.cancel();
-          throw new Error(`listRecords ${BID_NSID}: ${res.status}`);
-        }
-        const page = await res.json() as { records?: Array<{ uri: string; cid: string; value: Record<string, unknown> }>; cursor?: string };
-        return { records: page.records ?? [], cursor: page.records?.length ? page.cursor : undefined };
-      },
+      listOwnBidRecords,
     },
     listOwnBids: async () => {
-      const out = await atproto.listRecords(atproto.did, BID_NSID, { limit: 100 });
-      return (out?.records ?? []).map((r) => ({
-        uri: r.uri,
-        cid: r.cid ?? "",
-        rfpUri: ((r.value as Record<string, unknown>).rfp as { uri?: string } | undefined)?.uri,
-      }));
+      const out: Array<{ uri: string; cid: string; rfpUri?: string }> = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 50; page++) {
+        const got = await listOwnBidRecords(cursor);
+        for (const r of got.records) out.push({ uri: r.uri, cid: r.cid, rfpUri: (r.value.rfp as { uri?: string } | undefined)?.uri });
+        cursor = got.cursor;
+        if (!cursor) break;
+      }
+      return out;
     },
     knownAccept: (acceptUri, acceptCid) => acceptToContract.has(`${acceptUri}#${acceptCid}`),
     endedAccept: (acceptUri, acceptCid) => {
@@ -648,6 +652,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
         observe: observeRfp,
         gate: rfpGate,
       });
+      bidLoop.attachReplay(dispatch);
       eventStreams.watch({
         wantedCollections: [RFP_NSID],
         onEvent: (e) => {

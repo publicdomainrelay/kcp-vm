@@ -163,6 +163,8 @@ export interface BidDecision {
 
 export interface BidEntry {
   name: string;
+  createdAt?: string;
+  heartbeatAt?: string;
   rfp: BidRef;
   requester: string;
   expiresAt: string;
@@ -197,12 +199,15 @@ export interface BidLedger {
   terminated(rfpUri: string, tombstone: Tombstone): Promise<void>;
   lost(rfpUri: string, reason: string, at: string): Promise<void>;
   expired(rfpUri: string, at: string): Promise<void>;
-  release(rfpUri: string): Promise<boolean>;
+  release(rfpUri: string, liveBefore?: string): Promise<boolean>;
+  touch(rfpUri: string, at: string): Promise<void>;
   list(): Promise<BidEntry[]>;
   capacity?(): Promise<string | undefined>;
 }
 
 export const DEFAULT_BID_WINDOW_MS = 300_000;
+
+export const DEFAULT_BID_CLAIM_STALE_MS = 10_000;
 
 export const DECLINE_CAPACITY = "capacity";
 

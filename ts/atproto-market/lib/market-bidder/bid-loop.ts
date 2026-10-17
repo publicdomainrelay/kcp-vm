@@ -1,7 +1,7 @@
 import type { DispatchRfpInput, RfpGate } from "@publicdomainrelay/market-atproto";
 import type { MarketLoopRecorder } from "@publicdomainrelay/market-abc";
 import type { BidClaim, BidEntry, BidLedger, BidRef } from "@publicdomainrelay/market-bidder-abc";
-import { bidOpen, DECLINE_CAPACITY, DECLINE_WRITE_BUDGET } from "@publicdomainrelay/market-bidder-abc";
+import { bidOpen, DECLINE_CAPACITY, DECLINE_WRITE_BUDGET, DEFAULT_BID_CLAIM_STALE_MS } from "@publicdomainrelay/market-bidder-abc";
 import { type BidRetentionOptions, createBidRetention } from "./bid-retention.ts";
 import type { HandlerResult } from "@publicdomainrelay/market-abc";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
@@ -18,6 +18,7 @@ export interface BidLoopOptions {
   selfDid: string;
   claimant: string;
   claimStaleMs?: number;
+  decidingStaleMs?: number;
   bids?: BidLedger;
   retention?: Omit<BidRetentionOptions, "bids" | "selfDid" | "logger">;
   loop?: MarketLoopRecorder;
@@ -46,6 +47,7 @@ export interface BidLoop {
   readonly ledger: BidLedger | undefined;
   rfpGate: RfpGate;
   restore(): Promise<void>;
+  attachReplay(replay: (input: DispatchRfpInput) => Promise<unknown>): void;
   checkAccept(accept: AcceptRefs): Promise<HandlerResult | undefined>;
   acceptSeen(accept: AcceptRefs): Promise<"ours" | "lost" | "unknown">;
   close(): void;
@@ -62,6 +64,9 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
   const retention = bids && opts.retention ? createBidRetention({ ...opts.retention, bids, selfDid: opts.selfDid, logger }) : undefined;
   const rfpsInFlight = new Map<string, Promise<void>>();
   const expiry = new Map<string, ReturnType<typeof setTimeout>>();
+  const deciding = new Map<string, ReturnType<typeof setTimeout>>();
+  const decidingStaleMs = opts.decidingStaleMs ?? DEFAULT_BID_CLAIM_STALE_MS;
+  let replay: ((input: DispatchRfpInput) => Promise<unknown>) | undefined;
 
   const timings = new Map<string, { startedAt: number; kcpMs: number }>();
 
@@ -106,12 +111,66 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
     expiry.delete(rfpUri);
   };
 
+  const publishedBidOf = async (rfpUri: string): Promise<BidRef | undefined> => {
+    for (const r of await opts.listOwnBids()) if (r.rfpUri === rfpUri) return { uri: r.uri, cid: r.cid };
+    return undefined;
+  };
+
+  const lastLiveAt = (entry: BidEntry): number =>
+    Math.max(Date.parse(entry.createdAt ?? "") || 0, Date.parse(entry.heartbeatAt ?? "") || 0);
+
+  const scheduleRecover = (rfpUri: string, delayMs: number): void => {
+    if (!bids || deciding.has(rfpUri)) return;
+    const timer = setTimeout(() => {
+      deciding.delete(rfpUri);
+      recoverDeciding(rfpUri).catch((err: unknown) => {
+        logger.warn("bid_recover_failed", { rfpUri, error: String(err) });
+        scheduleRecover(rfpUri, decidingStaleMs);
+      });
+    }, Math.max(0, delayMs));
+    Deno.unrefTimer(timer);
+    deciding.set(rfpUri, timer);
+  };
+
+  const watchDeciding = (entry: BidEntry): void =>
+    scheduleRecover(entry.rfp.uri, (lastLiveAt(entry) || Date.now()) + decidingStaleMs - Date.now());
+
+  async function recoverDeciding(rfpUri: string): Promise<void> {
+    const entry = await findBid(rfpUri);
+    if (!bids || !entry || entry.phase !== "Deciding") return;
+    const staleBefore = Date.now() - decidingStaleMs;
+    if (rfpsInFlight.has(rfpUri) || lastLiveAt(entry) >= staleBefore) {
+      watchDeciding(entry);
+      return;
+    }
+    const published = await publishedBidOf(rfpUri);
+    if (published) {
+      await bids.published(rfpUri, published, nowIso());
+      logger.info("bid_recovered", { bid: entry.name, rfpUri, bidUri: published.uri });
+      if (bidOpen({ ...entry, phase: "Published" }, new Date())) expireAt(rfpUri, entry.expiresAt);
+      else await bids.expired(rfpUri, nowIso());
+      return;
+    }
+    if (!bidOpen(entry, new Date())) {
+      await bids.failed(rfpUri, "the bidder stopped before it published the market.bid record", nowIso());
+      return;
+    }
+    if (!replay || !entry.rfp.cid) {
+      watchDeciding(entry);
+      return;
+    }
+    if (!await bids.release(rfpUri, new Date(staleBefore).toISOString())) return;
+    logger.info("bid_released_for_replay", { bid: entry.name, rfpUri });
+    await replay({ rfpUri, rfpCid: entry.rfp.cid, issuerDid: entry.requester });
+  }
+
   const ledger: BidLedger | undefined = bids
     ? {
       ...bids,
       async claim(decision) {
         const out = await timedKcp(decision.rfp.uri, () => bids.claim(decision));
         if (out.claimed) expireAt(decision.rfp.uri, out.entry.expiresAt);
+        else if (out.entry.phase === "Deciding") watchDeciding(out.entry);
         return out;
       },
       async published(rfpUri, bid, at) {
@@ -155,13 +214,24 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
     }
     const done = Promise.withResolvers<void>();
     rfpsInFlight.set(input.rfpUri, done.promise);
+    const beat = bids
+      ? setInterval(() => {
+        bids.touch(input.rfpUri, nowIso()).catch((err: unknown) =>
+          logger.warn("bid_heartbeat_failed", { rfpUri: input.rfpUri, error: String(err) })
+        );
+      }, decidingStaleMs / 2)
+      : undefined;
+    if (beat !== undefined) Deno.unrefTimer(beat);
     timings.set(input.rfpUri, { startedAt: performance.now(), kcpMs: 0 });
     try {
       const declined = loop?.recentlyDeclined?.(input.rfpUri);
       if (declined) return duplicate(input, `declined at ${declined.at}: ${declined.reason}`);
       const [existing, full] = await timedKcp(input.rfpUri, () =>
         Promise.all([findBid(input.rfpUri), bids?.capacity?.().catch(() => undefined)]));
-      if (existing) return duplicate(input, "a Bid answers it", existing);
+      if (existing) {
+        if (existing.phase === "Deciding") watchDeciding(existing);
+        return duplicate(input, "a Bid answers it", existing);
+      }
       if (full) {
         loop?.rfpSeen();
         loop?.declined(DECLINE_CAPACITY, input.rfpUri, new Date());
@@ -177,6 +247,7 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
       }
       return await run();
     } finally {
+      if (beat !== undefined) clearInterval(beat);
       timings.delete(input.rfpUri);
       rfpsInFlight.delete(input.rfpUri);
       done.resolve();
@@ -187,32 +258,12 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
     if (!bids) return;
     const now = new Date();
     const entries = await bids.list();
-    let own: Map<string, BidRef> | undefined;
-    const ownBids = async () => {
-      if (own) return own;
-      own = new Map();
-      for (const r of await opts.listOwnBids()) if (r.rfpUri) own.set(r.rfpUri, { uri: r.uri, cid: r.cid });
-      return own;
-    };
-    const counts = { waiting: 0, recovered: 0, released: 0, expired: 0, failed: 0, settled: 0 };
+    const counts = { waiting: 0, deciding: 0, expired: 0, settled: 0 };
     for (const e of entries) {
       try {
         if (e.phase === "Deciding") {
-          const published = (await ownBids()).get(e.rfp.uri);
-          if (published) {
-            await bids.published(e.rfp.uri, published, nowIso());
-            counts.recovered++;
-            logger.info("bid_recovered", { bid: e.name, rfpUri: e.rfp.uri, bidUri: published.uri });
-            if (bidOpen({ ...e, phase: "Published" }, now)) expireAt(e.rfp.uri, e.expiresAt);
-            else await bids.expired(e.rfp.uri, nowIso());
-          } else if (bidOpen(e, now)) {
-            await bids.release(e.rfp.uri);
-            counts.released++;
-            logger.info("bid_released_for_replay", { bid: e.name, rfpUri: e.rfp.uri });
-          } else {
-            await bids.failed(e.rfp.uri, "the bidder stopped before it published the market.bid record", nowIso());
-            counts.failed++;
-          }
+          watchDeciding(e);
+          counts.deciding++;
         } else if (e.phase === "Published") {
           if (bidOpen(e, now)) {
             expireAt(e.rfp.uri, e.expiresAt);
@@ -353,7 +404,13 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
     retention?.stop();
     for (const timer of expiry.values()) clearTimeout(timer);
     expiry.clear();
+    for (const timer of deciding.values()) clearTimeout(timer);
+    deciding.clear();
   }
 
-  return { ledger, rfpGate, restore, checkAccept, acceptSeen, close };
+  function attachReplay(next: (input: DispatchRfpInput) => Promise<unknown>): void {
+    replay = next;
+  }
+
+  return { ledger, rfpGate, restore, attachReplay, checkAccept, acceptSeen, close };
 }

@@ -68,7 +68,7 @@ rules:
     verbs: ["get", "patch", "update"]
   - apiGroups: ["socialweb.computer"]
     resources: ["bids"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
   - apiGroups: ["socialweb.computer"]
     resources: ["bids/status"]
     verbs: ["get", "patch", "update"]

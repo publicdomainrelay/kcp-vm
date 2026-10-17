@@ -329,7 +329,7 @@ acceptance:
       evidence: []
     - id: ACC9-EXACTLY-ONCE
       text: "A bidder restart inside a bid window, a second relay, and a second bidder replica each give one bid per RFP and miss none."
-      status: todo
+      status: done
       evidence: []
     - id: ACC9-NO-SESSION-IN-WEB-APP
       text: "The internet-facing web app holds no requester PDS session, claim key or secrets key."

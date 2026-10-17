@@ -8891,6 +8891,50 @@ failed on the 429 and the next 12 RFPs were declined with `rate limits writes un
 write for 45 s after the receipt, `vm.hostKeys` and `vm.onNetwork` failed three times each at 5, 10 and
 20 s, were written once the limit was off, and the contract finished.
 
+### Bid claim across bidder processes (plan 0009 ACC9-EXACTLY-ONCE, 2026-10-17)
+
+Several bidder processes of one handle share the bidder's kcp, so the Bid object is the one claim:
+`createIfAbsent` of `bid-<sha256 of the RFP uri>` gives one winner, and the others get the existing Bid.
+The claim itself was right. Two things around it were not, and both are fixed in `bid-loop.ts`,
+`market-bidder-bids-kcp` and `market-bidder`:
+
+- A process that lost the claim never looked at the Bid again. A process that died after the claim left the
+  Bid in `Deciding` with no `market.bid` record, and the living process dropped the RFP as a duplicate: the
+  bid was lost until the dead process restarted. Now a process that meets a `Deciding` Bid it does not own
+  (in the gate, or when its own `createIfAbsent` lost) waits until the Bid has been silent for 10 s
+  (`DEFAULT_BID_CLAIM_STALE_MS`), looks for the `market.bid` record (found: marks the Bid Published), and
+  otherwise deletes the Bid (kcp delete with uid and resourceVersion, so one process wins and a
+  later claim is never deleted) and runs the RFP again through its own gate and claim. A claimer that is
+  slow but alive writes `socialweb.computer/claim-heartbeat` on its Bid every 5 s while its RFP is in the gate;
+  nothing is written for a claim that finishes inside 5 s. The bidder ClusterRole gets `patch` on `bids`
+  (`deploy/apps/market-bidder/vault.yaml`).
+- `restore` deleted every `Deciding` Bid at the start of a process, which would delete the live claim of a
+  process that is running. It now treats them like any other `Deciding` Bid. `listOwnBids` read the first 100
+  `market.bid` records; hono-pds lists oldest first, so the record of a stuck Bid was not found once a bidder
+  had more than 100 bids. It pages through all of them now.
+
+Readings, dev-linux-1 (c-48), one market network (`dev up --profile market-network --bidders 1`), the extra
+bidder processes are copies of the `bidder` DenoPod with their own state dir (same handle, account and kcp).
+The RFPs are `compute.vm` and signed `market.rfp` records written to alice's PDS by a script, because the relay
+carries them to every process: the requester of `run request` keeps its repository in its own process, no relay
+crawls it, and its RFP reaches one bidder, by the push. Counts are read by RFP uri from the Bid objects and from
+the `market.bid` records on bob's PDS. Before = d84f30ff, after = this commit.
+
+| Case (RFPs) | Before: Bids / records | After: Bids / records |
+|---|---|---|
+| 2 processes, burst of 100 | 100 / 100, 33 and 67 published | 100 / 100, 42 and 58 published, 0 twice |
+| 2 processes, kill -9 of one mid-claim, it stays dead (40) | 40 / 33, 7 stuck in `Deciding` for good (an earlier run of 20: 12 records, 8 stuck) | 40 / 40, 6 stuck ones answered 9.6 s after the kill |
+| 1 process, kill -9 mid-claim, 30 more RFPs posted while it restarts (60) | 60 / 60 | 60 / 60, the 9 stuck ones answered 10.1 s after the kill |
+| 2 processes, bob's PDS stopped for 26 s while 20 claims are open (20) | not run | 20 / 20; all 20 Bids carried a heartbeat, none taken over |
+| second relay (`--relay-url a,b`, relay b replays about 900 RFPs from seq 0), then 100 new | not run | 0 new Bids or records from the replay; 100 / 100 |
+
+`bids.free` and `wif.simple` records are made once per process, not per Bid: 100 RFPs over two new processes
+added 2 of each. The claim does not touch them (it comes before they are made). Not read, and open:
+a process that is frozen for more than 10 s and then continues publishes a second `market.bid` record for the
+Bid that another process answered; the ComputeVM controllers of two processes of one handle (a
+contract with two processes was not run); and the retention of one process deleting a shared record that
+another process still caches, once every Bid that names it is older than the Bid TTL (24 h by default).
+
 ## 16. Vocabulary
 
 | | |

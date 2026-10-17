@@ -22,6 +22,7 @@ export const BID_API_VERSION = `${BID_RESOURCE.group}/${BID_RESOURCE.version}`;
 export const DEFAULT_TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const TTL_ANNOTATION = "socialweb.computer/ttl-after-finished";
 export const DEFAULT_BID_TTL = "24h";
+export const CLAIM_HEARTBEAT_ANNOTATION = "socialweb.computer/claim-heartbeat";
 export const DEFAULT_QUOTA_CACHE_MS = 2_000;
 
 export async function bidNameOf(rfpUri: string): Promise<string> {
@@ -49,6 +50,8 @@ export function bidEntryOf(bid: Bid): BidEntry {
   const settledAt = settledAtOf(s);
   return {
     ...(settledAt ? { settledAt } : {}),
+    ...(bid.metadata?.creationTimestamp ? { createdAt: bid.metadata.creationTimestamp } : {}),
+    ...(bid.metadata?.annotations?.[CLAIM_HEARTBEAT_ANNOTATION] ? { heartbeatAt: bid.metadata.annotations[CLAIM_HEARTBEAT_ANNOTATION] } : {}),
     name: bid.metadata?.name ?? "",
     rfp: refOf(spec.rfp),
     requester: spec.requester,
@@ -262,10 +265,20 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
         timings: { ...s.timings, finishedAt: at },
       }));
     },
-    async release(rfpUri) {
+    async touch(rfpUri, at) {
+      await bids.patch(await bidNameOf(rfpUri), { type: "merge", body: { metadata: { annotations: { [CLAIM_HEARTBEAT_ANNOTATION]: at } } } });
+    },
+    async release(rfpUri, liveBefore) {
       const name = await bidNameOf(rfpUri);
       const bid = await bids.get(name);
       if (!bid || (bid.status?.phase ?? "Deciding") !== "Deciding") return false;
+      if (liveBefore) {
+        const live = Math.max(
+          Date.parse(bid.metadata?.creationTimestamp ?? "") || 0,
+          Date.parse(bid.metadata?.annotations?.[CLAIM_HEARTBEAT_ANNOTATION] ?? "") || 0,
+        );
+        if (!(live < Date.parse(liveBefore))) return false;
+      }
       pending.delete(name);
       return await bids.delete(name, bid.metadata?.uid ? { uid: bid.metadata.uid, resourceVersion: bid.metadata.resourceVersion } : undefined);
     },
