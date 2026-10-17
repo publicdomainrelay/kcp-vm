@@ -74,6 +74,15 @@ export function explicitRelayUrls(network: MarketNetwork, firehoseMode = "off"):
   return [...new Set([...network.relayUrls, ...(firehoseMode === "subscriberepos" ? network.firehoseUrls : [])])];
 }
 
+export function isCrawlRoot(u: string): boolean {
+  try {
+    const url = new URL(u);
+    return (url.protocol === "http:" || url.protocol === "https:") && (url.pathname === "/" || url.pathname === "");
+  } catch {
+    return false;
+  }
+}
+
 export function splitHostPort(host: string): { hostname: string; port?: string } {
   const m = host.match(/^(\[[^\]]*\]|[^:]*)(?::(\d+))?$/);
   if (!m) return { hostname: host };
