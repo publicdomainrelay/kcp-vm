@@ -131,7 +131,8 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
   }
 
 
-  let gauge: { at: number; full: string | undefined } | undefined;
+  const quotas = [[opts.bidQuota, BID_RESOURCE], [opts.computeVMQuota, COMPUTE_VM_RESOURCE]] as const;
+  let gauge: { at: number; counts: number[] } | undefined;
 
   async function countOf(resource: typeof BID_RESOURCE): Promise<number> {
     const out = await opts.kcp.list({ resource, workspace: opts.workspace }, { limit: 1 });
@@ -140,23 +141,22 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
     return (await opts.kcp.list({ resource, workspace: opts.workspace })).items.length;
   }
 
-  async function fullQuota(fresh = false): Promise<string | undefined> {
+  async function counts(): Promise<number[]> {
     const now = Date.now();
-    if (!fresh && gauge && now - gauge.at < (opts.quotaCacheMs ?? DEFAULT_QUOTA_CACHE_MS)) return gauge.full;
-    let full: string | undefined;
+    if (gauge && now - gauge.at < (opts.quotaCacheMs ?? DEFAULT_QUOTA_CACHE_MS)) return gauge.counts;
+    const read = await Promise.all(quotas.map(([limit, resource]) => limit && limit > 0 ? countOf(resource) : 0));
+    gauge = { at: now, counts: read };
+    return read;
+  }
+
+  async function fullQuota(): Promise<string | undefined> {
     try {
-      for (const [limit, resource] of [[opts.bidQuota, BID_RESOURCE], [opts.computeVMQuota, COMPUTE_VM_RESOURCE]] as const) {
-        if (!limit || limit <= 0) continue;
-        if (await countOf(resource) >= limit) {
-          full = `${resource.plural}.${resource.group}`;
-          break;
-        }
-      }
+      const read = await counts();
+      const i = quotas.findIndex(([limit], at) => limit && limit > 0 && read[at] >= limit);
+      return i < 0 ? undefined : `${quotas[i][1].plural}.${quotas[i][1].group}`;
     } catch {
-      full = undefined;
+      return undefined;
     }
-    gauge = { at: now, full };
-    return full;
   }
 
   return {
@@ -167,8 +167,8 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
     },
     async claim(decision): Promise<BidClaim> {
       const name = await bidNameOf(decision.rfp.uri);
-      const full = await bids.get(name).then((existing) => existing ? undefined : fullQuota(true));
-      if (full) throw new BidCapacityError(full);
+      const full = await fullQuota();
+      if (full && !await bids.get(name)) throw new BidCapacityError(full);
       let out;
       try {
         out = await bids.createIfAbsent(bidObjectOf(name, decision, opts.windowMs, opts.ttl));
@@ -176,7 +176,10 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
         if (isQuotaExceeded(err)) throw new BidCapacityError(`${BID_RESOURCE.plural}.${BID_RESOURCE.group}`, err);
         throw err;
       }
-      if (out.created) pending.set(name, { rfpSeenAt: decision.rfpSeenAt, decidedAt: decision.decidedAt });
+      if (out.created) {
+        pending.set(name, { rfpSeenAt: decision.rfpSeenAt, decidedAt: decision.decidedAt });
+        if (gauge) gauge.counts[0]++;
+      }
       return { claimed: out.created, entry: bidEntryOf(out.object) } as BidClaim;
     },
     async published(rfpUri, bid, at) {

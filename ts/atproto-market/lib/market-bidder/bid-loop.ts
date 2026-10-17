@@ -78,7 +78,7 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
   const findBid = async (rfpUri: string): Promise<BidEntry | null> => {
     if (!bids) return null;
     try {
-      return await timedKcp(rfpUri, () => bids.find(rfpUri));
+      return await bids.find(rfpUri);
     } catch (err) {
       logger.warn("bid_read_failed", { rfpUri, error: String(err) });
       return null;
@@ -115,13 +115,8 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
       },
       async published(rfpUri, bid, at) {
         const timing = timings.get(rfpUri);
-        const rfpToBidMs = timing ? performance.now() - timing.startedAt : 0;
-        const began = performance.now();
-        try {
-          await bids.published(rfpUri, bid, at);
-        } finally {
-          if (timing) loop?.bidTimed?.(rfpToBidMs, timing.kcpMs + performance.now() - began);
-        }
+        if (timing) loop?.bidTimed?.(performance.now() - timing.startedAt, timing.kcpMs);
+        await bids.published(rfpUri, bid, at);
       },
       async won(rfpUri, accept, at) {
         forgetExpiry(rfpUri);
@@ -163,9 +158,9 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
     try {
       const declined = loop?.recentlyDeclined?.(input.rfpUri);
       if (declined) return duplicate(input, `declined at ${declined.at}: ${declined.reason}`);
-      const existing = await findBid(input.rfpUri);
+      const [existing, full] = await timedKcp(input.rfpUri, () =>
+        Promise.all([findBid(input.rfpUri), bids?.capacity?.().catch(() => undefined)]));
       if (existing) return duplicate(input, "a Bid answers it", existing);
-      const full = await timedKcp(input.rfpUri, async () => await bids?.capacity?.().catch(() => undefined));
       if (full) {
         loop?.rfpSeen();
         loop?.declined(DECLINE_CAPACITY, input.rfpUri, new Date());
