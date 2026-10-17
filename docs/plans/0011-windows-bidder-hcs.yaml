@@ -1,4 +1,20 @@
 plan: 0011-windows-bidder-hcs
+paused: >
+  PAUSED by the user on 2026-10-16: no Windows work until the user resumes it. The M0 spikes on the user's
+  desktop (hat-9) were running when the machine crashed; the user stopped the work. The cause of the crash is
+  not known and was not diagnosed. Done: M0-REVISIT only (docs/ARCHITECTURE.md section 15). Every other item is
+  todo and nothing it produced was committed; its experiments (an HCS VM driver, an HNS NAT network, a port
+  forwarder, a WSL distro running a Linux market network, temporary services and accounts for HCS identity
+  probes) were scratch work and their results are lost. The next worker must not start from those results.
+  Before resuming: the user decides whether the desktop (a dual-boot machine the user also works on) is the host
+  for these spikes at all, or a separate Windows machine is used; the spikes must run in small, reversible steps,
+  one at a time, each cleaned up before the next, with no HNS network, forwarding or firewall change left behind
+  between steps, and the Windows host must never be rebooted or signed out by the worker. What may still be left
+  on the desktop, to be listed and removed only when the user says so: C:\swc (bin, guest, vms, wsl, image,
+  versions, kcp-run, bao, probe, socialweb-computer checkout), the WSL distro socialweb-ubuntu and its holder
+  process, the HNS network socialweb-nat0, the firewall rules socialweb-hcsfwd-guest and socialweb-listen-test,
+  IP forwarding enabled on vEthernet (WSL (Hyper-V firewall)) and vEthernet (socialweb-nat0), and possibly the
+  temporary socialweb-hcsprobe-* services, user and scheduled task if a probe was cut short.
 written: 2026-10-11
 queued: >
   QUEUED. Starts only after plan 0006 (docs/plans/0006-socialweb-computer-unified-binary.yaml) and plan
