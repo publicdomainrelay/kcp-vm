@@ -3,14 +3,13 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,9 +19,9 @@ import (
 )
 
 const confPath = "/var/tmp/work/hcs-shim.json"
+const bridgeSock = "/var/tmp/work/hcs.sock"
 
 type conf struct {
-	Hcsvm      string `json:"hcsvm"`
 	Distro     string `json:"distro"`
 	Kernel     string `json:"kernel"`
 	Cmdline    string `json:"cmdline"`
@@ -64,8 +63,28 @@ func die(format string, a ...any) {
 	os.Exit(1)
 }
 
-func hcs(c conf, args ...string) ([]byte, error) {
-	return exec.Command(c.Hcsvm, args...).Output()
+func dial(mode string, args ...string) (net.Conn, error) {
+	c, err := net.Dial("unix", bridgeSock)
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := json.Marshal(map[string]any{"mode": mode, "args": args})
+	_, err = c.Write(append(raw, '\n'))
+	return c, err
+}
+
+func hcs(args ...string) ([]byte, error) {
+	c, err := dial("run", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	all, _ := io.ReadAll(c)
+	line, rest, _ := strings.Cut(string(all), "\n")
+	if line != "0" {
+		return []byte(rest), fmt.Errorf("hcsvm %v exited %q: %s", args, line, rest)
+	}
+	return []byte(rest), nil
 }
 
 func main() {
@@ -112,7 +131,7 @@ func main() {
 		RootfsBase: c.RootfsBase, Cidata: `\\wsl.localhost\` + c.Distro + strings.ReplaceAll(cidata, "/", `\`), NetworkID: c.NetworkID,
 		MAC: mac, IP: c.IP, Prefix: c.Prefix, VMDir: c.VMRoot + `\` + guid, Pipe: `\\.\pipe\socialweb-vm-` + guid + `-com1`,
 	}
-	work := filepath.Dir(cfgFile)
+	work := filepath.Dir(sock)
 	specFile := filepath.Join(work, "hcs-spec.json")
 	raw, _ = json.Marshal(s)
 	if err := os.WriteFile(specFile, raw, 0o600); err != nil {
@@ -120,17 +139,20 @@ func main() {
 	}
 	winSpec := `\\wsl.localhost\` + c.Distro + strings.ReplaceAll(specFile, "/", `\`)
 	started := time.Now()
-	out, err := exec.Command(c.Hcsvm, "start", winSpec).CombinedOutput()
+	out, err := hcs("start", winSpec)
 	if err != nil {
 		die("hcsvm start: %v: %s", err, out)
 	}
 	fmt.Fprintf(os.Stderr, "fcshim: hcs system %s started in %s: %s\n", guid, time.Since(started), strings.TrimSpace(string(out)))
 	os.WriteFile(filepath.Join(work, "hcs.json"), []byte(guid+"\n"), 0o600)
 
-	console := exec.Command(c.Hcsvm, "console", s.Pipe)
-	console.Stdout = os.Stdout
-	console.Stderr = os.Stderr
-	console.Start()
+	go func() {
+		cc, err := dial("stream", "console", s.Pipe)
+		if err != nil {
+			return
+		}
+		io.Copy(os.Stdout, cc)
+	}()
 
 	var mu sync.Mutex
 	state := "Running"
@@ -146,9 +168,9 @@ func main() {
 	})
 	mux.HandleFunc("/actions", func(w http.ResponseWriter, r *http.Request) {
 		go func() {
-			hcs(c, "shutdown", guid)
+			hcs("shutdown", guid)
 			time.Sleep(3 * time.Second)
-			hcs(c, "terminate", guid)
+			hcs("terminate", guid)
 		}()
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -159,11 +181,9 @@ func main() {
 	}
 	go http.Serve(l, mux)
 
-	ctx := context.Background()
-	_ = ctx
 	for {
 		time.Sleep(1 * time.Second)
-		out, err := hcs(c, "inspect", guid)
+		out, err := hcs("inspect", guid)
 		if err != nil {
 			continue
 		}
@@ -174,6 +194,6 @@ func main() {
 			break
 		}
 	}
-	hcs(c, "cleanup", guid, s.VMDir)
+	hcs("cleanup", guid, s.VMDir)
 	fmt.Fprintf(os.Stderr, "fcshim: hcs system %s gone\n", guid)
 }
