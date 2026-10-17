@@ -159,6 +159,7 @@ export function createRelayFactory(opts: RelayFactoryOptions): RelayFactory {
       const cursorQ = c.req.query("cursor");
       const parsed = cursorQ === undefined ? undefined : Number(cursorQ);
       const since = parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined;
+      let closed = false;
       return {
         onOpen(_evt, ws) {
           (async () => {
@@ -174,11 +175,13 @@ export function createRelayFactory(opts: RelayFactoryOptions): RelayFactory {
               const liveIter = sequencer.live();
               let lastSeq = since ?? 0;
               for await (const frame of sequencer.backfill(since)) {
+                if (closed) break;
                 lastSeq = frame.seq;
                 ws.send(JSON.stringify(frame));
               }
               // Stream live, skipping frames already emitted during backfill.
               for await (const frame of liveIter) {
+                if (closed) break;
                 if (frame.seq > lastSeq) {
                   ws.send(JSON.stringify(frame));
                 }
@@ -196,7 +199,9 @@ export function createRelayFactory(opts: RelayFactoryOptions): RelayFactory {
             }
           })();
         },
-        onClose() {},
+        onClose() {
+          closed = true;
+        },
       };
     }),
   );

@@ -141,3 +141,7 @@ func bootstrapCluster(ctx context.Context, kubeconfig, did, cluster string, log 
 	log.Info("the bootstrap cluster exists", "cluster", cluster, "account", did, "home", kcpclient.HomePath(did, cluster))
 	return nil
 }
+
+func BootstrapCluster(ctx context.Context, kubeconfig, did, cluster string, log *slog.Logger) error {
+	return bootstrapCluster(ctx, kubeconfig, did, cluster, log)
+}

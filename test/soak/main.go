@@ -76,13 +76,15 @@ func clientOf(kubeconfig string) (dynamic.Interface, error) {
 type counters struct {
 	rfpCreated, rfpFailed, vmStarted, vmHeld, vmReleased, vmFailed, refused atomic.Int64
 	tenantCycles, tenantOut, tenantIn, tenantFailed                         atomic.Int64
+	clustersCreated, clustersDeleted                                        atomic.Int64
 }
 
 func (c *counters) line(started time.Time) string {
 	b, _ := json.Marshal(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339), "elapsedSec": int(time.Since(started).Seconds()),
 		"rfpCreated": c.rfpCreated.Load(), "rfpFailed": c.rfpFailed.Load(), "vmStarted": c.vmStarted.Load(), "vmHeld": c.vmHeld.Load(),
 		"vmReleased": c.vmReleased.Load(), "vmFailed": c.vmFailed.Load(), "refused": c.refused.Load(),
-		"tenantCycles": c.tenantCycles.Load(), "tenantOut": c.tenantOut.Load(), "tenantIn": c.tenantIn.Load(), "tenantFailed": c.tenantFailed.Load()})
+		"tenantCycles": c.tenantCycles.Load(), "tenantOut": c.tenantOut.Load(), "tenantIn": c.tenantIn.Load(), "tenantFailed": c.tenantFailed.Load(),
+		"clustersCreated": c.clustersCreated.Load(), "clustersDeleted": c.clustersDeleted.Load()})
 	return string(b)
 }
 
@@ -135,6 +137,7 @@ func runLoad(args []string) int {
 	inflight := fs.Int("rfp-inflight", 48, "most RFP-only contracts being created at once")
 	tenantEvery := fs.Duration("tenant-every", 0, "interval between tenant cluster scale-out and scale-in cycles (0: off)")
 	tenantName := fs.String("tenant-name", "tenant", "tenant cluster name")
+	tenantLanes := fs.Int("tenant-lanes", 0, "parallel lanes that each create a tenant cluster, scale a node out and in, and delete the cluster")
 	tenantHold := fs.Duration("tenant-hold", 20*time.Second, "how long the tenant pod runs before it is deleted")
 	fs.Parse(args)
 
@@ -319,6 +322,27 @@ func runLoad(args []string) int {
 				}
 			}
 		}()
+	}
+
+	if *tenantLanes > 0 {
+		gateway := filepath.Join(t.layout.StateDir, appctl.AppsDir, "dev", *instance+"-gateway")
+		grec, err := t.childRecord(*instance + "-gateway")
+		if err != nil || grec.Gateway == nil {
+			fmt.Fprintln(os.Stderr, "the gateway record:", err)
+			return 1
+		}
+		for lane := 1; lane <= *tenantLanes; lane++ {
+			wg.Add(1)
+			go func(lane int) {
+				defer wg.Done()
+				if !sleepCtx(run, time.Duration(lane)*20*time.Second) {
+					return
+				}
+				tenantLane(run, lane, gateway, grec.Gateway.BootstrapAccountDID, &c, *tenantHold, func(m string) {
+					fmt.Println(`{"event":"` + strings.ReplaceAll(m, `"`, `'`) + `"}`)
+				})
+			}(lane)
+		}
 	}
 
 	<-run.Done()
