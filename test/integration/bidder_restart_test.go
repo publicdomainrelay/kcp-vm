@@ -123,16 +123,7 @@ func (n *Network) issuerURLs(i int) []string {
 	return out
 }
 
-func (n *Network) bidderCore(i int) (int, error) {
-	r := n.h.As(context.Background(), "pgrep", "-f", "-u", fmt.Sprint(n.h.UID), "--", "[i]nternal dev-core --instance-dir "+n.bidderDir(i)+" ")
-	fields := strings.Fields(r.Stdout)
-	if len(fields) != 1 {
-		return 0, fmt.Errorf("want one dev-core of %s, found %q", n.bidderDir(i), strings.TrimSpace(r.Stdout))
-	}
-	var pid int
-	_, err := fmt.Sscan(fields[0], &pid)
-	return pid, err
-}
+func (n *Network) bidderCore(i int) (int, error) { return n.coreOf(n.bidderDir(i)) }
 
 func TestARentedVMSurvivesABidderKillAndRestart(t *testing.T) {
 	t.Parallel()
