@@ -7,7 +7,7 @@ export type {
   PlcStore,
 } from "./factory.ts";
 
-export { MemoryPlcStore } from "./storage/plc-store.ts";
+export { FilePlcStore, MemoryPlcStore } from "./storage/plc-store.ts";
 
 export {
   validateOperationStructure,

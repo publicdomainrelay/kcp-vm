@@ -110,10 +110,9 @@ func (n *Network) waitIdentity(ctx context.Context, i int, want vmIdentity, time
 }
 
 func (n *Network) issuerURLs(i int) []string {
-	r := n.h.As(context.Background(), "sh", "-c", `cat "$1"/denokcp/runs/pod-*/std*.txt 2>/dev/null; true`, "sh", n.bidderDir(i))
 	seen := map[string]bool{}
 	var out []string
-	for _, m := range issuerURLPattern.FindAllStringSubmatch(r.Stdout, -1) {
+	for _, m := range issuerURLPattern.FindAllStringSubmatch(n.appRunLogs(n.bidderName(i)), -1) {
 		if !seen[m[1]] {
 			seen[m[1]] = true
 			out = append(out, m[1])
@@ -179,8 +178,19 @@ func TestARentedVMSurvivesABidderKillAndRestart(t *testing.T) {
 			if err := n.signal("KILL", core); err != nil {
 				return err
 			}
-			_, _, err = n.waitBidderBack(0, pid, restartBackWait)
-			return err
+			for deadline := time.Now().Add(restartBackWait); ; {
+				if again, err := n.bidderCore(0); err == nil && again != core {
+					break
+				}
+				if time.Now().After(deadline) {
+					return fmt.Errorf("the bidder's core %d did not come back inside %s", core, restartBackWait)
+				}
+				time.Sleep(time.Second)
+			}
+			if now, _, err := n.bidderProcess(0); err != nil || now != pid {
+				return fmt.Errorf("the bidder process %d did not outlive its core (the network's deno runtime runs it): now %d, %v", pid, now, err)
+			}
+			return nil
 		}},
 	}
 	for _, c := range cases {

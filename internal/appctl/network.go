@@ -2,18 +2,22 @@ package appctl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
@@ -28,6 +32,8 @@ const (
 	BidderAccountDomain = "bob.test"
 	CABundleFile        = "ca-bundle.pem"
 	NetworkServiceState = "state"
+	NetworkPortsFile    = "ports.json"
+	FrontRebindAfter    = 30 * time.Second
 )
 
 type service struct {
@@ -48,15 +54,17 @@ var networkServices = []service{
 }
 
 type networks struct {
-	ctl        *Controller
-	mu         sync.Mutex
-	applied    map[string]int64
-	frontMoved sync.Map
-	pkiPEM     []byte
+	ctl     *Controller
+	mu      sync.Mutex
+	applied map[string]int64
+	pkiPEM  []byte
+	peers   string
+
+	rebinding map[string]time.Time
 }
 
 func newNetworks(ctl *Controller) *networks {
-	return &networks{ctl: ctl, applied: map[string]int64{}}
+	return &networks{ctl: ctl, applied: map[string]int64{}, rebinding: map[string]time.Time{}}
 }
 
 func (n *networks) values(spec v1alpha1.MarketNetworkSpec) (manifests.MarketNetwork, error) {
@@ -77,8 +85,71 @@ func (n *networks) values(spec v1alpha1.MarketNetworkSpec) (manifests.MarketNetw
 	if label == "" {
 		label = n.ctl.c.Layout.ID
 	}
+	var ports manifests.NetworkPorts
+	devinstance.ReadJSON(filepath.Join(dir, NetworkPortsFile), &ports)
 	return manifests.MarketNetwork{NetworkID: label, StateDir: filepath.Join(dir, NetworkServiceState), GuestTLSDir: guest,
-		PDSPrivateKeyHex: alice, BobPDSPrivateKeyHex: bob}, nil
+		PDSPrivateKeyHex: alice, BobPDSPrivateKeyHex: bob, Ports: ports}, nil
+}
+
+var frontPorts = []struct {
+	key  string
+	port func(*manifests.NetworkPorts) *int
+}{
+	{"global/plc", func(p *manifests.NetworkPorts) *int { return &p.Plc }},
+	{"relay/relay", func(p *manifests.NetworkPorts) *int { return &p.Relay }},
+	{"relay/dispatcher", func(p *manifests.NetworkPorts) *int { return &p.Dispatcher }},
+	{"relay/dispatcher-tls", func(p *manifests.NetworkPorts) *int { return &p.DispatcherTLS }},
+	{"alice/pds", func(p *manifests.NetworkPorts) *int { return &p.AlicePds }},
+	{"bob/pds", func(p *manifests.NetworkPorts) *int { return &p.BobPds }},
+}
+
+func servicePorts(views map[string]podView) (manifests.NetworkPorts, error) {
+	var p manifests.NetworkPorts
+	for _, f := range frontPorts {
+		s, err := portFrom(views[f.key].Address)
+		if err != nil {
+			return p, fmt.Errorf("%s: %w", f.key, err)
+		}
+		if *f.port(&p), err = strconv.Atoi(s); err != nil {
+			return p, fmt.Errorf("%s: %w", f.key, err)
+		}
+	}
+	return p, nil
+}
+
+func (n *networks) holdPorts(ctx context.Context, views map[string]podView) (string, error) {
+	live, err := servicePorts(views)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(NetworkStateDir(n.ctl.c.Layout.StateDir), NetworkPortsFile)
+	var recorded manifests.NetworkPorts
+	if devinstance.ReadJSON(path, &recorded) != nil {
+		return "", devinstance.WriteJSON(path, live)
+	}
+	if live == recorded {
+		return "", nil
+	}
+	for _, f := range frontPorts {
+		if *f.port(&live) == *f.port(&recorded) {
+			continue
+		}
+		if at, ok := n.rebinding[f.key]; ok && time.Since(at) < FrontRebindAfter {
+			continue
+		}
+		ws, name, _ := strings.Cut(f.key, "/")
+		ri, err := n.ctl.client(n.ctl.c.workspace()+":"+ws, DenoPodGVR)
+		if err != nil {
+			return "", err
+		}
+		patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{denov1alpha1.AnnotationRestart: time.Now().UTC().Format(time.RFC3339Nano)}}})
+		if _, err := ri.Namespace("default").Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: FieldManager}); err != nil {
+			return "", fmt.Errorf("restarting %s onto its kept port: %w", f.key, err)
+		}
+		n.rebinding[f.key] = time.Now()
+		n.ctl.c.log().Info("a market network front is restarted onto the port it keeps", "front", f.key, "listens", *f.port(&live), "keeps", *f.port(&recorded))
+	}
+	return fmt.Sprintf("the network's services listen on %+v, not on the ports they keep across a core restart %+v; waiting for them to bind those again", live, recorded), nil
 }
 
 func (n *networks) applyServices(ctx context.Context, owner string, values *manifests.MarketNetwork) error {
@@ -89,6 +160,17 @@ func (n *networks) applyServices(ctx context.Context, owner string, values *mani
 	set, ok := ix.Set(NetworkSet)
 	if !ok {
 		return fmt.Errorf("appctl: deploy/sets.yaml names no %s set", NetworkSet)
+	}
+	if values.Ports.Dispatcher != 0 && values.Ports.DispatcherTLS != 0 {
+		values.DispatcherPort, values.GuestTLSPort = values.Ports.Dispatcher, values.Ports.DispatcherTLS
+		set.Phases = slices.Clone(set.Phases)
+		for i := range set.Phases {
+			after := slices.Clone(set.Phases[i].After)
+			for j := range after {
+				after[j].Capture = nil
+			}
+			set.Phases[i].After = after
+		}
 	}
 	ap, err := kcpapply.New(n.ctl.restCfg, kcpapply.Options{WaitTimeout: ApplyTimeout, FieldManager: FieldManager,
 		Labels: map[string]string{OwnerLabel: owner}, Log: n.ctl.c.log()})
@@ -154,7 +236,7 @@ func (n *networks) services(ctx context.Context) (serviceReport, error) {
 const (
 	ConditionServicesReady  = "ServicesReady"
 	ConditionVerifierPassed = "VerifierPassed"
-	ConditionOwnKcp         = "OwnKcp"
+	ConditionOneKcp         = "OneKcp"
 )
 
 func setCondition(conds *[]metav1.Condition, gen int64, t string, ok bool, reason, msg string) {
@@ -165,32 +247,27 @@ func setCondition(conds *[]metav1.Condition, gen int64, t string, ok bool, reaso
 	meta.SetStatusCondition(conds, metav1.Condition{Type: t, Status: s, Reason: reason, Message: msg, ObservedGeneration: gen})
 }
 
-func (n *networks) ownKcp(apps []v1alpha1.NetworkAppStatus) []string {
+func (n *networks) oneKcp(apps []v1alpha1.NetworkAppStatus) []string {
 	front, _, _ := strings.Cut(strings.TrimSuffix(n.ctl.restCfg.Host, "/"), "/clusters/")
-	fronts := map[string]string{front: "the network"}
-	roots := map[string]string{n.ctl.c.Layout.KcpDir(): "the network"}
-	var shared []string
+	workspaces := map[string]string{n.ctl.c.workspace(): "the network"}
+	var wrong []string
 	for _, a := range apps {
 		if a.KcpUrl == "" {
 			continue
 		}
-		if a.KcpRoot == "" {
-			shared = append(shared, a.Name+" reports no kcp root")
+		if f, _, _ := strings.Cut(strings.TrimSuffix(a.KcpUrl, "/"), "/clusters/"); f != front {
+			wrong = append(wrong, fmt.Sprintf("%s reports the kcp %s, not the network's %s", a.Name, f, front))
+		}
+		if a.Workspace == "" {
+			wrong = append(wrong, a.Name+" reports no workspace")
 			continue
 		}
-		f, _, _ := strings.Cut(strings.TrimSuffix(a.KcpUrl, "/"), "/clusters/")
-		if other, ok := fronts[f]; ok {
-			shared = append(shared, fmt.Sprintf("%s shares the kcp front %s with %s", a.Name, f, other))
+		if other, ok := workspaces[a.Workspace]; ok {
+			wrong = append(wrong, fmt.Sprintf("%s shares the workspace %s with %s", a.Name, a.Workspace, other))
 		}
-		if other, ok := roots[a.KcpRoot]; ok || strings.HasPrefix(a.KcpRoot, n.ctl.c.Layout.KcpDir()+string(filepath.Separator)) {
-			if other == "" {
-				other = "the network"
-			}
-			shared = append(shared, fmt.Sprintf("%s shares the kcp root %s with %s", a.Name, a.KcpRoot, other))
-		}
-		fronts[f], roots[a.KcpRoot] = a.Name, a.Name
+		workspaces[a.Workspace] = a.Name
 	}
-	return shared
+	return wrong
 }
 
 func portFrom(address string) (string, error) {
@@ -388,6 +465,13 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, false, "Waiting", strings.Join(rep.notReady, "; "))
 		return write(v1alpha1.ApplicationPhaseProvisioning, "waiting for the network's services to report ready")
 	}
+	if why, err := n.holdPorts(ctx, views); err != nil || why != "" {
+		if err != nil {
+			why = err.Error()
+		}
+		setCondition(&st.Conditions, o.Generation, ConditionServicesReady, false, "Rebinding", why)
+		return write(v1alpha1.ApplicationPhaseProvisioning, why)
+	}
 	bundle, err := n.caBundle(ctx)
 	if err != nil {
 		return write(v1alpha1.ApplicationPhaseProvisioning, "the network CA bundle: "+err.Error())
@@ -435,6 +519,13 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	}
 	wg.Wait()
 	st.Apps = apps
+	var names []string
+	for _, a := range o.Spec.Apps {
+		names = append(names, a.Name)
+	}
+	if err := n.grantPeers(ctx, names); err != nil {
+		log.Warn("granting the child applications reads of each other's MarketIdentity objects", "err", err.Error())
+	}
 	allReady := true
 	for i, a := range apps {
 		if k := o.Spec.Apps[i].Kind; k == v1alpha1.ApplicationKindMarketRequester || k == v1alpha1.ApplicationKindSshGateway {
@@ -454,20 +545,20 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	default:
 		setCondition(&st.Conditions, o.Generation, ConditionVerifierPassed, false, "Phase"+rep.verifier, "alice/verifier is "+rep.verifier)
 	}
-	if shared := n.ownKcp(apps); len(shared) > 0 {
-		setCondition(&st.Conditions, o.Generation, ConditionOwnKcp, false, "Shared", strings.Join(shared, "; "))
+	if wrong := n.oneKcp(apps); len(wrong) > 0 {
+		setCondition(&st.Conditions, o.Generation, ConditionOneKcp, false, "Apart", strings.Join(wrong, "; "))
 	} else {
-		setCondition(&st.Conditions, o.Generation, ConditionOwnKcp, true, "Distinct", "the network and every child report their own kcp front and kcp root")
+		setCondition(&st.Conditions, o.Generation, ConditionOneKcp, true, "Workspaces", "every child application runs in its own workspace of the network's kcp")
 	}
 	if !allReady {
 		return write(v1alpha1.ApplicationPhaseProvisioning, "the network's services are ready; waiting for its child applications")
 	}
-	for _, t := range []string{ConditionServicesReady, ConditionVerifierPassed, ConditionOwnKcp} {
+	for _, t := range []string{ConditionServicesReady, ConditionVerifierPassed, ConditionOneKcp} {
 		if c := meta.FindStatusCondition(st.Conditions, t); c == nil || c.Status != metav1.ConditionTrue {
 			return write(v1alpha1.ApplicationPhaseProvisioning, "the child applications are ready; waiting for condition "+t)
 		}
 	}
-	return write(v1alpha1.ApplicationPhaseReady, fmt.Sprintf("%d service(s) and %d child application(s), each with its own kcp, are ready", len(rep.components), len(apps)))
+	return write(v1alpha1.ApplicationPhaseReady, fmt.Sprintf("%d service(s) and %d child application(s), each in its own workspace of one kcp, are ready", len(rep.components), len(apps)))
 }
 
 func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value v1alpha1.MarketNetworkValue, pdsURL, aliceURL string, bidderDids []string) v1alpha1.NetworkAppStatus {
@@ -504,12 +595,7 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 	if err != nil {
 		return fail(err)
 	}
-	out.KcpUrl = rec.KcpURL
-	for _, u := range rec.Units {
-		if strings.HasPrefix(u.Role, "kcp-") {
-			out.KcpRoot = filepath.Join(c.layout.KcpDir(), "slot-"+strings.TrimPrefix(u.Role, "kcp-"))
-		}
-	}
+	out.KcpUrl, out.Workspace = rec.KcpURL, rec.BaseWorkspace
 	meta := metav1.ObjectMeta{Name: ChildRootName}
 	var root any
 	switch app.Kind {
@@ -540,7 +626,7 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 	}
 	if root != nil {
 		if err := applyRoot(ctx, rec, app.Kind, root); err != nil {
-			return fail(fmt.Errorf("applying the root object into %s's own kcp: %w", c.id, err))
+			return fail(fmt.Errorf("applying the root object into %s's workspace %s: %w", c.id, rec.BaseWorkspace, err))
 		}
 	}
 	rs, found, err := readRoot(ctx, rec, app.Kind)

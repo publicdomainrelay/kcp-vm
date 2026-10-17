@@ -18,6 +18,9 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/impl/execrunner"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/request"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
@@ -49,6 +52,8 @@ type requestRun struct {
 	kcp             *request.Kcp
 	standalone      devinstance.Layout
 	instanceDir     string
+	runsDir         string
+	podSuffix       string
 }
 
 func splitWords(rest []string) ([]string, []string) {
@@ -253,7 +258,7 @@ func (r *requestRun) childRecord(netLayout devinstance.Layout, instance string) 
 
 func (r *requestRun) start(ctx context.Context, fresh bool) error {
 	started := time.Now()
-	var kubeconfig string
+	var kubeconfig, workspace string
 	switch r.inv.Mode {
 	case request.ModeNetwork:
 		netLayout, netRec, err := r.networkLayout()
@@ -269,7 +274,7 @@ func (r *requestRun) start(ctx context.Context, fresh bool) error {
 		} else if err := request.SetStopped(ctx, netRec.AdminKubeconfig, r.inv.Name, false); err != nil {
 			return err
 		}
-		r.log("the market network places the invocation's kcp", "network", r.inv.Network)
+		r.log("the market network places the invocation in its workspace of the network's kcp", "network", r.inv.Network)
 		app, err := request.WaitNetworkApp(ctx, netRec.AdminKubeconfig, r.inv.Name, r.networkTimeout, func(a v1alpha1.NetworkAppStatus) bool {
 			return a.Instance != "" && a.KcpUrl != "" && a.Message != appctl.StoppedMessage && a.Phase != v1alpha1.ApplicationPhasePending
 		}, func(a v1alpha1.NetworkAppStatus) {
@@ -280,11 +285,14 @@ func (r *requestRun) start(ctx context.Context, fresh bool) error {
 		}
 		rec, err := r.childRecord(netLayout, app.Instance)
 		r.instanceDir = rec.Layout.StateDir
+		if rec.SharedKcp != "" {
+			r.runsDir, r.podSuffix = denoruntime.RunsDir(rec.SharedKcp), manifests.ServiceSuffix(rec.BaseWorkspace+":"+appctl.ComponentWorkspace)
+		}
 		if err != nil {
 			return err
 		}
 		r.inv.Instance, r.summary.Instance, r.summary.KcpURL = app.Instance, app.Instance, rec.KcpURL
-		kubeconfig = rec.AdminKubeconfig
+		kubeconfig, workspace = rec.AdminKubeconfig, rec.BaseWorkspace
 	default:
 		vals := r.vals.With("instance", r.inv.Name).With("profile", bootstrap.ProfileQuick).
 			With("state-dir", request.Dir(r.stateRoot, r.inv.Name))
@@ -296,7 +304,7 @@ func (r *requestRun) start(ctx context.Context, fresh bool) error {
 		r.inv.Instance, r.summary.Instance, r.summary.KcpURL = up.Instance, up.Instance, up.KcpURL
 		kubeconfig = up.AdminKubeconfig
 	}
-	k, err := request.OpenKcp(kubeconfig)
+	k, err := request.OpenKcp(kubeconfig, workspace)
 	if err != nil {
 		return err
 	}
@@ -308,7 +316,7 @@ func (r *requestRun) start(ctx context.Context, fresh bool) error {
 	}
 	r.summary.KcpColdSeconds = time.Since(started).Seconds()
 	r.summary.KcpRunning = true
-	r.log("the invocation's own kcp runs", "kcp", r.summary.KcpURL, "instance", r.inv.Instance, "coldSeconds", r.summary.KcpColdSeconds)
+	r.log("the invocation's kcp runs", "kcp", r.summary.KcpURL, "workspace", workspace, "instance", r.inv.Instance, "coldSeconds", r.summary.KcpColdSeconds)
 	return request.WriteInvocation(r.inv)
 }
 
@@ -719,9 +727,19 @@ func (r *requestRun) keepLogs() {
 		return
 	}
 	out := filepath.Join(request.Dir(r.stateRoot, r.inv.Name), "logs")
-	runs, _ := filepath.Glob(filepath.Join(r.instanceDir, "denokcp", "runs", "pod-*"))
+	runsDir := r.runsDir
+	if runsDir == "" {
+		runsDir = denoruntime.RunsDir(r.instanceDir)
+	}
+	runs, _ := filepath.Glob(filepath.Join(runsDir, "pod-*"))
 	files := []string{filepath.Join(r.instanceDir, "logs", "core.log")}
 	for _, run := range runs {
+		if r.podSuffix != "" {
+			b, err := os.ReadFile(filepath.Join(run, execrunner.PodFile))
+			if err != nil || !strings.HasSuffix(strings.TrimSpace(string(b)), "."+r.podSuffix) {
+				continue
+			}
+		}
 		for _, f := range []string{"stdout.txt", "stderr.txt"} {
 			files = append(files, filepath.Join(run, f))
 		}
@@ -732,8 +750,11 @@ func (r *requestRun) keepLogs() {
 			continue
 		}
 		rel, err := filepath.Rel(r.instanceDir, f)
-		if err != nil {
-			continue
+		if err != nil || strings.HasPrefix(rel, "..") {
+			if rel, err = filepath.Rel(filepath.Dir(runsDir), f); err != nil {
+				continue
+			}
+			rel = filepath.Join("denokcp", rel)
 		}
 		dst := filepath.Join(out, strings.ReplaceAll(rel, string(filepath.Separator), "_"))
 		if err := os.MkdirAll(out, 0o700); err == nil {

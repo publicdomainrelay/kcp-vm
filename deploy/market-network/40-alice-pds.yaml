@@ -1,12 +1,13 @@
 name: pds
 entry: hono-pds
+edge: "a market network front: it binds port 0 once and keeps that port across a core restart (ports.json)"
 stateDir: "{{.StateDir}}/alice-pds"
 memory: 512Mi
 serviceAccount: deno-runner
 tls: serve
-args: ["--port", "0", "--hostname", "127.0.0.1", "--kv-path", "{{.StateDir}}/alice-pds/kv.sqlite3"]
+args: ["--port", "{{.Ports.AlicePds}}", "--hostname", "127.0.0.1", "--kv-path", "{{.StateDir}}/alice-pds/kv.sqlite3"]
 env:
-  PORT: "0"
+  PORT: "{{.Ports.AlicePds}}"
   HOSTNAME: "127.0.0.1"
   PDS_PUBLIC_HOSTNAME: pds.default.alice.svc.kcp.local
   PDS_PLC_DIRECTORY_URL: https://plc.default.global.svc.kcp.local

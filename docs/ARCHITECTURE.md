@@ -23,8 +23,10 @@ the traditional way. This section states the principle and the rules that follow
 - **Modes = profiles over one manifest set.** A bidder in OAuth QR mode against a real account has no
   PDS pod; a bidder in the market network has its own PDS pod.
 - **Composition = applying manifest sets, or nesting instances as workspaces** (a parent's workspace
-  holds a child instance's HostProcess objects; the child keeps its own kcp).
-- **Applications talk to each other only over the atproto market protocol**, never by sharing a kcp.
+  holds a child instance's HostProcess objects; in a market network the child application itself is a
+  workspace of the parent's kcp).
+- **Applications talk to each other only over the atproto market protocol.** A shared kcp (the market
+  network profile) is composition and isolation, never a data channel.
 - **The market network** (`deploy/market-network`) is the seed of this model and the vehicle
   for parallel workstreams: each workstream's live tests run in its own market network, brought up in its own
   git worktree of this repository; the shared real bidder
@@ -56,11 +58,20 @@ only), `install`, the host contract, and the bootstrap layer that runs an instan
 - **One root object per application** in its own kcp - MarketBidder, MarketRequester, Gateway,
   MarketNetwork. Its spec carries the application's options and profile; the
   core renders the profile into owned children, and a profile switch deletes what the new profile omits.
-- **Strict kcp per application, inside a market network too.** The market network is itself an application,
-  MarketNetwork: its kcp runs the shared atproto services (PLC, relay, dispatchers, PDSes, the QR relay)
-  and holds each child application's bootstrap layer as HostProcess objects, so every bidder, gateway and
-  requester invocation in the market network runs its own kcp. Children learn the network only from values the
-  composer copies onto their root objects; the DNS shim resolves only its own application's names.
+- **Which kcp, by profile (user decision 2026-10-17, amending the strict rule of 2026-10-12).** The prod
+  profiles keep a strict kcp per application: the gateway on its host, a bidder handle on its host, a
+  `run request` without `--network`. The market network profile (dev, CI, soak) runs every application in
+  ONE kcp, each application in its own workspace, as in the deno-kcp market example: the network's own
+  services in root:global (PLC), root:relay (relay, dispatchers), root:alice and root:bob (PDSes), and each
+  child application (a bidder, the gateway, a requester invocation, an ssh gateway) in root:<app>, its
+  components in root:<app>:app. One manifest set serves both shapes: in prod it is applied into the
+  application's own kcp root; in the network the applier rebases every phase workspace under root:<app>
+  (kcpapply.Options.Base; root:*-provider and the sets of scope kcp stay shared) and service names come
+  from the phase workspace (`<name>.default.{{.ServiceSuffix}}`). The child keeps its own core (the
+  network's dev host places it, as a HostProcess in root:dev:<instance>), scoped to its workspace, with no
+  kcp, kine or deno runtime of its own: the network's one deno runtime runs every DenoPod. Children learn
+  the network from values the composer copies onto their root objects and from valueFrom references that
+  name another workspace of the same kcp (plan 0019).
 - **Every CLI option stays, kcp-native.** Each hono-bidder and request-vm-ssh option becomes a root-object
   field or a profile (only legacy guest transports are removed). Sign-in is an object, MarketIdentity:
   the URL to visit, the association to approve and an expired session are
@@ -3862,6 +3873,44 @@ because it bounds a mechanism the rest of this document leans on.
   the repo, and a fresh nonce is shown. A restart keeps the association because the watch re-verifies
   the operator's record. The associateConfirm call stays a fast path for an allow-listed operator.
   Open: the did-key-associator QR page (qr.fedfork.com) does not yet copy `n` into the record it writes.
+- **The market network runs its applications in one kcp (plan 0019, opened 2026-10-17).** User decision
+  2026-10-17: Q1 is amended by profile (section 0). Each child application of a MarketNetwork is the
+  workspace `root:<app>` of the network's kcp (type universal, label `apps.socialweb.computer/application`),
+  its components in `root:<app>:app`; the network's own services stay in root:global, root:relay,
+  root:alice and root:bob. One manifest set serves both shapes: `kcpapply.Options.Base` rebases every phase
+  and wait workspace of a set under the application's workspace (`root` -> base, `root:x` -> `<base>:x`),
+  except the API provider workspaces `root:*-provider` and the sets with `scope: kcp` (provider,
+  permission-inventory, denoruntime, dev-host, market-network); file contents are never rewritten, so a
+  manifest names in-app services as `<name>.default.{{.ServiceSuffix}}` (the suffix of the phase workspace)
+  and the logical cluster of its base as `{{.BaseCluster}}`. The child's record carries `sharedKcp` (the
+  network's state dir), the network's admin kubeconfig and kcp URL and `baseWorkspace root:<app>`; the
+  bootstrap layer places no kcp, kine or front for it, and its core (still a HostProcess in
+  `root:dev:<instance>`) runs no deno runtime and no store maintenance: the network's one deno runtime runs
+  every DenoPod of the kcp and writes every run directory under `<network state>/denokcp/runs/` (each names
+  its pod in `service.txt`). Condition OneKcp replaces OwnKcp. Workspace RBAC (kcp: a service account of
+  another workspace is the user `system:kcp:serviceaccount:<logical cluster>:<namespace>:<name>`, and it
+  also needs the non-resource verb `access` on `/` in the target workspace): the app's own pds account
+  reads its `root:app` DenoPods through `deploy/apps/repo-pds/components-rbac.yaml`, and the composer
+  grants every child's pds account get/list on the MarketIdentity objects of the other children
+  (ClusterRole `market-network-peers` in both workspaces of each child), so an AtprotoRecord `valueFrom`
+  with `workspace: root:<other>` resolves (403 elsewhere, the record stays Pending). Prod keeps a kcp per
+  application and runs the same sets with base root.
+  A core restart of the network restarts every DenoPod of the kcp (the deno runtime runs in the core), so
+  the network's fronts (plc, relay, dispatcher, dispatcher-tls, alice and bob pds) are edges
+  (`deno.computer/edge`, the one case a service may name its port): each binds port 0 once, the network
+  records the ports in `<network state>/network/ports.json`, renders them as `{{.Ports.*}}`, restarts a
+  front that came back elsewhere (`deno.computer/restart`) and holds ServicesReady until every front is
+  back on its port; the network value copied onto the children therefore stays valid. The PLC directory
+  keeps its operation log in its state dir (`hono-plc --state-path`), so no DID is lost to a restart. In
+  an application, peers inside it are reached by service name per connection (`<name>.default.{{.ServiceSuffix}}`).
+  The gateway child's teardown deletes the account workspaces (they sit at the root of the kcp) before
+  its own workspace, so the clusterprovider releases its tenant members (dev down 130 s -> 60 s).
+  Open: the web app's account and home workspaces (`root:<account>:<home>`, the tenant clusters) still sit
+  at the root of the network's kcp, not under root:gateway (kcpclient, the clusterprovider registry,
+  sweepkcp and the tenant credential paths take `root` as their base); the composer still copies the
+  network value and the bidder DIDs onto the root objects (no record carries them); the per-child core
+  holds the network's admin kubeconfig (the shared kcp isolates components by workspace RBAC, not the
+  cores); the DNS table of the one deno runtime holds every workspace's names.
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,

@@ -171,7 +171,7 @@ func (n *Network) openTenant(gw, name string) (*Tenant, error) {
 	if err != nil {
 		return nil, err
 	}
-	kc, err := n.read(filepath.Join(gw, "kcp", "admin.kubeconfig"))
+	kc, err := n.read(n.Up.AdminKubeconfig)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +279,7 @@ type ReleaseLine struct {
 }
 
 func (tn *Tenant) ReleaseLines() ([]ReleaseLine, error) {
-	r := tn.n.h.As(context.Background(), "sh", "-c", `grep -h -s node_claim_released "$1"/denokcp/runs/*/stdout.txt; true`, "sh", tn.GatewayDir)
+	r := tn.n.h.As(context.Background(), "sh", "-c", `grep -h -s node_claim_released "$1"/*/stdout.txt; true`, "sh", tn.n.runsDir())
 	if r.Err != nil {
 		return nil, r.Err
 	}
