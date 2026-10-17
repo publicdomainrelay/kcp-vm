@@ -2,6 +2,7 @@ export const GROUP_NAME = "socialweb.computer";
 export const VERSION = "v1alpha1";
 export const ANNOTATION_TTL_AFTER_FINISHED = "socialweb.computer/ttl-after-finished";
 export const FINALIZER_ATPROTO_IDENTITY = "atprotoidentity.socialweb.computer/revocation";
+export const FINALIZER_ATPROTO_RECORD = "atprotorecord.socialweb.computer/repo";
 export const CONDITION_TEARDOWN_BLOCKED = "TeardownBlocked";
 export const CONDITION_TENANT_PATH_SHUT = "TenantPathShut";
 export const CONDITION_REACHABLE = "Reachable";
@@ -53,6 +54,9 @@ export type MarketIdentityPhase = typeof MARKET_IDENTITY_PHASES[number];
 
 export const PENDING_ACTION_KINDS = ["scanQr", "visitUrl", "approveAssociation", "signInAgain"] as const;
 export type PendingActionKind = typeof PENDING_ACTION_KINDS[number];
+
+export const ATPROTO_RECORD_PHASES = ["Pending", "Applied", "Failed"] as const;
+export type AtprotoRecordPhase = typeof ATPROTO_RECORD_PHASES[number];
 
 export const APPLICATION_KINDS = ["MarketBidder", "MarketRequester", "Gateway", "SshGateway"] as const;
 export type ApplicationKind = typeof APPLICATION_KINDS[number];
@@ -362,6 +366,30 @@ export interface MarketIdentityPendingAction {
   callerDid?: string;
   handle?: string;
   expiresAt?: string;
+}
+
+export interface AtprotoRecord {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: AtprotoRecordSpec;
+  status?: AtprotoRecordStatus;
+}
+
+export interface AtprotoRecordSpec {
+  repo: string;
+  collection: string;
+  rkey: string;
+  record: string;
+}
+
+export interface AtprotoRecordStatus {
+  phase?: AtprotoRecordPhase;
+  observedGeneration?: number;
+  did?: string;
+  uri?: string;
+  cid?: string;
+  message?: string;
 }
 
 export interface MarketNetwork {
@@ -886,6 +914,17 @@ export const MARKET_IDENTITY_RESOURCE: ApiResource = {
   export: "marketidentities",
 };
 
+export const ATPROTO_RECORD_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "AtprotoRecord",
+  listKind: "AtprotoRecordList",
+  plural: "atprotorecords",
+  singular: "atprotorecord",
+  schema: "v1alpha1-1.atprotorecords.socialweb.computer",
+  export: "marketidentities",
+};
+
 export const MARKET_NETWORK_RESOURCE: ApiResource = {
   group: "socialweb.computer",
   version: "v1alpha1",
@@ -952,7 +991,7 @@ export const SSH_GATEWAY_RESOURCE: ApiResource = {
   export: "applications",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, CLUSTER_CLIENT_CERTIFICATE_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE, MARKET_NETWORK_RESOURCE, MARKET_BIDDER_RESOURCE, MARKET_REQUESTER_RESOURCE, COMPUTE_CONTRACT_RESOURCE, GATEWAY_RESOURCE, SSH_GATEWAY_RESOURCE];
+export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, CLUSTER_CLIENT_CERTIFICATE_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE, ATPROTO_RECORD_RESOURCE, MARKET_NETWORK_RESOURCE, MARKET_BIDDER_RESOURCE, MARKET_REQUESTER_RESOURCE, COMPUTE_CONTRACT_RESOURCE, GATEWAY_RESOURCE, SSH_GATEWAY_RESOURCE];
 
 export type ApiTypeName =
   | "ApplicationComponent"
@@ -967,6 +1006,10 @@ export type ApiTypeName =
   | "AtprotoIdentity"
   | "AtprotoIdentitySpec"
   | "AtprotoIdentityStatus"
+  | "AtprotoRecord"
+  | "AtprotoRecordPhase"
+  | "AtprotoRecordSpec"
+  | "AtprotoRecordStatus"
   | "Cluster"
   | "ClusterClientCertificate"
   | "ClusterClientCertificateSpec"
@@ -1419,6 +1462,82 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "state": {
         "ref": "IdentityState"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "AtprotoRecord": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "AtprotoRecordSpec"
+      },
+      "status": {
+        "ref": "AtprotoRecordStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "AtprotoRecordPhase": {
+    "enum": [
+      "Pending",
+      "Applied",
+      "Failed"
+    ],
+    "type": "string"
+  },
+  "AtprotoRecordSpec": {
+    "properties": {
+      "collection": {
+        "type": "string"
+      },
+      "record": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "rkey": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "repo",
+      "collection",
+      "rkey",
+      "record"
+    ],
+    "type": "object"
+  },
+  "AtprotoRecordStatus": {
+    "properties": {
+      "cid": {
+        "type": "string"
+      },
+      "did": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "phase": {
+        "ref": "AtprotoRecordPhase"
+      },
+      "uri": {
+        "type": "string"
       }
     },
     "required": [],
@@ -4421,6 +4540,78 @@ export function assertPendingActionKind(value: unknown): asserts value is Pendin
 
 export function parsePendingActionKind(value: unknown): PendingActionKind {
   assertPendingActionKind(value);
+  return value;
+}
+
+export function validateAtprotoRecord(value: unknown): ApiIssue[] {
+  return validate("AtprotoRecord", value);
+}
+
+export function isAtprotoRecord(value: unknown): value is AtprotoRecord {
+  return validate("AtprotoRecord", value).length === 0;
+}
+
+export function assertAtprotoRecord(value: unknown): asserts value is AtprotoRecord {
+  const issues = validate("AtprotoRecord", value);
+  if (issues.length > 0) throw new ApiValidationError("AtprotoRecord", issues);
+}
+
+export function parseAtprotoRecord(value: unknown): AtprotoRecord {
+  assertAtprotoRecord(value);
+  return value;
+}
+
+export function validateAtprotoRecordSpec(value: unknown): ApiIssue[] {
+  return validate("AtprotoRecordSpec", value);
+}
+
+export function isAtprotoRecordSpec(value: unknown): value is AtprotoRecordSpec {
+  return validate("AtprotoRecordSpec", value).length === 0;
+}
+
+export function assertAtprotoRecordSpec(value: unknown): asserts value is AtprotoRecordSpec {
+  const issues = validate("AtprotoRecordSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("AtprotoRecordSpec", issues);
+}
+
+export function parseAtprotoRecordSpec(value: unknown): AtprotoRecordSpec {
+  assertAtprotoRecordSpec(value);
+  return value;
+}
+
+export function validateAtprotoRecordStatus(value: unknown): ApiIssue[] {
+  return validate("AtprotoRecordStatus", value);
+}
+
+export function isAtprotoRecordStatus(value: unknown): value is AtprotoRecordStatus {
+  return validate("AtprotoRecordStatus", value).length === 0;
+}
+
+export function assertAtprotoRecordStatus(value: unknown): asserts value is AtprotoRecordStatus {
+  const issues = validate("AtprotoRecordStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("AtprotoRecordStatus", issues);
+}
+
+export function parseAtprotoRecordStatus(value: unknown): AtprotoRecordStatus {
+  assertAtprotoRecordStatus(value);
+  return value;
+}
+
+export function validateAtprotoRecordPhase(value: unknown): ApiIssue[] {
+  return validate("AtprotoRecordPhase", value);
+}
+
+export function isAtprotoRecordPhase(value: unknown): value is AtprotoRecordPhase {
+  return validate("AtprotoRecordPhase", value).length === 0;
+}
+
+export function assertAtprotoRecordPhase(value: unknown): asserts value is AtprotoRecordPhase {
+  const issues = validate("AtprotoRecordPhase", value);
+  if (issues.length > 0) throw new ApiValidationError("AtprotoRecordPhase", issues);
+}
+
+export function parseAtprotoRecordPhase(value: unknown): AtprotoRecordPhase {
+  assertAtprotoRecordPhase(value);
   return value;
 }
 

@@ -1,0 +1,23 @@
+name: pds
+entry: hono-repo-pds
+stateDir: "{{.Pds.StateDir}}"
+memory: 512Mi
+serviceAccount: deno-runner
+tls: trust
+trust: [{{.Pds.Trust}}]
+args: ["--market-identity-name", "{{.Pds.Identity}}", "--kcp-server", "{{.Pds.KcpServer}}", "--kcp-workspace", "{{.Pds.KcpWorkspace}}", "--vault-openbao-server", "{{.Pds.VaultServer}}", "--vault-openbao-client", "{{.Pds.VaultClient}}", "--vault-kcp-server", "{{.Pds.VaultKcpServer}}", "--vault-mount", "{{.Pds.VaultMount}}", "--storage-path", "{{.Pds.StateDir}}/repo.sqlite3", "--plc-directory-url", "{{.Pds.PlcDirectoryUrl}}", "--ingress-proxy-host", "{{.Pds.IngressProxyHost}}", "--serve-port", "0"{{.Pds.ExtraArgs}}]
+projected:
+  - {name: kcp-token, serviceAccountToken: {name: pds, workspace: "{{.Pds.KcpWorkspace}}"}}
+  - {name: kcp-ca, kcpCA: {}}
+  - {name: vault, openBaoClient: {server: "{{.Pds.VaultServer}}", client: "{{.Pds.VaultClient}}", workspace: "{{.Pds.KcpWorkspace}}"}}
+env:
+  PORT: "0"
+  SERVE_PORT: "0"
+permissions:
+  net: true
+  env: [SERVE_PORT, PORT, PORT_FILE, LISTENERS_FILE, STATUS_FILE, KCP_NAMESPACE, KCP_WORKSPACE, PATH, HOME]
+  sys: [hostname]
+  read: [{{.Pds.Read}}]
+probe:
+  host: pds.default.app.svc.kcp.local
+  path: /xrpc/_health

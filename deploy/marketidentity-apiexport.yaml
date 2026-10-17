@@ -9,3 +9,8 @@ spec:
       schema: v1alpha1-1.marketidentities.socialweb.computer
       storage:
         crd: {}
+    - group: socialweb.computer
+      name: atprotorecords
+      schema: v1alpha1-1.atprotorecords.socialweb.computer
+      storage:
+        crd: {}

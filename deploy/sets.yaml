@@ -191,6 +191,7 @@ sets:
         workspace: "{{.Workspace}}"
         files:
           - path: marketidentity-apiresourceschema.yaml
+          - path: atprotorecord-apiresourceschema.yaml
           - path: marketidentity-apiexport.yaml
         after:
           - kind: APIExport
@@ -223,13 +224,14 @@ sets:
             for: Ready
 
   - name: market-bidder
-    summary: the components of a MarketBidder application in its own kcp - the MarketIdentity schema bound in root (the bidder signs in through its MarketIdentity bidder in every profile), its own OpenBaoServer and the account that reads it in root, the root:app workspace and, per profile (prod-qr, market-network, dev-local), the bidder DenoPod rendered from deploy/apps/market-bidder/bidder.values.yaml and its guest DenoPod guest-kcp (the provider relay, OIDC issuer, /v1/on-network and /v1/host-keys; plan 0007 M5-BIDDER-COMPONENTS) from deploy/apps/market-bidder/guest-kcp.values.yaml (a phase named <component>@<profile> belongs to that profile only); applied by internal/appctl (plan 0007 M5-RUN-BIDDER)
+    summary: the components of a MarketBidder application in its own kcp - the MarketIdentity schema bound in root (the bidder signs in through its MarketIdentity bidder in every profile), its own OpenBaoServer and the account that reads it in root, the root:app workspace and, per profile (prod-qr, market-network, dev-local), the bidder's own PDS DenoPod pds (its repo, its AtprotoRecord objects, the association; deploy/apps/repo-pds, shared with any application that owns a PDS; plan 0018), the bidder DenoPod rendered from deploy/apps/market-bidder/bidder.values.yaml and its guest DenoPod guest-kcp (the provider relay, OIDC issuer, /v1/on-network and /v1/host-keys; plan 0007 M5-BIDDER-COMPONENTS) from deploy/apps/market-bidder/guest-kcp.values.yaml (a phase named <component>@<profile> belongs to that profile only); applied by internal/appctl (plan 0007 M5-RUN-BIDDER)
     values: MarketBidder
     phases:
       - name: identity-schemas
         workspace: root:socialweb-provider
         files:
           - path: marketidentity-apiresourceschema.yaml
+          - path: atprotorecord-apiresourceschema.yaml
           - path: marketidentity-apiexport.yaml
         after:
           - kind: APIExport
@@ -250,6 +252,10 @@ sets:
           - kind: OpenBaoServer
             name: bidder
             for: Ready
+      - name: pds-rbac
+        workspace: root
+        files:
+          - path: apps/repo-pds/rbac.yaml
       - name: workspace
         workspace: root
         files:
@@ -264,6 +270,11 @@ sets:
             for: Ready
         files:
           - path: market-network/10-rbac.yaml
+      - name: pds@market-network
+        workspace: root:app
+        files:
+          - path: apps/repo-pds/pds.values.yaml
+            template: denopods/service.yaml
       - name: policy-engine@market-network
         workspace: root:app
         files:
@@ -279,6 +290,11 @@ sets:
         files:
           - path: apps/market-bidder/guest-kcp.values.yaml
             template: denopods/service.yaml
+      - name: pds@prod-qr
+        workspace: root:app
+        files:
+          - path: apps/repo-pds/pds.values.yaml
+            template: denopods/service.yaml
       - name: policy-engine@prod-qr
         workspace: root:app
         files:
@@ -293,6 +309,11 @@ sets:
         workspace: root:app
         files:
           - path: apps/market-bidder/guest-kcp.values.yaml
+            template: denopods/service.yaml
+      - name: pds@dev-local
+        workspace: root:app
+        files:
+          - path: apps/repo-pds/pds.values.yaml
             template: denopods/service.yaml
       - name: policy-engine@dev-local
         workspace: root:app
@@ -333,6 +354,7 @@ sets:
         workspace: root:socialweb-provider
         files:
           - path: marketidentity-apiresourceschema.yaml
+          - path: atprotorecord-apiresourceschema.yaml
           - path: marketidentity-apiexport.yaml
           - path: computecontract-apiresourceschema.yaml
           - path: computecontract-apiexport.yaml
@@ -382,6 +404,7 @@ sets:
           - path: computecontract-apiresourceschema.yaml
           - path: computecontract-apiexport.yaml
           - path: marketidentity-apiresourceschema.yaml
+          - path: atprotorecord-apiresourceschema.yaml
           - path: marketidentity-apiexport.yaml
         after:
           - kind: APIExport

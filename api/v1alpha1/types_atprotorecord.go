@@ -1,0 +1,56 @@
+package v1alpha1
+
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+type AtprotoRecord struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   AtprotoRecordSpec   `json:"spec,omitempty"`
+	Status AtprotoRecordStatus `json:"status,omitempty"`
+}
+
+type AtprotoRecordList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+
+	Items []AtprotoRecord `json:"items"`
+}
+
+type AtprotoRecordSpec struct {
+	Repo string `json:"repo"`
+
+	Collection string `json:"collection"`
+
+	Rkey string `json:"rkey"`
+
+	Record string `json:"record"`
+}
+
+type AtprotoRecordPhase string
+
+const (
+	AtprotoRecordPhasePending AtprotoRecordPhase = "Pending"
+
+	AtprotoRecordPhaseApplied AtprotoRecordPhase = "Applied"
+
+	AtprotoRecordPhaseFailed AtprotoRecordPhase = "Failed"
+)
+
+type AtprotoRecordStatus struct {
+	Phase AtprotoRecordPhase `json:"phase,omitempty"`
+
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	Did string `json:"did,omitempty"`
+
+	Uri string `json:"uri,omitempty"`
+
+	Cid string `json:"cid,omitempty"`
+
+	Message string `json:"message,omitempty"`
+}
+
+const FinalizerAtprotoRecord = "atprotorecord.socialweb.computer/repo"
