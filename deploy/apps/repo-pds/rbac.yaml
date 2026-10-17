@@ -14,7 +14,7 @@ rules:
     verbs: ["get", "list"]
   - apiGroups: ["socialweb.computer"]
     resources: ["marketidentities"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["socialweb.computer"]
     resources: ["atprotorecords"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]

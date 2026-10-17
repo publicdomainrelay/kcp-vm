@@ -2021,6 +2021,7 @@
         "dependencies": [
           "jsr:@publicdomainrelay/atproto-repo-abc@0",
           "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-common@0",
           "jsr:@publicdomainrelay/logger@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
         ]

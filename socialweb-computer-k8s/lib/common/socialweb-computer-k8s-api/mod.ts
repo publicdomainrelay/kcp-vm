@@ -2,6 +2,7 @@ export const GROUP_NAME = "socialweb.computer";
 export const VERSION = "v1alpha1";
 export const ANNOTATION_TTL_AFTER_FINISHED = "socialweb.computer/ttl-after-finished";
 export const FINALIZER_ATPROTO_IDENTITY = "atprotoidentity.socialweb.computer/revocation";
+export const CONDITION_REFERENCES_RESOLVED = "ReferencesResolved";
 export const FINALIZER_ATPROTO_RECORD = "atprotorecord.socialweb.computer/repo";
 export const CONDITION_TEARDOWN_BLOCKED = "TeardownBlocked";
 export const CONDITION_TENANT_PATH_SHUT = "TenantPathShut";
@@ -380,7 +381,7 @@ export interface AtprotoRecordSpec {
   repo: string;
   collection: string;
   rkey: string;
-  record: string;
+  record: Record<string, unknown>;
 }
 
 export interface AtprotoRecordStatus {
@@ -390,6 +391,7 @@ export interface AtprotoRecordStatus {
   uri?: string;
   cid?: string;
   message?: string;
+  conditions?: Condition[];
 }
 
 export interface MarketNetwork {
@@ -1502,7 +1504,8 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
         "type": "string"
       },
       "record": {
-        "type": "string"
+        "open": true,
+        "type": "object"
       },
       "repo": {
         "type": "string"
@@ -1523,6 +1526,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "properties": {
       "cid": {
         "type": "string"
+      },
+      "conditions": {
+        "items": {
+          "ref": "Condition"
+        },
+        "type": "array"
       },
       "did": {
         "type": "string"

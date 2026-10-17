@@ -6,7 +6,9 @@ note: >
   DenoPod manifest set deploy/apps/repo-pds, the hono-repo-pds entry and its record reconciler, the
   association flow) land there first; the bidder side (M1) and the gateway requester side (M2) build on
   them on the same branch. Rebase on it often. Pushes: a58553ac (AtprotoRecord kind, deploy/apps/repo-pds,
-  RepoPds values, bidder profiles map to localRepo, the core keeps the repo key in the bidder's OpenBao).
+  RepoPds values, bidder profiles map to localRepo, the core keeps the repo key in the bidder's OpenBao),
+  2fbeca24 (hono-repo-pds), 9f4e8508 (bidder side), 6dd6e1be (canonical association shape), 37cb52d0
+  (RepoPds.VaultMountClient), 5370e006 (no serviceAccount); later shas are in the git log of task/own-pds.
 source: >
   2026-10-17: Bob's bsky.social account (bobvmbuilder) hit the hosted PDS cap of 35000 write points per
   24 hours, and every prod contract then failed with 429. The prod bidder (profile prod-qr, MarketIdentity
@@ -30,16 +32,28 @@ items:
     depends_on: []
     decision: >
       api/v1alpha1 AtprotoRecord (export marketidentities, so the existing marketidentities binding covers
-      it): spec {repo, collection, rkey, record (the record as JSON text)}, status {phase Pending|Applied|
-      Failed, observedGeneration, did, uri, cid, message}, finalizer atprotorecord.socialweb.computer/repo.
-      deploy/apps/repo-pds/pds.values.yaml renders the DenoPod pds from manifests.RepoPds (field Pds of a
-      set's values; any set can render it), deploy/apps/repo-pds/rbac.yaml its service account. The entry
-      hono-repo-pds reads the repo key from the application's OpenBao (the core creates it once), registers
-      the did:plc, serves the repo on port 0 and on the did-key-ingress-proxy subdomain of its key, accepts
-      writes only from a service-auth token signed by the repo key, and reconciles AtprotoRecord objects
-      whose spec.repo is pds. associateConfirm decides with the MarketIdentity spec (associateWith, the
-      approved and rejected lists); an approved caller becomes an AtprotoRecord, and the call answers once
-      that record is Applied.
+      it): spec {repo (the PDS DenoPod name, pds), collection, rkey, record (an open object)}, status {phase
+      Pending|Applied|Failed, observedGeneration, did, uri, cid, message, conditions (ReferencesResolved)},
+      finalizer atprotorecord.socialweb.computer/repo. Records live in git, in the application's manifest
+      set (deploy/apps/<app>/records.yaml), applied with the profile like any object. Two substitutions
+      only: render-time Go template values of the root object ({{.Kcp.Server}} and the like), and runtime
+      references: a record value that is exactly {valueFrom: {kind or resource, name, fieldPath, workspace?,
+      namespace?, apiVersion?}} is the field of that kcp object (kind MarketIdentity, AtprotoRecord, DenoPod or
+      any socialweb.computer kind; resource names the plural, apiVersion an outside kind; workspace absent is
+      the record's own workspace, set it is read through /clusters/<workspace>; fieldPath is dotted with
+      [n] indexes). The reconciler keeps the record Pending with condition ReferencesResolved False, reason
+      MissingReference, naming every missing or unreadable reference (404, 403), writes it once all
+      resolve, and rewrites it when a referenced value changes. That is the ordering: objects wait on each
+      other's status. deploy/apps/repo-pds/pds.values.yaml renders the DenoPod pds from manifests.RepoPds
+      (field Pds of a set's values; any set can render it), deploy/apps/repo-pds/rbac.yaml its account
+      pds. The entry hono-repo-pds reads the repo key from the application's OpenBao (the core creates it
+      once), registers the did:plc, serves the repo on port 0 and on the did-key-ingress-proxy subdomain of
+      its key, accepts writes only from a service-auth token signed by the repo key, and reconciles the
+      AtprotoRecord objects whose spec.repo is pds. associateConfirm decides with the MarketIdentity spec
+      (associateWith, approved and rejected lists), records an approval in spec.approvedAssociations, and
+      answers once a declared record {challenge: caller, keyId: own DID, service} is in the repo; the
+      bidder's record is deploy/apps/market-bidder/records.yaml (challenge from
+      spec.approvedAssociations[0], keyId from status.did of MarketIdentity bidder).
     files: ["api/v1alpha1/types_atprotorecord.go", "deploy/apps/repo-pds", "ts/atproto-market/hono-repo-pds", "ts/atproto-market/lib/hono-factory-repo-pds", "ts/atproto-market/lib/atproto-record-kcp"]
     done_when: "a market network bidder runs with the pds DenoPod; deleting an AtprotoRecord object deletes its record from the repo; the pds DenoPod reports its listeners in its status."
     status: doing

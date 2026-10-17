@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"encoding/json"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -26,7 +28,7 @@ type AtprotoRecordSpec struct {
 
 	Rkey string `json:"rkey"`
 
-	Record string `json:"record"`
+	Record json.RawMessage `json:"record"`
 }
 
 type AtprotoRecordPhase string
@@ -51,6 +53,10 @@ type AtprotoRecordStatus struct {
 	Cid string `json:"cid,omitempty"`
 
 	Message string `json:"message,omitempty"`
+
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
+
+const ConditionReferencesResolved = "ReferencesResolved"
 
 const FinalizerAtprotoRecord = "atprotorecord.socialweb.computer/repo"

@@ -3797,13 +3797,21 @@ because it bounds a mechanism the rest of this document leans on.
   signed by the repo key (aud and iss the repo DID); createAccount and getServiceAuth are off. The bidder
   DenoPod holds the same key, signs its records and service-auth tokens with it, and reads and writes its
   repo only through the pds DenoPod. Records the application declares are AtprotoRecord objects (kind in
-  export marketidentities): the pds DenoPod applies each into the repo, reports uri and cid in its status,
-  and deletes the record when the object is deleted (finalizer atprotorecord.socialweb.computer/repo).
-  The association: the operator scans `<qrOrigin>/#bdr=<bidder DID>`, the frontend calls associateConfirm
-  through the operator's PDS, the pds DenoPod decides with the MarketIdentity spec (associateWith is the
-  bidder's handle, so the operator account is approved at once) and declares the association as an
-  AtprotoRecord `association-<sha256 of the operator DID>`; the call answers once it is Applied and the
-  frontend writes one record into the operator's repo (one createRecord, 3 points, once per bidder DID).
+  export marketidentities) in git, in its manifest set (`deploy/apps/market-bidder/records.yaml`), applied
+  with the profile: spec {repo, collection, rkey, record}, record an open object. Two substitutions only:
+  the render-time template values of the root object, and runtime references, a value that is exactly
+  `{valueFrom: {kind | resource, name, fieldPath, workspace?, namespace?, apiVersion?}}` (fieldPath dotted
+  with `[n]`; workspace absent is the record's own, set it is read through `/clusters/<workspace>`). The
+  pds DenoPod keeps a record Pending with condition ReferencesResolved False, reason MissingReference,
+  naming each missing or unreadable (404, 403) reference, writes it once all resolve, rewrites it when a
+  referenced value changes, reports uri and cid, and deletes it with the object (finalizer
+  atprotorecord.socialweb.computer/repo). The association: the operator scans
+  `<qrOrigin>/#bdr=<bidder DID>`, the frontend calls associateConfirm through the operator's PDS, the pds
+  DenoPod decides with the MarketIdentity spec (associateWith is the bidder's handle, so the operator
+  account is approved at once) and records the approval in `spec.approvedAssociations`; the declared
+  record `association` (challenge from `spec.approvedAssociations[0]`, keyId from `status.did`) then
+  resolves and is written, the call answers, and the frontend writes one record into the operator's repo
+  (one createRecord, 3 points, once per bidder DID).
   The requester's policy reads the bidder's own repo for the operator (`resolveOperatorDid`). In a market
   network the bidder's core plays the operator's browser once with the bidder account on the bob PDS.
   Open: the readings of the live proof; the gateway requester side (M2); whether prod requesters find the

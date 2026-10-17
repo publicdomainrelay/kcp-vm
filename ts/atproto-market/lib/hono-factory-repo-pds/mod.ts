@@ -34,11 +34,6 @@ export interface RepoPdsApp {
   shutdown(): Promise<void>;
 }
 
-async function sha256Hex(s: string): Promise<string> {
-  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
-  return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 export function createRepoPdsApp(spec: RepoPdsSpec, ports: { logger: StructuredLoggerInterface }): RepoPdsApp {
   const { logger } = ports;
   let pds: LocalPDSAgent | undefined;
@@ -105,14 +100,19 @@ export function createRepoPdsApp(spec: RepoPdsSpec, ports: { logger: StructuredL
     if (decision !== "approve") {
       throw new Error(`${handle ?? callerDid} (${callerDid}) is not approved: set spec.associateWith or add the DID to spec.approvedAssociations of MarketIdentity ${spec.identityName}, then scan again`);
     }
-    const name = `association-${(await sha256Hex(callerDid)).slice(0, 16)}`;
-    await records!.declare(name, BADGE_BLUE_KEYS_NSID, name, {
-      keyId: pds!.did,
-      challenge: callerDid,
-      service: spec.associateServiceId,
-      createdAt: new Date().toISOString(),
-    }, { "socialweb.computer/association": "true" });
-    await records!.waitApplied(name, 30_000);
+    if (!id.approvedAssociations?.includes(callerDid)) await prompt.answerAssociation(spec.identityName, callerDid, "approve");
+    records!.wake();
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const page = await pds!.repoApi.listRecords(pds!.did as never, BADGE_BLUE_KEYS_NSID, { limit: 100 });
+      const found = page.records.some((r) => {
+        const v = r.value as Record<string, unknown>;
+        return v.keyId === pds!.did && v.challenge === callerDid && v.service === spec.associateServiceId;
+      });
+      if (found) return;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    throw new Error(`${callerDid} is approved in MarketIdentity ${spec.identityName}, but no AtprotoRecord of this application wrote {challenge: ${callerDid}, keyId: ${pds!.did}, service: ${spec.associateServiceId}} within 30 s; the application's manifest set declares that record`);
   }
 
   return {

@@ -35,7 +35,8 @@ spec:
               rkey:
                 type: string
               record:
-                type: string
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
             required:
               - repo
               - collection
@@ -61,6 +62,11 @@ spec:
                 type: string
               message:
                 type: string
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
       additionalPrinterColumns:
         - name: Repo
           type: string
