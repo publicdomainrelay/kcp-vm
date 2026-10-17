@@ -1,0 +1,37 @@
+name: prod-canary
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    if: github.repository == 'publicdomainrelay/socialweb-computer-kcp' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/toolchain
+      - name: canary
+        env:
+          ALICE_ATPROTO_HANDLE: ${{ secrets.PROD_CANARY_ALICE_HANDLE }}
+          ALICE_ATPROTO_PASSWORD: ${{ secrets.PROD_CANARY_ALICE_PASSWORD }}
+        run: |
+          creds="$RUNNER_TEMP/alice.source"
+          umask 077
+          printf 'ALICE_ATPROTO_HANDLE=%s\nALICE_ATPROTO_PASSWORD=%s\n' "$ALICE_ATPROTO_HANDLE" "$ALICE_ATPROTO_PASSWORD" > "$creds"
+          deno run -A scripts/prod-canary.ts --creds "$creds" --log "$RUNNER_TEMP/results.jsonl"
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: prod-canary-results
+          path: ${{ runner.temp }}/results.jsonl
+          if-no-files-found: ignore

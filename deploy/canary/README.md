@@ -1,10 +1,16 @@
 # Prod canary
 
-A user systemd timer on the deploy host (hat-8), run as the account that owns
-`~/.aliceoa_bsky_social_source`, proves once a night that the prod gateway can
-make a tenant cluster, run a Job on it and delete it. The credential file stays
-on the host: nothing is stored in GitHub or GitLab, and the script reads the
-file inside its own process.
+The GitHub Actions workflow `.github/workflows/prod-canary.yml` proves once a night
+(04:17 UTC, and on `workflow_dispatch`) that the prod gateway can make a tenant
+cluster, run a Job on it and delete it. It runs on a GitHub-hosted runner on main
+only. The requester's handle and password are the repository secrets
+`PROD_CANARY_ALICE_HANDLE` and `PROD_CANARY_ALICE_PASSWORD`; the job writes them to a
+0600 file in the runner's temp directory, and the script reads that file inside its
+own process. Each run's `results.jsonl` is the artifact `prod-canary-results`.
+Read the last two runs with `gh run list --workflow prod-canary.yml --limit 2`.
+
+The user systemd timer below is the same script on a host, for a host that holds
+`~/.aliceoa_bsky_social_source` itself.
 
 `scripts/prod-canary.ts` goes only through the gateway's XRPC front door, with
 service-auth tokens for the requester account from `createSession` and

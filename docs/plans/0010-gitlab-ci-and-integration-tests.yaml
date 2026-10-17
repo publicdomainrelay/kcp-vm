@@ -313,9 +313,12 @@ items:
     evidence: []
   - id: G3-PROD-CANARY
     milestone: G3
-    title: A nightly canary, a user systemd timer on hat-8, that runs a Job on a prod tenant cluster that scales from zero
+    title: A nightly canary, a scheduled GitHub Actions job, that runs a Job on a prod tenant cluster that scales from zero
     depends_on: ["0006:M5-FRESH-DEPLOY", "G1-CI-GATE"]
     decision: >
+      Changed by the user 2026-10-17: the canary is the scheduled GitHub Actions workflow
+      `.github/workflows/prod-canary.yml` on a GitHub-hosted runner (hat-8 was offline), not a timer on a host.
+      The text below is the earlier decision.
       Decided by the lead 2026-10-15 (the user may veto): the canary is a user systemd timer on hat-8, run as
       johnandersen777 (scripts/prod-canary.ts and deploy/canary/), not a GitLab pipeline; the credential files
       stay on that host and no secret goes to GitHub or GitLab. Each run creates canary-YYYYMMDD, applies a
