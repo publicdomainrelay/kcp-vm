@@ -202,6 +202,9 @@ items:
     title: Soak reading - every series plateaus
     depends_on: [M2-QUOTAS, M3-STORE-COMPACTION, M3-DENOPOD-LIMITS, M3-VAULT-TIDY, M3-DISK-RETENTION, M3-PDS-RECORD-RETENTION]
     decision: >
+      Changed by the user 2026-10-17: 3 h of accelerated load is enough, with every TTL and sweep interval
+      shortened so each fires several times inside the window (e.g. Bid TTL 15 min, contract TTL 30 min);
+      the slope is fitted after warm-up. The text below is the earlier decision; its counts scale to 3 h.
       A market network with a gateway under accelerated load for about 24 h: at least 50000 RFPs, 2000
       contracts, 200 restarts and upgrades of bidder and gateway components. Sampled every minute: RSS of kcp,
       kine, the core, each deno, OpenBao and postgres; object counts per kind; kine rows and store size;
