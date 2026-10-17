@@ -1,4 +1,19 @@
 plan: 0012-macos-bidder-vz
+paused: >
+  PAUSED by the user on 2026-10-16: no macOS work until the user resumes it. Done: M0-REVISIT (the plan
+  now follows the code at socialweb-computer-kcp 79f40adb; docs/ARCHITECTURE.md section 15 holds the
+  reconciliation and one new item, M1-BOOTSTRAP-DARWIN), M0-HOST-BASELINE and M0-VFKIT-ASSET (vfkit v0.6.4,
+  the Red Hat universal file, pinned in versions.json and shipped as is). Not started: every other M0 item.
+  Learned: kcp v0.33.0, a cgo kine built from source, bao v2.6.2 and deno 2.9.7 run on darwin/arm64; a
+  system-domain LaunchDaemon with a non-admin UserName started a VM through Virtualization.framework (a
+  guest-less EFI probe, see section 15); a Setpgid child outlives a SIGKILLed launchd job and its bootout, so
+  the darwin DenoPod runner must not give each run its own process group; the unix socket path limit is 103
+  bytes, not 107; a home directory is mode 750, so daemon assets live in a root-owned directory; this Mac has
+  FileVault on and an open console session and may not be rebooted, signed out or put to sleep, so the
+  reboot, logout and no-login proofs stay blocked until the user does them. The next worker needs: a way to
+  run a market network on the Mac (a darwin devsup, or a plan to join a remote network, see section 15),
+  the launchd hostsvc.Manager, the vz-arm64 guest image (a kernel with virtio-pci, built on a Linux host),
+  and a clean Mac state: nothing of this work is left outside ~/.tmp on the Mac.
 written: 2026-10-11
 queued: >
   QUEUED. Starts only after plan 0006 (docs/plans/0006-socialweb-computer-unified-binary.yaml) and plan
@@ -610,9 +625,9 @@ items:
     decision: >
       The reproducible build (0006:M4-BUILD) gains darwin/arm64 carrying: the core binary (CGO_ENABLED=0,
       ad-hoc signed by the Go linker), deno darwin/arm64, bao darwin/arm64, kcp and kine darwin/arm64
-      (M1-BOOTSTRAP-DARWIN), vfkit darwin/arm64 as the arm64 slice of the upstream universal Developer ID binary,
-      unchanged (M0-VFKIT-ASSET: the slice is byte-identical to lipo -thin and can be cut on Linux, so no
-      signing step is needed), gvproxy if chosen, the TypeScript closure; the arm64 guest image is fetched, not
+      (M1-BOOTSTRAP-DARWIN), vfkit v0.6.4 as the upstream universal Developer ID binary, shipped as is and
+      already pinned in versions.json (M0-VFKIT-ASSET: Red Hat signature, notarized, virtualization
+      entitlement present, no signing step; the arm64 slice alone would save 34 MB raw and 14 MB zstd), gvproxy if chosen, the TypeScript closure; the arm64 guest image is fetched, not
       embedded (M1-GUEST-IMAGE-ARM64); no k3s, postgres, firecracker or pasta (`serve gateway kcp` refuses by
       name on darwin). darwin/amd64 is the user's question (recommended: not built until asked).
       Notarization and Developer ID are the user's question; until answered, the release is ad-hoc signed

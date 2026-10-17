@@ -3800,33 +3800,62 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
-- **Plan 0012 M0-VFKIT-ASSET: vfkit as an asset, extracted by the core's own store and run by a daemon user,
-  read on 2026-10-17 UTC (05:25 to 05:33) on the Mac of M0-HOST-BASELINE.** The vfkit v0.6.4 release has two
-  files, `vfkit` (66431936 bytes, sha256 0ed83fc8..., matches GitHub's digest) and `vfkit-unsigned`. `vfkit` is a
-  universal binary (x86_64 + arm64) signed `Developer ID Application: Red Hat, Inc. (HYSCB8KRL2)`, hardened
-  runtime (flags 0x10000), with the entitlements network.client, network.server and virtualization. Its arm64
-  slice (offset 34504704, size 31927232) has sha256 84d9dd06...; `lipo -thin arm64` produces exactly those bytes
-  (run twice, same sha256), and `codesign --verify --strict` calls the thin file "valid on disk" and "satisfies
-  its Designated Requirement", so the slice keeps the Red Hat signature, and a release can cut it on Linux with
-  no Apple tool and no signing step (the first M0-VFKIT-ASSET plan, a signing step before pinning, is not needed
-  for this choice). The other candidate, `codesign --force -s - --entitlements <virtualization only>` on the
-  thin file, gives an ad-hoc signature (flags 0x2, no team id, Identifier vfkit-arm64-<hash>) of sha256
-  d5582077... for the unchanged code; both print `vfkit version: v0.6.4` from the owner's shell. The asset
-  tree is one file, `vfkit`, mode 555: raw 31908912 bytes (ad-hoc) and 15072852 bytes as tar.zst, against 66 MB
-  for the universal file. Extraction used the real `internal/assets.Store.Resolve` (a throwaway program, not
-  committed) with a pin built from `assets.TreeDigest`: 45 ms, a new inode inside a `.tmp-<random>` directory
-  renamed to `<root>/<tree sha256>/vfkit`, store root mode 0700; the extracted file verifies with codesign and
-  carries no extended attribute. Run as the dedicated non-admin account `socialweb-m0012` (uid 480), the same
-  program extracted it into a root-owned work area and a system-domain LaunchDaemon with `UserName` that account
-  ran it: `vfkit version: v0.6.4`, last exit code 0. `spctl --assess --type execute` answers "rejected" for
-  both the ad-hoc file and the Developer ID slice ("the code is valid but does not seem to be an app"); a bare
-  command-line tool is not assessable by spctl, so it is not the arbiter, and the exec of the daemon is. The
-  quarantine reading: our writer does not copy extended attributes (a source file with
-  `com.apple.quarantine` extracted to a file with none), so extraction never propagates quarantine; but
-  executing a quarantined ad-hoc-signed binary from a shell did not return in two minutes and was killed, so a
-  core binary downloaded by a browser or `curl` through a quarantining app must have the attribute removed
-  (`xattr -d com.apple.quarantine`) before it runs. Not read here: the entitlement at VM start (that is
-  M0-SCRATCH-BACKEND), and whether the Red Hat slice and the ad-hoc file both start a VM in a daemon.
+- **Plan 0012 is paused by the user (2026-10-16); what M0 settled and what it did not, as of 2026-10-17 UTC.**
+  Done and committed: M0-REVISIT, M0-HOST-BASELINE and M0-VFKIT-ASSET (entries below). One pre-probe was run
+  before the pause, outside any item: a system-domain LaunchDaemon with `UserName` the non-admin account
+  `socialweb-m0012` ran the ad-hoc-signed thin vfkit (virtualization entitlement only) with `--bootloader
+  efi,variable-store=...,create`, one vCPU, 512 MiB, a virtio-serial log file, a REST socket and no disk, no
+  kernel and no network; it is a framework probe and not a guest, and the RFP rule that every guest is born from
+  cloud-init was not touched. vfkit logged `virtual machine is running` and, in the same second, `VM is stopped`
+  (the firmware had nothing to boot), and launchd read last exit code 0. So Virtualization.framework accepted a VM
+  start in a job with no GUI session and a non-admin user while the owner's console session stayed open. It does
+  not say whether a VM survives the death of its submitter, runs with no console session at all (the Mac may not
+  be signed out, so that cannot be measured here), runs in the user/<uid> domain of an account with no login,
+  or what its networking does; those stay M0-VZ-LIFETIME and M0-LAUNCHD-DOMAIN. Findings that change later items:
+  a bidder on a Mac needs kcp, kine (sqlite, cgo, built here in 13 s) and bao as darwin assets and a launchd
+  `hostsvc.Manager`, and `dev up` (the market network) is Linux only because `devsup` is, while the child
+  bidder's `vmHostBackend` option already lets a network place VMs with another backend; a Mac market network
+  therefore needs a darwin `devsup` (about 1000 lines on Linux: subreaper, pidfd and /proc become kqueue, process
+  groups and sysctl) or a remote network that this Mac joins, and the second is not supported today because every
+  network service binds 127.0.0.1:0 and peers find it by a per-application DNS shim; a darwin guest kernel needs
+  virtio-pci (the firecracker configs have virtio-mmio only) and `vz-arm64` is the name reserved for it in
+  versions.json, to be built on Linux by `scripts/build-guest-image.sh` from `firecracker-aarch64.config` plus
+  PCI; no firecracker-aarch64 image was found in the Spaces bucket at main/35e91d21 (only x86_64 under
+  `main/<commit>/guest-image/`; other commits were not listed), so the arm64 rootfs would be built too. A c-16 build droplet was created for
+  that build and deleted again before it did any work.
+- **Plan 0012 M0-VFKIT-ASSET: vfkit as an asset, shipped as the Red Hat universal file, extracted by the core's
+  own store and run by a daemon user, read on 2026-10-17 UTC (05:25 to 05:40) on the Mac of M0-HOST-BASELINE.**
+  Source: `https://github.com/crc-org/vfkit/releases/download/v0.6.4/vfkit`, 66431936 bytes, sha256
+  `0ed83fc8ca7aa708598835480dba1362406aa7cd1dab3b27464eb76327d9652d`, equal to the digest GitHub shows for the
+  asset; the release also has `vfkit-unsigned`, not used. It is pinned in `internal/versions/versions.json` as
+  asset `vfkit` (platform darwin/arm64, `kind file`, `archive raw`, tree sha256 28d3b7e3..., rawBytes 66431936,
+  zstdBytes 29401851 measured with `assetpack tar` and `zstd -q -19 --long=27 -T0`). The file is a universal
+  Mach-O (x86_64 + arm64) signed `Developer ID Application: Red Hat, Inc. (HYSCB8KRL2)`, hardened runtime
+  (flags 0x10000), entitlements network.client, network.server and com.apple.security.virtualization;
+  `codesign --verify --strict` passes and `spctl --assess --type open --context context:primary-signature`
+  answers "accepted, source=Notarized Developer ID". Decision from the readings: ship it as is. It needs no
+  signing step, keeps Red Hat's provenance and notarization, and already carries the virtualization entitlement;
+  the cost against the arm64 slice alone is 66.4 MB against 31.9 MB raw and 29.4 MB against 15.1 MB zstd.
+  Alternatives measured and not chosen: the arm64 slice (offset 34504704, size 31927232, sha256 84d9dd06...) is
+  byte-identical to `lipo -thin arm64` (run twice) and keeps a valid signature that spctl also accepts as
+  Notarized Developer ID, so a Linux build could cut it without any Apple tool; an ad-hoc re-signed thin file
+  (`codesign --force -s - --entitlements <virtualization only>`, sha256 d5582077..., flags 0x2, no team id) runs
+  but spctl rejects it. Extraction used the real `internal/assets.Store.Resolve` (a throwaway program, not
+  committed) with a pin built from `assets.TreeDigest`: 45 ms for the thin file and 96 ms for the universal one,
+  a new inode inside a `.tmp-<random>` directory renamed to `<root>/<tree sha256>/vfkit`, store root mode 0700,
+  no extended attribute on the result, `codesign --verify` valid after extraction. Run as the non-admin account
+  `socialweb-m0012` (uid 480), the extracted ad-hoc file ran as a system-domain LaunchDaemon with `UserName`
+  that account: `vfkit version: v0.6.4`, last exit code 0. Quarantine, three outcomes with the
+  `com.apple.quarantine` attribute set by `xattr -w` (values `0083;<time>;Safari;`, a faked download mark): the
+  Red Hat thin file ran at once, exit 0 and the version line, no prompt; the ad-hoc thin file did not return in
+  25 s and had to be killed (the lead saw syspolicyd kill it with 137, "Terminating process due to Gatekeeper
+  rejection"), and the same bytes extracted without the attribute ran, so a binary with no developer identity
+  is blocked by Gatekeeper when it carries the attribute; the third outcome, the same ad-hoc file approved by the
+  user, was not run, because an approval of a test copy with no developer identity proves nothing. Our writer
+  copies no extended attributes (a quarantined source extracted to a file with none), so extraction never
+  propagates quarantine. `spctl --assess --type execute` says "rejected" for every bare command-line tool,
+  signed or not, so it is not the arbiter. Not read: the entitlement at VM start for the Red Hat file in a daemon
+  (the pre-probe in the M0 pause note below ran the ad-hoc file).
 
 - **Plan 0012 M0-HOST-BASELINE: the Mac, and what the landed tree does on it, read on 2026-10-17 UTC (05:21
   to 05:26).** Host: Mac17,4 (hostname Johns-Air), Apple M5, 10 cores (4 performance, 6

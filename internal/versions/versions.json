@@ -60,7 +60,7 @@
       "owner": "plan 0006 M1-ASSETS",
             "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "openbao-plugin-auth-atproto", "openbao-plugin-auth-sshsig", "pasta", "postgres", "socialweb-computer-k8s-downloads", "socialweb-vmexec"]
     },
-    "darwin/arm64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
+    "darwin/arm64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, owned by plan 0012; vfkit is pinned, the other assets follow with the plan's M1 and M2 items", "assets": ["vfkit"]},
     "darwin/amd64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
     "windows/amd64": {"status": "seam", "owner": "plan 0011", "note": "seam: builds and vets, no assets, owned by plan 0011", "assets": []},
     "windows/arm64": {"status": "seam", "owner": "plan 0011", "note": "seam: builds and vets, no assets, owned by plan 0011", "assets": []}
@@ -176,6 +176,18 @@
       "platforms": {
         "linux/amd64": {"treeSha256": "7980e9cef61bed899dfc06a4e9ff530c03d482a95645bc9aae65090ab9d3da1e", "rawBytes": 3284984, "zstdBytes": 1127003},
         "linux/arm64": {"treeSha256": "f425e3a3cac72e14c2cf09c2c5d3151586f9fce59df94b5f8da8accb0168cdcc", "rawBytes": 2866368, "zstdBytes": 1006897}
+      }
+    },
+    "vfkit": {
+      "version": "v0.6.4",
+      "source": "github.com/crc-org/vfkit release v0.6.4, the file named vfkit (a universal x86_64+arm64 Mach-O), shipped as is",
+      "verify": "sha256 pinned here, equal to the digest GitHub shows for the release asset; the file carries the Red Hat Developer ID signature (Developer ID Application: Red Hat, Inc. (HYSCB8KRL2), hardened runtime, entitlement com.apple.security.virtualization), codesign --verify --strict passes and spctl accepts it as Notarized Developer ID (read on macOS 27.2)",
+      "executables": {"vfkit": "vfkit"},
+      "fetch": {
+        "darwin/arm64": {"kind": "file", "url": "https://github.com/crc-org/vfkit/releases/download/v0.6.4/vfkit", "sha256": "0ed83fc8ca7aa708598835480dba1362406aa7cd1dab3b27464eb76327d9652d", "archive": "raw", "members": {"vfkit": "vfkit"}}
+      },
+      "platforms": {
+        "darwin/arm64": {"treeSha256": "28d3b7e32c0ed9833135064a0d9fff6867d426ab876facd4edf3f7bf810c5653", "rawBytes": 66431936, "zstdBytes": 29401851}
       }
     },
     "deno": {
