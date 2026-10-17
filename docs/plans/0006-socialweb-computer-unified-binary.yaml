@@ -2174,12 +2174,12 @@ acceptance:
   where: "hat-8 and the market network for every proof (live guests only through runComputeContract); prod readings after the user's fresh deploy"
   checks:
     - id: ACC6-ONE-BINARY
-      text: "Prod's gateway runs socialweb-computer alone as a user unit of the lingering socialweb account set up by one `install gateway`, plus the user units and children it started from its extracted assets (kcp's pg, kine, slot and front units; postgres, bao, each cluster's slice of member units: front, k3s, kine, external-secrets, dumbpipe; deno); no container, shell, kubectl, yq or socat."
-      status: todo
+      text: "Prod's gateway runs socialweb-computer alone as a user unit of the lingering socialweb account set up by one `install gateway`, plus the user units and children it started from its extracted assets (kcp's pg, kine, slot and front units; postgres, bao, each cluster's slice of member units: front, k3s, kine, external-secrets, dumbpipe; deno); the account's process tree and unit set hold no container, shell, kubectl, yq or socat (the host's own docker package is not used by the account)."
+      status: done
       evidence: []
     - id: ACC6-STATE
       text: "After the fresh deploy (no container-era state), the door answers /api/config 200, the bootstrap cluster is Ready with its ClusterLinks Listening, an idle cluster reads None nodes 0, and a restart of the core lists the same workspaces, APIBindings, ClusterLinks and NodeClaims as before it."
-      status: todo
+      status: done
       evidence: []
     - id: ACC6-UPGRADE
       text: "An upgrade of the binary on the gateway host keeps every tenant apiserver answering through its front and every market node Ready throughout; every cluster member unit, postgres and vault unit, and kcp's pg, kine, slot and front units, keep their InvocationIDs. A kcp roll (M3-KCP-ROLL) keeps every /readyz through the kcp front answering (0 failed polls at 200 ms) and the controller gap under 5 s (decided by the user 2026-10-12: kcp blue/green slots behind our own front)."
