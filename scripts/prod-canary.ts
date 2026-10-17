@@ -227,8 +227,9 @@ async function tombstone(): Promise<string | null> {
   try {
     await pds.tombstone();
     tombstoned = true;
-    const r = await http(`${args.plc.replace(/\/+$/, "")}/${pds.did}/log/last`);
-    const last = await r.json().catch(() => null);
+    const r = await http(`${args.plc.replace(/\/+$/, "")}/${pds.did}/log/audit`);
+    const audit = await r.json().catch(() => null);
+    const last = Array.isArray(audit) ? audit.filter((e: { nullified?: boolean }) => !e.nullified).at(-1)?.operation : null;
     if (last?.type !== "plc_tombstone") return `after the tombstone the last PLC operation of ${pds.did} is ${last?.type ?? r.status}`;
     const doc = await http(`${args.plc.replace(/\/+$/, "")}/${pds.did}`);
     await doc.body?.cancel();
