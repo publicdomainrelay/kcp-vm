@@ -77,6 +77,8 @@ const MAX_RECORDED_BIDS = 20;
 
 export const AT_CAPACITY_RETRY_MS = 60_000;
 
+export const RFP_ONLY_ANNOTATION = "socialweb.computer/rfp-only";
+
 const FETCH_BOUND_SLACK_MS = 0;
 
 function prefixed(logger: StructuredLoggerInterface, extra: Record<string, unknown>): StructuredLoggerInterface {
@@ -116,6 +118,7 @@ export function startContractRunner(
     { resource: COMPUTE_CONTRACT_RESOURCE, workspace: env.workspace },
     parseComputeContract,
   );
+  const rfpOnly = initial.metadata?.annotations?.[RFP_ONLY_ANNOTATION] === "true";
   const stopping = new AbortController();
   const releaseAsked = Promise.withResolvers<void>();
   const ended = new AbortController();
@@ -384,7 +387,7 @@ export function startContractRunner(
       onRfpSubmitted: async (event, s) => {
         stepTo("collectingBids");
         await track("Requesting", "the RFP is submitted")(event, s);
-        return decide();
+        return rfpOnly ? "return" as const : decide();
       },
       onBid: (event) => {
         env.loop?.bid();
