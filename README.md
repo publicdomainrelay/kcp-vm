@@ -10,11 +10,40 @@ One binary, `socialweb-computer`, runs every part of the software. Each running 
 
 ## Prerequisites
 
-- A 64-bit Linux host with `/dev/kvm`.
+- A 64-bit Linux host with `/dev/kvm`, systemd 253 or newer (Ubuntu 24.04 ships 255), cgroup v2 and `/dev/net/tun`.
 - To run VMs on the host: an account whose `/etc/subuid` and `/etc/subgid` each reserve one range of `N * 65536` ids, which `socialweb-computer install bidder --vm-slots N` writes (default 256). One running VM holds one slot of 65536 ids, so `N` is how many VMs the account runs at once. The account hands its slots out under one lock, `/run/user/<uid>/socialweb-vmslots.lock`.
 - To rent a VM: a bidder to rent from, and an atproto account to post the records. A single-host market network runs its bidders as children of the same instance, so run every live command as the VM account (`test-0001`): the VM units, their slots and their `/dev/kvm` access belong to that account.
 - To run a release binary: `curl` and `sha256sum` (coreutils). The binary embeds every asset it runs, so it needs neither this checkout nor Go and Deno.
 - To build from source or run the scripts: Go and Deno on `PATH`, and this repository checked out, since the scripts run from their own checkout.
+
+### Prepare a bare host
+
+A bare Ubuntu 24.04 or Fedora host needs these OS packages and settings for the market network and `run request` below. `dev up` for a network with a bidder checks the host first, and `run request` checks for `ssh`; each stops at once, naming what is missing and its fix; `socialweb-computer check-host -role bidder -state-dir <dir>` lists every check.
+
+| Need | Ubuntu / Debian package | Fedora / RHEL package |
+|---|---|---|
+| `newuidmap` and `newgidmap`, so each VM runs in its own user namespace | `uidmap` | `shadow-utils` |
+| `ssh` and `ssh-keygen`, which `run request` runs | `openssh-client` | `openssh-clients` |
+| `curl`, to install the binary and fetch the guest image | `curl` | `curl` |
+| `/usr/share/zoneinfo`, for the embedded postgres of the gateway | `tzdata` | `tzdata` |
+| `jq`, used by the examples below (optional) | `jq` | `jq` |
+
+As root, once:
+
+```bash
+apt-get install -y uidmap openssh-client curl tzdata jq
+useradd -m -s /bin/bash -G kvm -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0 test-0001
+usermod --add-subuids 100000-1148575 --add-subgids 100000-1148575 test-0001
+loginctl enable-linger test-0001
+sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+echo kernel.apparmor_restrict_unprivileged_userns=0 > /etc/sysctl.d/60-socialweb.conf
+```
+
+- `-K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0` stops `useradd` from adding its own 65536-id range; the account must have exactly one range in each file. `100000-1148575` is 16 VM slots.
+- Linger keeps the account's `systemd --user` manager running. Log in as the account with `ssh test-0001@<host>` or `machinectl shell test-0001@`; `sudo -u` and `runuser` do not create the `/run/user/<uid>` session that `XDG_RUNTIME_DIR` names.
+- The `sysctl` lets the embedded pasta create a user namespace on Ubuntu 24.04 and newer, where AppArmor restricts it. On a host that has no such sysctl, skip those two lines. A production bidder loads an AppArmor profile through `install bidder` instead.
+- `/dev/kvm` is read-write for the `kvm` group; `/dev/net/tun` is open on current kernels, otherwise run `modprobe tun`.
+- The account's cgroup delegation (`cpu memory pids` in `user@<uid>.service`) is the default on Ubuntu 24.04; `dev up` names it if the host lacks it.
 
 ## Install a release binary
 
@@ -143,9 +172,10 @@ Build script options:
 A market network is one instance, profile `market-network`, in its own kcp. It runs the shared atproto services (fake PLC, relay, PDSes) and composes child applications, each with its own kcp: one bidder per `--bidders`, and, with `--with-gateway`, one gateway.
 
 ```bash
-socialweb-computer dev up --instance mn1 --profile market-network --bidders 1 --with-gateway \
-  --guest-image-source file:///var/lib/socialweb-computer/guest-image --vm-host-backend systemd-user
+socialweb-computer dev up --instance mn1 --profile market-network --bidders 1 --with-gateway --vm-host-backend systemd-user
 ```
+
+Run it as the VM account, on a host prepared as in [Prepare a bare host](#prepare-a-bare-host). With no `--guest-image-source`, `dev up` downloads and verifies the guest image of this build from the public bucket the first time and reuses it after. On a bare 8 vCPU host the first `dev up` took 92 seconds. Pass `--guest-image-source file:///var/lib/socialweb-computer/guest-image` to use a directory you placed yourself.
 
 Inspect the network, use it, and stop it:
 
@@ -171,6 +201,7 @@ socialweb-computer dev down --instance mn1
 | `--bidders N` | How many `MarketBidder` children to compose (`bidder-1` .. `bidder-N`). | 1 |
 | `--with-gateway` | Also compose a `Gateway` child. | |
 | `--guest-image-source` | The `file://` or `https://` base the pinned guest image is fetched from and verified against by sha256. Unset, the image of this build is downloaded from the published artifacts. | |
+| `--guest-image-release-base` | The base the published artifacts are searched under when `--guest-image-source` is unset. | the public bucket |
 | `--vm-host-backend` | The placement backend of the VM units: `systemd-user` or `proc`. | the instance's own |
 | `--app-values` | A YAML file merged over the market-network values. | |
 | `--network-timeout` | How long `dev up` waits for the network and every child to report Ready. A cold first start can need longer than the default. | `3m` |
@@ -334,12 +365,12 @@ GW=https://k8s.socialweb.computer AUD=did:web:k8s.socialweb.computer N=com.publi
 call() { local m=$1 nsid=$N.$2; shift 2; goat xrpc $m $GW $nsid "$@" "Authorization:Bearer $(goat account service-auth --aud $AUD --lxm $nsid)"; }
 call procedure createCluster name=demo                       # create if missing and start the control plane (idempotent)
 call query listClusters | jq '.clusters[] | {name, phase, running}'
-call procedure getKubeconfig name=demo ttlSeconds=28800 | jq -r .kubeconfig > demo.kubeconfig; chmod 600 demo.kubeconfig
+call procedure getKubeconfig name=demo ttlSeconds:=28800 | jq -r .kubeconfig > demo.kubeconfig; chmod 600 demo.kubeconfig
 KUBECONFIG=demo.kubeconfig kubectl get ns
 call procedure controlPlaneDown name=demo; call procedure deleteCluster name=demo
 ```
 
-The kubeconfig holds a client key and an x509 client certificate from the cluster's own OpenBao PKI (CN your DID, O `socialweb.computer:cluster-owners`, default 8 h, at most 24 h via `ttlSeconds`). Plain `kubectl`, no helper. Keep it `0600`, never commit it. `getKubeconfig` on a stopped cluster answers `ClusterNotRunning`: call `createCluster` or `controlPlaneUp` first. `revokeIdentity` and `deleteCluster` end every certificate at once. For a certificate that never expires, call `getKubeconfig name=demo noExpiry:=true`: it lives until you revoke it, delete the cluster, or the cluster CA expires. Cluster phases are `Unavailable`, `Initializing`, `Ready`, and `Draining`.
+`goat xrpc` sends `key=value` as a JSON string and `key:=value` as a JSON number or boolean, so `ttlSeconds` and `noExpiry` take `:=`; `ttlSeconds=28800` is a string and the gateway answers `InvalidRequest`. The kubeconfig holds a client key and an x509 client certificate from the cluster's own OpenBao PKI (CN your DID, O `socialweb.computer:cluster-owners`, default 8 h, at most 24 h via `ttlSeconds`). Plain `kubectl`, no helper. Keep it `0600`, never commit it. `getKubeconfig` on a stopped cluster answers `ClusterNotRunning`: call `createCluster` or `controlPlaneUp` first. `revokeIdentity` and `deleteCluster` end every certificate at once. For a certificate that never expires, call `getKubeconfig name=demo noExpiry:=true`: it lives until you revoke it, delete the cluster, or the cluster CA expires. Cluster phases are `Unavailable`, `Initializing`, `Ready`, and `Draining`.
 
 ### Watch cluster state with subscribeClusters
 
@@ -444,7 +475,7 @@ deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.bobvmbuilder_bsky_socia
 
 For the bidder, read the current QR url from the `MarketIdentity` object's `status.pendingAction.url` in the bidder's kcp (see [Inspect the kcp of an application](#inspect-the-kcp-of-an-application)). On an installed bidder host the kcp kubeconfig is readable by root only, so run `kubectl` through `sudo` with `K=/var/lib/socialweb-computer/swc-bidder/handles/<hash>/kcp/admin.kubeconfig`; the `MarketIdentity` appears a few seconds after `install bidder` returns, so retry on `NotFound`. Run `oauth-signin.ts` on a machine with Chrome, passing the url.
 
-`oauth-signin.ts` options: `--creds`, `--account`, and `--url` (all required), `--out` (the screenshot directory), `--done "<text>"` (wait for this text after consent), `--chrome` (the browser path, default `/usr/bin/google-chrome`).
+`oauth-signin.ts` options: `--creds`, `--account`, and `--url` (all required), `--out` (the screenshot directory), `--done "<text>"` (wait for this text after consent), `--chrome` (the browser path, default `/usr/bin/google-chrome`), `--chrome-arg` (an extra browser flag; repeat it), `--sign-in-as` (type this identifier instead of the handle in the credential file) and `--cookie-file` (write the browser cookies to this file, mode 0600).
 
 A QR url expires after 5 minutes, so read the current one from the MarketIdentity status right before running the script.
 
