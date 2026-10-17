@@ -48,6 +48,18 @@ const manifest = {
   files: files.map(({ rel, size, sha256 }) => ({ path: rel, size, sha256 })),
 };
 
+const attempt = async <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+  for (let n = 1; ; n++) {
+    try {
+      return await fn();
+    } catch (err) {
+      console.error(`publish-spaces: ${key} attempt ${n} failed: ${err instanceof Error ? err.message : err}`);
+      if (n >= 4) throw err;
+      await new Promise((r) => setTimeout(r, 2000 * n));
+    }
+  }
+};
+
 const put = async (prefix: string, copyFrom?: string) => {
   const queue = [...files];
   const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
@@ -55,22 +67,24 @@ const put = async (prefix: string, copyFrom?: string) => {
       const started = Date.now();
       const key = `${prefix}/${f.rel}`;
       if (copyFrom) {
-        await s3.send(new CopyObjectCommand({
-          Bucket: bucket,
-          Key: key,
-          CopySource: encodeURI(`${bucket}/${copyFrom}/${f.rel}`),
-          MetadataDirective: "COPY",
-          ACL: "public-read",
-        }));
+        await attempt(key, () =>
+          s3.send(new CopyObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            CopySource: encodeURI(`${bucket}/${copyFrom}/${f.rel}`),
+            MetadataDirective: "COPY",
+            ACL: "public-read",
+          })));
       } else {
-        await s3.send(new PutObjectCommand({
-          Bucket: bucket,
-          Key: key,
-          Body: await Deno.readFile(f.path),
-          ContentType: typeOf(f.rel),
-          ACL: "public-read",
-          Metadata: { sha256: f.sha256 },
-        }));
+        await attempt(key, async () =>
+          s3.send(new PutObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            Body: await Deno.readFile(f.path),
+            ContentType: typeOf(f.rel),
+            ACL: "public-read",
+            Metadata: { sha256: f.sha256 },
+          })));
       }
       const how = copyFrom ? `copied from ${copyFrom}` : "uploaded";
       console.log(`${key} ${f.size} bytes sha256 ${f.sha256} ${how} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
