@@ -29,7 +29,7 @@ items:
       2xx; a non-2xx answer or an error keeps the phase and records release.status and error.
     files: ["ts/atproto-market/lib/compute-request-xrpc/mod.ts"]
     done_when: "a contract that was released three times has one vm.delete and one market.event record in the requester's repo."
-    status: todo
+    status: done
   - id: M2-RETRY-LOOP
     title: "holdUntilEnded retries the release with a backoff, bounded by the contract TTL and the stopping signal"
     depends_on: [M1-RESEND-SAME-EVENT]
@@ -45,7 +45,7 @@ items:
       (the bound, the delay, what counts as an acknowledgement) are in requester-controller-abc.
     files: ["ts/atproto-market/lib/requester-controller-kcp/runner.ts", "ts/atproto-market/lib/abc/requester-controller/mod.ts"]
     done_when: "a release whose first submit answers 404 shows Releasing with a growing attempt count, then Released once the bidder answers."
-    status: todo
+    status: done
   - id: M3-RESUME-RELEASING
     title: "A requester restart in Releasing resends the stored event"
     depends_on: [M1-RESEND-SAME-EVENT, M2-RETRY-LOOP]
@@ -65,12 +65,12 @@ items:
       uri; the bidder is back; the next resend answers 2xx or the terminated event arrives; the bidder's
       ComputeVM is gone; the ComputeContract is Released. The bidder's own restore check (task/failover-fix)
       is off for the run, so only this path is shown.
-    status: todo
+    status: done
   - id: ACC20-ONE-EVENT
     title: "One vm.delete per contract"
     depends_on: [M1-RESEND-SAME-EVENT]
     done_when: "the requester's repo holds exactly one com.publicdomainrelay.temp.compute.events.vm.delete record for the contract of ACC20-BIDDER-BACK."
-    status: todo
+    status: done
   - id: ACC20-BOUND
     title: "The retry ends at the contract TTL with a reason"
     depends_on: [M2-RETRY-LOOP]
