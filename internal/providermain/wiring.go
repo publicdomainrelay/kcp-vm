@@ -465,17 +465,16 @@ func (p *Provider) one(ctx context.Context, ref clusterprovider.Ref) error {
 }
 
 func (p *Provider) reapOne(ctx context.Context, key string) error {
-	if err := p.host.Reap(ctx, key); err != nil {
-		return err
+	if p.nodes != nil {
+		if err := p.nodes.adoptOnce(ctx, key); err != nil {
+			return fmt.Errorf("clusterprovider: adopting the live market nodes of %s before reaping it: "+
+				"%w -- a claim nothing holds is a machine nothing releases", key, err)
+		}
+		if err := p.nodes.reapCluster(ctx, key); err != nil {
+			return err
+		}
 	}
-	if p.nodes == nil {
-		return nil
-	}
-	if err := p.nodes.adoptOnce(ctx, key); err != nil {
-		return fmt.Errorf("clusterprovider: adopting the live market nodes of %s before reaping it: "+
-			"%w -- a claim nothing holds is a machine nothing releases", key, err)
-	}
-	return p.nodes.reapCluster(ctx, key)
+	return p.host.Reap(ctx, key)
 }
 
 func (p *Provider) scale(ctx context.Context, key, name string, running bool) {
