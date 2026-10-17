@@ -137,10 +137,10 @@ acceptance:
   checks:
     - id: ACC16-TIMING
       text: "On prod, createCluster -> Ready is about 1 minute (was 2 min 44 s on 2026-10-13), with overlapping member placement visible in the gateway log."
-      status: todo
+      status: done
     - id: ACC16-NO-REGRESSION
       text: "TestRequestSecretsReachTheGuestThroughTheRFPFlow and TestTenantClusterScalesFromZeroOnMarketVMsAndBack pass on the merged commit; prod finish line passes; a broken member fails fast with its name."
-      status: todo
+      status: done
 integration_tests: >
   go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run 'TestTenantClusterScalesFromZeroOnMarketVMsAndBack|TestRequestSecretsReachTheGuestThroughTheRFPFlow'
   (take live slots; host load under 30; a timeout at high load proves nothing).

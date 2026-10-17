@@ -3804,6 +3804,43 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **Plan 0016 ACC16-TIMING and ACC16-NO-REGRESSION: createCluster to Ready was waiting on the kcp client rate limit, not on the CPU (2026-10-17 UTC).**
+  Host: a DigitalOcean s-4vcpu-8gb droplet (4 vCPU, 8 GB, Ubuntu 24.04, sfo2) shaped like the prod gateway, one market
+  network with a gateway and one bidder, the bootstrap tenant cluster as the createCluster, read in the gateway core log
+  from "the bootstrap cluster exists" to the first `cluster provider: status` with phase Ready. Before (main at ebedcc74):
+  61.5, 62.0, 57.4, 57.5, 57.3 s, median 57.5 s. With the five-answer /readyz streak of ROLL-1 (main at 1b87e578): 65.1,
+  61.3, 63.3 s. After (this change): 35.9, 34.5, 33.4, 37.4, 32.1 s, median 34.5 s. Cause: the clients of the cluster
+  provider, the HostProcess supervisor, the Postgres controller and the tenant add-ons were built from a rest.Config
+  without QPS, so client-go limited them to 5 requests a second. Each of the 15 port holds (a Get and an Update of the
+  front HostProcess) took 0.4 s, 6 s in all, and every burst of ESO CRD applies and tenant add-on calls queued behind the
+  same limiter. `kcpserver.FrontRestConfig` and the tenant and admin clients now set 50 qps and burst 100. Four smaller
+  changes: the Postgres controller wakes on a new Postgres object and polls at 200 ms while one is not Ready (it ticked
+  every 3 s, three ticks per store, 10 s from object to Ready, now about 3 s); the cluster's Postgres object is created
+  before the front is placed and awaited after it, so initdb runs beside the front; the ESO webhook and controller
+  share one tenant-half install (`stepNeeds`: the controller no longer needs the webhook ready, only the install, which
+  both Prepares run once) and its CRDs are applied 8 at a time; a pass that spawned is followed by one at once, and
+  `place` polls at 100 ms. A k3s step gates on the unauthenticated and controllers checks only: the five-answer streak
+  stays in `WaitSlot`, which only the roll calls, so the roll guarantee of ROLL-1 is the code it was. Member timeline
+  before and after (seconds after createCluster; P placed, R ready): front P 8.1 R 11.1, kine P 17.7 R 21.2, k3s P 21.3
+  R 33.8, ccm R 35.9, esowh P 46.6 R 51.2, eso R 56.3, Ready 57.4; after front P 2.9 R 5.4, kine P 6.3 R 10.5, k3s P 10.6
+  R 25.7, esowh and eso P 30.1, ccm R 30.8, eso R 32.8, Ready 33.4. One run with every change but the 50 qps: 53.3 s.
+  CPU: `taskset` on the `dev up` process tree (the units of an instance are not in the user slice, so a cgroup cpuset on
+  the user slice changed nothing). 2 vCPU: main with the streak 99.9 and 87.4 s, the change 62.8 s; this matches prod's
+  78 to 117 s, so prod behaves like 2 vCPU. 4 vCPU: 57.5 (63.3 with the streak) before, 34.5 after. On a c-16 droplet
+  (dedicated cores) 16 vCPU: 28.1 and 23.4 s after, 59.6 s before; 8 vCPU: 28.1 and 23.4 s after. Before the change CPUs
+  did not help (59.6 s on 16 vCPU against 57 to 63 s on 4); after it, 4 to 8 to 16 vCPU buys about 25 percent. Resizing
+  the prod droplet is not needed for ACC16-TIMING. Fail fast: with kine's argv replaced by /bin/false in a scratch
+  build (not committed), kine@a was placed at 10:18:23.3 and the pass reported "kine@a of 4r81tsr8-tenant is Failed:
+  hostprocess: ... kine@a.service failed after placement (result start-limit-hit, status 1)" at 10:18:32.9, 9.6 s later
+  (the unit's own crash-loop budget, 5 starts at RestartSec 2); k3s and every member after kine were never placed, the
+  next passes retried at the 2 s tick with the same message, and `dev down` left no unit, process or state. Killing
+  k3s with SIGKILL during its start instead is restarted by its unit and is not a failure (the gate waited for the new
+  k3s, Ready 33.3 s). Not done, and why: the hold of each port records itself on the front HostProcess and in the lease
+  file one purpose at a time; batching that is a change of the held-port logic, which plan 0016 stop_and_ask reserves,
+  and it now costs about 0.5 s; initdb --no-sync saves under 1 s and is left out. `deploy/check.sh --fast` on the droplet:
+  gofmt, build, apigen, vet and deno check pass; the windows cross build stops in test/soak (`syscall.Stat_t`), a file
+  of main that this change does not touch. Not read on prod; the prod reading is the lead's.
+
 - **ROLL-1 closed: a rolled k3s slot got the apiserver front before its own `/readyz` was green (2026-10-17 UTC).**
   Opened by the acceptance check ACC6-CP-SWAP. Reading before, on dev-linux-1, a market network with a gateway and one
   bidder, a tenant cluster with one market node and one running pod, two pollers every 200 ms through the cluster front
