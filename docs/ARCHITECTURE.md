@@ -8850,6 +8850,47 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   image.json ... the image is refused`; the runs above used `SOCIALWEB_IT_GUEST_IMAGE` pointing at a copy of the
   pinned image.
 
+### Bidder PDS write budget (2026-10-17)
+
+A hosted PDS gives an account 5000 write points per hour and 35000 per 24 hours (create 3, update 2,
+delete 1) and answers 429 `RateLimitExceeded` with `retry-after` when they are used up. The prod bidder
+used them up and every Bid then failed. Decisions, all local to the bidder (no change to the public
+protocol):
+
+- A Bid names one shared `compute.config.wif.simple` and one shared `market.bids.free`. `createATProto`
+  creates each once per content (the key is the record without `createdAt`, so a new issuer URL makes a new
+  record) and gives the same strongRef to every Bid. Bid retention deletes the Bid first, then a record the
+  Bid named only when no live Bid names it and it is not the current shared record.
+- `PdsWriteBudget` (`pds-write-budget-abc`) keeps the latest `ratelimit-*` headers of every repo write per PDS
+  and counts writes and points by collection and by hour. `pds-write-budget-fetch` observes the fetch of the
+  process, so every agent is covered. Writes have three classes: `contract` (receipt, events, payloads, never
+  held back), `bid` (Bid, bids.free, wif.simple) and `sweep` (every delete, the offering refresh). Below
+  `bid-write-reserve` points plus 21 points for each live contract (what finishing a contract writes), the
+  bidder declines an RFP with reason `writeBudget` and `sweep` writes stop. A 429 pauses `bid` and `sweep`
+  writes until its `retry-after`; after the reset time the remaining points count as unknown, not as the old
+  limit. The counters are in the status of the MarketBidder object, `status.market.pdsWrites`.
+- `vm.onNetwork` and its event have one writer, the kcp provider factory, which keeps the payload and the
+  event it wrote and retries only what is missing, with a delay that doubles from 5 s up to 300 s. The
+  `vm.hostKeys` payload is kept across retries the same way. The writer in `onAccept` and the bidder's
+  `/v1/on-network` route are gone; the kcp provider points its guests at its own route.
+- Bid retention deletes at most 100 Bids per pass, scans every page first so that it knows which records live
+  Bids name, and stops at the first 429. `bidder_associate` has the fixed rkey `bidder_associate`, and the
+  `badge.blue.keys` record is read before it is created.
+- The market network's bob PDS limits repo writes while the file named by `PDS_WRITE_LIMIT_FILE`
+  (`<state>/bob-pds/write-limit.json`, `{"points":N,"windowSec":S}`) exists; delete the file to switch it off.
+
+Readings (dev-linux-1, one market network on the old commit and one on the new, 20 contracts each with
+`run request --exec true`, five at a time; records counted from the bidder's repo on the PDS): per Bid 9
+points before, 3 after (wif.simple and bids.free: +20 records before, +0 after). Per contract 35.4 points
+before (236 records for 20 contracts, of them 39 onNetwork and 78 events) and 23.4 after (156 records at the
+time of the count; 24 once the late hostKeys and onNetwork records of the last contract are in). The counter in
+the status read 513 points for 21 contracts and the startup writes. With a limit of 700 points per 15 minutes
+and the default reserve, 9 of 12 contracts finished and the RFPs of the other three were declined 9 times with
+reason `writeBudget` while 496 points were left; after the reset the next contract ran. With a limit of 2 points, one Bid
+failed on the 429 and the next 12 RFPs were declined with `rate limits writes until ...`. With a 429 on every
+write for 45 s after the receipt, `vm.hostKeys` and `vm.onNetwork` failed three times each at 5, 10 and
+20 s, were written once the limit was off, and the contract finished.
+
 ## 16. Vocabulary
 
 | | |
