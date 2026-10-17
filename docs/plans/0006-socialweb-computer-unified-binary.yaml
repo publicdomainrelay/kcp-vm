@@ -2187,7 +2187,7 @@ acceptance:
       evidence: []
     - id: ACC6-CP-SWAP
       text: "A k3s/kine slot swap on a cluster with a market node (born via runComputeContract on the market network) fails no /readyz poll through the front, causes no Ready transition, no claim change and no vm.delete; the front port, guest tickets, node secrets and kubeconfigs are unchanged, and the two slots never both held kube-system/k3s (decided by the user 2026-10-12)."
-      status: todo
+      status: done
       evidence: []
     - id: ACC6-BAO-SYNC
       text: "After a release, after a cluster deletion and after an upgrade of the binary, every cluster OpenBao and the root vault hold exactly the auth mounts, roles, policies and owned KV entries live objects ask for; no jwt-* mount without a live node (decided by Claude, user may veto)."

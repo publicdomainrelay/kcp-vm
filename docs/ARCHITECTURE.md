@@ -3747,15 +3747,6 @@ because it bounds a mechanism the rest of this document leans on.
   dedup falls back to the market.bid record key (an rkey derived from the RFP uri). It needs a reading
   of the prod bidder (hat-8, the lead).
 
-- **ROLL-1: `units roll cluster` with a market node fails /readyz polls through the apiserver front (opened by the
-  acceptance check ACC6-CP-SWAP, 2026-10-17).** A tenant cluster with one market node and a running pod, `/readyz` polled through the
-  cluster front every 200 ms, `units roll cluster` a to b with `--idle-bound 5s`: the front flipped at 06:30:35.239, blue stopped
-  1.2 s later, and from 06:30:37.3 to 06:30:39.9 (14 polls) the green apiserver answered 500 with `[-]poststarthook/apiservice-discovery-controller
-  failed`. The node's Ready transition, the NodeClaim and the ComputeVM were unchanged; the roll report shows greenReadyAt 21.4 s
-  after the request and no failed poll of its own. The check says no failed poll. The hat-8 reading of 2026-10-12 (1 s polls) had 1
-  failed poll. Open: why green's discovery controller is not ready after blue is gone, and whether the roll should keep blue until
-  green answers /readyz through the front for some seconds.
-
 - **The Windows bidder: the seams as they landed (plan 0011 M0-REVISIT, 2026-10-16, read at 79f40adb;
   hono-compute-provider and atproto-market are `ts/` in the same tree).** `GOOS=windows GOARCH=amd64 go
   build ./...` and `go vet ./...` are green. The plan was written against names that did not land:
@@ -3809,6 +3800,28 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **ROLL-1 closed: a rolled k3s slot got the apiserver front before its own `/readyz` was green (2026-10-17 UTC).**
+  Opened by the acceptance check ACC6-CP-SWAP. Reading before, on dev-linux-1, a market network with a gateway and one
+  bidder, a tenant cluster with one market node and one running pod, two pollers every 200 ms through the cluster front
+  (one with a kept-alive connection, one with a new connection and a client certificate per poll), `units roll cluster
+  <cluster> --idle-bound 5s`: greenReadyAt 20.4 s after the request, front flipped 0.006 s later, old slot stopped 1.2 s
+  after that; the new connections got 500 from 07:32:26.6 to 07:32:30.9 (22 of 481), the first three also
+  naming `poststarthook/rbac/bootstrap-roles` (the first two `poststarthook/scheduling/bootstrap-system-priority-classes`
+  as well), all of them `poststarthook/apiservice-discovery-controller`; the kept-alive poller failed 8 of 479 from 07:32:28.5, after its
+  connection to the old slot closed. Cause: `WaitSlot` (`internal/clusterprovider/front.go`) passed when `waitK3s`
+  (`internal/clusterprovider/steps.go`) saw 200 or 401 from an anonymous `/readyz` on the slot port, and when
+  `waitK3sControllers` found a Deployment in kube-system, which the old slot had already written to the shared store.
+  Neither says the new apiserver ran its post-start hooks, and the roll flipped the front on that. Fix:
+  `WaitSlot` also calls `waitK3sReadyz`, which needs `/readyz` to answer 200 five times in a row (250 ms apart) with the
+  slot's admin client certificate before the front is pointed at the slot. This holds for the first start (the k3s step
+  gate in `steps.go`) and for the roll. The old slot serves until the flip, and the front keeps established connections
+  on it until it is drained, as before. Reading after, same run, three at once on one host: 0 failed of 532 and 0 of 528,
+  0 of 537 and 0 of 533, 0 of 527 and 0 of 528 polls from 3 s before the request to 10 s after the report; the roll took
+  95.1 s, 96.1 s and 95.1 s of which 10 s the idle bound and 60 s the watch; greenReadyAt 28.6 s, 29.1 s and 28.7 s after
+  the request (about 8 s more than before because three clusters started at once, and 1.3 s for the five answers);
+  flip to old stop 0.95 s, 1.6 s and 1.6 s; the node's Ready transition time, the NodeClaim phase and receipt, and the
+  ComputeVM were the same before and after. Plan 0006 ACC6-CP-SWAP is done.
+
 - **The plan-level acceptance checks of plans 0006 to 0009 and 0013 to 0016, read on 2026-10-17 UTC (main at
   80998ef9).** Host: dev-linux-1 (Ubuntu 24.04, 48 vCPU), up to six market networks at once, VM account test-0001; the
   gateway networks needed the web app downloads asset staged unpinned (its tree sha256 differs from the pin off Fedora),
@@ -3816,7 +3829,7 @@ refutation.
   226 s, `TestRequestSecretsReachTheGuestThroughTheRFPFlow` 217 s, `TestTenantClusterScalesFromZeroOnMarketVMsAndBack` 389 s
   (0 ssh lines), `TestBidderAnswersEachRFPOnceAcrossARestart` 308 s,
   `TestKubeconfigClientCertificateWithoutCredentialHelper` 170 s with kubectl, `TestWebAppSignInThroughThePluginKeepsTheCookieAcrossARestartAndIssuesACertificate`
-  384 s. The hostsvc contract suite passed on systemd-user and on proc. One check failed (ROLL-1 in section 14).
+  384 s. The hostsvc contract suite passed on systemd-user and on proc. One check failed (ROLL-1, closed in the entry below).
   Manual runs on top of the harness. Certificates (market network, gateway, no bidder): `getKubeconfig` without
   `ttlSeconds` gave 8 h, 86400 gave 24 h, 60 gave 1 min; 59, 86401, 0, -5 and 999999 were 400 InvalidRequest; k3s saw the
   caller DID as user and `socialweb.computer:cluster-owners` as group; injected `X-Remote-User`/`X-Remote-Group`/`X-Remote-Extra-*`
