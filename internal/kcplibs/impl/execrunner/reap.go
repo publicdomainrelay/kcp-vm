@@ -87,3 +87,11 @@ func ReapUnnamed(runsDir string, named func(string) bool, startedBefore time.Tim
 	}
 	return out
 }
+
+func LiveRuns(runsDir string) map[string]int {
+	out := map[string]int{}
+	for id, st := range liveRuns(runsDir) {
+		out[id] = st.PID
+	}
+	return out
+}
