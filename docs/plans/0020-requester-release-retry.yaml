@@ -55,7 +55,7 @@ items:
       event. dispositionOf still treats state.phase released as done, which M1 makes true only after a 2xx.
     files: ["ts/atproto-market/lib/requester-controller-kcp/runner.ts"]
     done_when: "a requester DenoPod restarted while a release is retried continues with the same event uri and attempt counting from the restart."
-    status: todo
+    status: done
   - id: ACC20-BIDDER-BACK
     title: "A bidder that comes back after several retries gets the same event and tears the guest down"
     depends_on: [M2-RETRY-LOOP]
@@ -75,4 +75,4 @@ items:
     title: "The retry ends at the contract TTL with a reason"
     depends_on: [M2-RETRY-LOOP]
     done_when: "a contract with a short ttl-after-finished and a bidder that never comes back ends Failed with \"vm.delete was not acknowledged by <time> (the contract TTL)\" and the last answer."
-    status: todo
+    status: done
