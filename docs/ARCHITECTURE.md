@@ -3895,7 +3895,7 @@ because it bounds a mechanism the rest of this document leans on.
   (ClusterRole `market-network-peers` in both workspaces of each child), so an AtprotoRecord `valueFrom`
   with `workspace: root:<other>` resolves (403 elsewhere, the record stays Pending). Prod keeps a kcp per
   application and runs the same sets with base root.
-  A core restart of the network restarts every DenoPod of the kcp (the deno runtime runs in the core), so
+  A DenoPod restart (a crash, a kill, a spec change) gives the pod a new run, so
   the network's fronts (plc, relay, dispatcher, dispatcher-tls, alice and bob pds) are edges
   (`deno.computer/edge`, the one case a service may name its port): each binds port 0 once, the network
   records the ports in `<network state>/network/ports.json`, renders them as `{{.Ports.*}}`, restarts a
@@ -3911,6 +3911,32 @@ because it bounds a mechanism the rest of this document leans on.
   network value and the bidder DIDs onto the root objects (no record carries them); the per-child core
   holds the network's admin kubeconfig (the shared kcp isolates components by workspace RBAC, not the
   cores); the DNS table of the one deno runtime holds every workspace's names.
+  A core restart adopts the DenoPods (plan 0019 M3C, 2026-10-18). A run (DenoPod, DenoRun or PolicyEngine
+  process) belongs to no unit of the core: the execrunner drops SWC_UNIT, SWC_DEVSUP and INVOCATION_ID
+  from its env, and devsup counts a child outside a unit's process group as a member only while it
+  carries that unit's attribution, so devsup's stop of the core spares the runs (dev down still kills
+  them by SWC_INSTANCE). Under systemd-user (the prod gateway and bidder units, KillMode=control-group)
+  the deno runtime starts or adopts the delegated unit `<prefix>denopods-<key>.service` (a `sleep
+  infinity` holder in socialweb.slice) and clones every run into its `pod-<run>` cgroup (memory.max there
+  when the pod sets a limit), so the core unit's cgroup kill spares the runs and uninstall stops them
+  with the other units; measured on a droplet, a child placed there from another user unit outlives
+  that unit's stop. The deno runtime no longer reaps at start: the provider observes each named run
+  from `runs/<id>/state.json` (pid and start ticks against pid reuse; a probe reads the run's env from
+  /proc), the 2 s requeue of a running pod is the exit poll, and the runs sweep stops a live run that no
+  object names once it is a runs-keep period (1 min) old. `dev restart core` snapshots the live runs
+  before the stop and 10 s after ready: unitsUnchanged holds only when every run kept its pid
+  (runsChanged lists the rest). Readings (dev-adopt-1, 1 bidder and the gateway, 13 DenoPods): before,
+  every core restart replaced every DenoPod (the start reap; twice in 4 s on the runner worker's swap
+  leg on main). After, `dev restart core` 2.06 s and `--binary` 2.03 s in the middle of a
+  `run request`: 13 and 15 runs, every pid and runID unchanged, bidder-1 DenoPods restarts 0 from dev up;
+  9/9 `run request --network` rc 0 across both restarts; the web app answered 921 of 921 polls of
+  /api/clusters/list (401 without a cookie, never a connection error); a `kill -9` DenoPod ran again in
+  3 s under the new core; a DenoPod deleted (finalizer stripped) while the core was stopped then killed
+  had its orphan run stopped 63 s later by the sweep; dev down left no process. Stated limits: an adopted
+  run that exits has no exit code (the old core held the wait), so it fails and restarts under its
+  restart policy, and an OOM kill of an adopted run reads as a plain failure; hono-pds keeps accounts,
+  user signing keys, its service key and OAuth tokens in memory, so a real PDS pod restart still logs
+  every session out (plan 0019 M3D).
 
 - **The requester retries the release with the same signed event (plan 0020, opened 2026-10-17).**
   Before: one non-2xx answer to the direct submitEvent of a vm.delete (a 404 from the
