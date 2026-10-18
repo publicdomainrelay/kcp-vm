@@ -6,7 +6,7 @@ import type { ComputeContract } from "@publicdomainrelay/socialweb-computer-k8s-
 export const DEFAULT_RECORD_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const DEFAULT_RECORD_RETENTION_SCAN_MS = 10 * 60 * 1000;
 export const RECORDS_REMOVED_ANNOTATION = "socialweb.computer/records-removed";
-export const SWEEP_CONTRACTS_PER_PASS = 50;
+export const SWEEP_CONTRACTS_PER_PASS = 500;
 
 export interface RecordRetentionOptions {
   logger: StructuredLoggerInterface;

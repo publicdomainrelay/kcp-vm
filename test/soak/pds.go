@@ -30,7 +30,13 @@ type networkView struct {
 				CaBundleRef string `json:"caBundleRef"`
 			} `json:"network"`
 			Apps []struct {
-				Did string `json:"did"`
+				Name      string `json:"name"`
+				Did       string `json:"did"`
+				Listeners []struct {
+					Component string `json:"component"`
+					Name      string `json:"name"`
+					Address   string `json:"address"`
+				} `json:"listeners"`
 			} `json:"apps"`
 		} `json:"status"`
 	} `json:"network"`
@@ -100,13 +106,29 @@ func pdsSample(ctx context.Context, binary, instance, stateDir string) map[strin
 		defer resp.Body.Close()
 		return json.NewDecoder(resp.Body).Decode(into)
 	}
+	type target struct{ name, base, did string }
+	var targets []target
 	for _, l := range nv.Network.Status.Listeners {
-		if !strings.HasSuffix(l.Component, "/pds") {
-			continue
+		if strings.HasSuffix(l.Component, "/pds") {
+			targets = append(targets, target{name: l.Component, base: "https://" + l.Address})
 		}
-		base := "https://" + l.Address
+	}
+	for _, a := range nv.Network.Status.Apps {
+		for _, l := range a.Listeners {
+			if l.Component == "requester" && l.Name == "tcp" {
+				targets = append(targets, target{name: a.Name + "/repo", base: "http://" + l.Address, did: a.Did})
+			}
+		}
+	}
+	for _, tg := range targets {
+		l := struct{ Component string }{tg.name}
+		base := tg.base
 		perRepo := map[string]any{}
-		for _, did := range nv.dids() {
+		dids := nv.dids()
+		if tg.did != "" {
+			dids = []string{tg.did}
+		}
+		for _, did := range dids {
 			r := struct{ Did string }{did}
 			var desc struct {
 				Collections []string `json:"collections"`
