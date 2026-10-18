@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devcheck"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/impl/execrunner"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
@@ -139,7 +142,30 @@ type restartReport struct {
 	Before         devinstance.Core       `json:"before"`
 	After          devinstance.Core       `json:"after"`
 	UnitsUnchanged bool                   `json:"unitsUnchanged"`
+	RunsBefore     int                    `json:"runsBefore"`
+	RunsAfter      int                    `json:"runsAfter"`
+	RunsChanged    []string               `json:"runsChanged"`
 	Seconds        float64                `json:"seconds"`
+}
+
+const restartRunsSettle = 10 * time.Second
+
+func restartRunsDir(l devinstance.Layout, rec devinstance.Record) string {
+	if rec.SharedKcp != "" {
+		return denoruntime.RunsDir(rec.SharedKcp)
+	}
+	return denoruntime.RunsDir(l.StateDir)
+}
+
+func changedRuns(before, after map[string]int) []string {
+	out := []string{}
+	for id, pid := range before {
+		if after[id] != pid {
+			out = append(out, fmt.Sprintf("%s pid %d -> %d", id, pid, after[id]))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func runDevRestart(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
@@ -179,6 +205,7 @@ func runDevRestart(ctx context.Context, a *app, vals clicfg.Values, rest []strin
 	defer m.Close()
 	r := restartReport{Instance: l.ID, Binary: bin}
 	devinstance.ReadJSON(l.CoreRecord, &r.Before)
+	runsBefore := execrunner.LiveRuns(restartRunsDir(l, rec))
 	lock, err := lockFile(l.Lock, 30*time.Second)
 	if err != nil {
 		return a.fail(exitFailed, "dev restart: %v", err)
@@ -214,7 +241,14 @@ func runDevRestart(ctx context.Context, a *app, vals clicfg.Values, rest []strin
 	if r.After, err = waitCore(ctx, l, m, cspec.Name, st.InvocationID, readyTimeout); err != nil {
 		return a.fail(exitFailed, "dev restart: %v", err)
 	}
-	r.UnitsUnchanged = len(r.After.Adoptions) == len(rec.Units)
+	select {
+	case <-ctx.Done():
+		return a.fail(exitFailed, "dev restart: %v", ctx.Err())
+	case <-time.After(restartRunsSettle):
+	}
+	runsAfter := execrunner.LiveRuns(restartRunsDir(l, rec))
+	r.RunsBefore, r.RunsAfter, r.RunsChanged = len(runsBefore), len(runsAfter), changedRuns(runsBefore, runsAfter)
+	r.UnitsUnchanged = len(r.After.Adoptions) == len(rec.Units) && len(r.RunsChanged) == 0
 	for _, ad := range r.After.Adoptions {
 		u := rec.Unit(ad.Role)
 		if u == nil || !ad.Adopted || ad.InvocationID != u.Identity.InvocationID {
