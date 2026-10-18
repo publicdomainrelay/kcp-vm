@@ -1,6 +1,6 @@
 plan: "0020"
 title: "The requester retries the release: the same signed vm.delete event, sent again until the bidder acknowledges it"
-status: doing
+status: done
 source: >
   2026-10-17: the runner worker found a failover orphan in job 618. The gateway's requester released a
   contract while the winning bidder was away: the direct submitEvent of the vm.delete answered 404 (the
