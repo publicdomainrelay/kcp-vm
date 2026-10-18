@@ -117,7 +117,7 @@ items:
       fails and restarts under its restart policy.
     files: ["internal/kcplibs/impl/execrunner", "internal/denokcp/provider", "internal/stack/denoruntime", "internal/devsup", "internal/devcore", "internal/bootstrap/table"]
     done_when: "a core restart and a --binary swap leave every DenoPod pid unchanged and no request fails during it."
-    status: todo
+    status: done
   - id: M3D-PDS-PERSISTENCE
     title: "A hono-pds pod restart keeps every account, session and DID signing key"
     depends_on: [M3C-ADOPT-DENOPODS]
