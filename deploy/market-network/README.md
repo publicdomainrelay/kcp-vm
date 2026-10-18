@@ -268,7 +268,12 @@ network value and `marketNetwork.ownerSessionsFile`), creates the owner account
 `<instance>-gateway-owner.alice.test` on alice's PDS (`owner-sessions.json` next
 to it, mode 0600), and the gateway brings up the tenant cluster `tenant` of that
 owner at zero nodes. A pod applied to that cluster gets a node through the RFP
-flow from the network's bidders.
+flow from the network's bidders. The gateway's requester trusts a bidder through
+its operator's vouches: the network declares, in the gateway's `root:gateway:app`,
+one AtprotoRecord `operator-vouch-<bidder app>` (`spec.repo: operator`,
+`sh.tangled.graph.vouch`, rkey and subject the bidder operator's DID from its
+MarketIdentity `approvedAssociations`), and the gateway writes it into the owner
+account's repo through `owner-sessions.json` (status Applied with the uri).
 
 ### Point an installed bidder account at the network
 
